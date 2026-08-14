@@ -143,12 +143,16 @@ var Fields = []Field{
 				c.Panel.PublicIP = ""
 				return nil
 			}
-			if net.ParseIP(v) == nil {
-				return fmt.Errorf("panel.public_ip must be a valid IP address or AUTO")
+			ip := net.ParseIP(v)
+			if ip == nil || ip.To4() == nil {
+				// The generated nft rules use `ip daddr` (IPv4); an IPv6
+				// address would silently produce an invalid rule. Must be a
+				// plain IPv4 address (or AUTO/empty).
+				return fmt.Errorf("panel.public_ip must be an IPv4 address or AUTO")
 			}
 			c.Panel.PublicIP = v
 			return nil
-		}},
+		}}, 
 	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints); empty = fall back to public_ip",
 		"203.0.113.5 or AUTO",
 		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
@@ -158,12 +162,14 @@ var Fields = []Field{
 				c.Panel.DisplayIP = ""
 				return nil
 			}
+			// display_ip is only ever shown to users (never used in rules), so
+			// any valid IP is acceptable.
 			if net.ParseIP(v) == nil {
 				return fmt.Errorf("panel.display_ip must be a valid IP address, or empty/AUTO")
 			}
 			c.Panel.DisplayIP = v
 			return nil
-		}},
+		}}, 
 	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
 		"3",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),
@@ -243,7 +249,7 @@ var Fields = []Field{
 	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",
 		"eth0",
 		getStr(func(c *Config) string { return c.Net.ExtIF }),
-		nonEmpty("net.ext_if", func(c *Config, v string) { c.Net.ExtIF = v })},
+		setIfaceName("net.ext_if", func(c *Config, v string) { c.Net.ExtIF = v })},
 	{"net.ipv6_subnet", KindOperator, ApplyInstall,
 		"global IPv6 prefix for pass-through (e.g. 2602:fada:6::/64); empty = disabled",
 		"2602:fada:6::/64 (empty to disable)",
@@ -296,6 +302,25 @@ var Fields = []Field{
 }
 
 var secretPathRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ifaceNameRe matches a Linux network interface name: up to 15 chars,
+// alphanumerics plus _ . - (kernel IFNAMSIZ limit), and never starting with a
+// hyphen. Interface names feed directly into nft (oifname) and ip commands,
+// so anything else must be rejected at config time instead of generating a
+// rule that later fails (or, with special chars, changes rule semantics).
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,14}$`)
+
+// setIfaceName validates a Linux interface name before storing it.
+func setIfaceName(key string, set func(c *Config, v string)) func(c *Config, v string) error {
+	return func(c *Config, v string) error {
+		v = strings.TrimSpace(v)
+		if !ifaceNameRe.MatchString(v) {
+			return fmt.Errorf("%s must be a valid interface name (1-15 chars, alphanumerics/_.-, not starting with -)", key)
+		}
+		set(c, v)
+		return nil
+	}
+}
 
 // setSecretPath validates a secret panel path for the enable case: at least 10
 // chars, safe charset, and different from the other panel's path.

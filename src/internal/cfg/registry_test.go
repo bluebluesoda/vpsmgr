@@ -197,6 +197,11 @@ func TestIPValidators(t *testing.T) {
 	if err := FieldFor("panel.public_ip").Assign(c, "not-an-ip"); err == nil {
 		t.Error("invalid public_ip accepted")
 	}
+	// public_ip feeds `ip daddr` (IPv4) rules — an IPv6 address must be
+	// rejected, not silently turned into an invalid nft rule.
+	if err := FieldFor("panel.public_ip").Assign(c, "2001:db8::1"); err == nil {
+		t.Error("IPv6 public_ip accepted (rules are IPv4-only)")
+	}
 	// AUTO clears it so FillAuto re-detects on the next load.
 	if err := FieldFor("panel.public_ip").Assign(c, "AUTO"); err != nil {
 		t.Fatalf("AUTO public_ip rejected: %v", err)
@@ -213,6 +218,22 @@ func TestIPValidators(t *testing.T) {
 	}
 	if err := FieldFor("panel.display_ip").Assign(c, "junk"); err == nil {
 		t.Error("invalid display_ip accepted")
+	}
+}
+
+func TestExtIfValidator(t *testing.T) {
+	c := Default()
+	valid := []string{"eth0", "enp3s0", "br-incus0", "eth0.100", "wg0"}
+	for _, v := range valid {
+		if err := FieldFor("net.ext_if").Assign(c, v); err != nil {
+			t.Errorf("valid iface %q rejected: %v", v, err)
+		}
+	}
+	invalid := []string{"", "-eth0", "eth 0", "eth0;rm", "looooongname1234567890", "$(x)", "eth0/.."}
+	for _, v := range invalid {
+		if err := FieldFor("net.ext_if").Assign(c, v); err == nil {
+			t.Errorf("invalid iface %q accepted", v)
+		}
 	}
 }
 
