@@ -16,8 +16,8 @@ import (
 var ImmutableFields = []string{
 	"net.subnet",
 	"net.gateway",
-	"lxd.pool",
-	"lxd.bridge",
+	"incus.pool",
+	"incus.bridge",
 	"panel.url_path",
 }
 
@@ -42,6 +42,15 @@ func (c *Config) VerifyImmutable(snapshot string) error {
 	var m map[string]string
 	if err := json.Unmarshal([]byte(snapshot), &m); err != nil {
 		return fmt.Errorf("invalid immutable snapshot: %w", err)
+	}
+	// Pre-incus-rename snapshots used lxd.pool / lxd.bridge; treat them as the
+	// same fields so an upgrade is verified against the historical baseline
+	// instead of silently skipping the check.
+	if v, ok := m["lxd.pool"]; ok {
+		m["incus.pool"] = v
+	}
+	if v, ok := m["lxd.bridge"]; ok {
+		m["incus.bridge"] = v
 	}
 	var drifted []string
 	for _, k := range ImmutableFields {
