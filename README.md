@@ -26,7 +26,7 @@ always blocked for containers, both directions — anti-spam, no toggle.
 Both amd64 and arm64 are supported; testing has primarily been done on amd64.
 
 ```
-git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
+git clone https://github.com/bluebluesoda/vpsmgr.git && cd vpsmgr
 sudo ./install.sh                  # install the stable prebuilt binary
 #sudo ./install.sh --local-build   # force a local build from source
 ```

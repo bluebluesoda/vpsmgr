@@ -8,7 +8,7 @@ log(){ echo "[40] $*"; }
 die(){ echo "[40] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="bluebluesoda/lxc-hosting"
+REPO="bluebluesoda/vpsmgr"
 
 ensure_go(){
   # Reuse a usable go on PATH (>= 1.21, toolchain auto-switch works) when one

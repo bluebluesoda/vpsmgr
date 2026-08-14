@@ -14,7 +14,7 @@
 amd64/arm64 均可，主要在amd64上进行了测试
 
 ```
-git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
+git clone https://github.com/bluebluesoda/vpsmgr.git && cd vpsmgr
 sudo ./install.sh                  # 安装稳定版预编译二进制
 #sudo ./install.sh --local-build   # 强制本地编译
 ```
