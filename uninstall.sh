@@ -63,6 +63,20 @@ nft delete table inet vpsmgr 2>/dev/null || true
 # without --purge, a reinstall should adopt the existing users/domains/settings.
 log "  kept /etc/vpsmgr and /etc/traefik (reinstall will adopt them)"
 
+# Remove the panel's privilege surface even on a plain uninstall (review
+# P2-10): a leftover /etc/sudoers.d/vps grants the vps user root-level nft /
+# ip / systemctl rights forever, and the two service accounts linger. A
+# reinstall recreates user + whitelist, so adoption is unaffected — only the
+# residual root-equivalent access is gone.
+log "removing vpsmgr users and sudoers whitelist..."
+rm -f /etc/sudoers.d/vps
+if id -u vps >/dev/null 2>&1; then
+  userdel vps >/dev/null 2>&1 || true
+fi
+if id -u traefik >/dev/null 2>&1; then
+  userdel traefik >/dev/null 2>&1 || true
+fi
+
 if [[ $PURGE -eq 1 ]]; then
   log "purging vpsmgr config/db/certs and traefik config..."
   rm -rf /etc/vpsmgr /etc/traefik
