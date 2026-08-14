@@ -66,7 +66,10 @@ Type=oneshot
 # written by the unprivileged panel user, so the check must run before any of
 # its content reaches the live ruleset; the batch itself starts with
 # delete-table, so even an apply failure keeps the previous table intact.
-ExecStart=/bin/sh -c '/usr/sbin/nft -c -f /etc/vpsmgr/nftables.conf || exit 1; /usr/sbin/nft add table inet vpsmgr 2>/dev/null; exec /usr/sbin/nft -f /etc/vpsmgr/nftables.conf'
+# The table must exist BEFORE the check, though: after a reboot (or a
+# "nft flush ruleset") it is gone, and the delete-table inside the checked
+# batch would fail a perfectly valid config. "nft add table" is idempotent.
+ExecStart=/bin/sh -c '/usr/sbin/nft add table inet vpsmgr 2>/dev/null; /usr/sbin/nft -c -f /etc/vpsmgr/nftables.conf || exit 1; exec /usr/sbin/nft -f /etc/vpsmgr/nftables.conf'
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -504,6 +507,11 @@ vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd stop
 vps ALL=(root) NOPASSWD: /usr/bin/pkill -x ndppd
 vps ALL=(root) NOPASSWD: /usr/sbin/ndppd -d -p /var/run/ndppd.pid
+# ndppd reads /etc/ndppd.conf by default (no -c in the init script), but the
+# panel renders the config under /etc/vpsmgr — these pinned commands keep the
+# root-owned symlink /etc/ndppd.conf -> /etc/vpsmgr/ndppd.conf in sync.
+vps ALL=(root) NOPASSWD: /bin/ln -sf /etc/vpsmgr/ndppd.conf /etc/ndppd.conf
+vps ALL=(root) NOPASSWD: /bin/rm -f /etc/ndppd.conf
 `
 	if err := os.MkdirAll("/etc/sudoers.d", 0o750); err != nil {
 		return fmt.Errorf("mkdir /etc/sudoers.d: %w", err)

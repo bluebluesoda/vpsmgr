@@ -273,7 +273,27 @@ func (m *Manager) enableForwarding() error {
 // root-owned area of the filesystem — the panel daemon generates this file, so
 // giving it a root-zone path just to chown it back would widen the "unprivileged
 // user writes root-consumed files" surface for no gain.
+//
+// ndppd itself reads /etc/ndppd.conf by default (its init script starts it with
+// bare `-d -p $PIDFILE`, no -c flag), so a root-owned SYMLINK /etc/ndppd.conf →
+// /etc/vpsmgr/ndppd.conf is maintained alongside the real file. The link is
+// created/removed through the sudoers whitelist with pinned commands only.
 const ndppdConfPath = "/etc/vpsmgr/ndppd.conf"
+const ndppdConfLink = "/etc/ndppd.conf"
+
+// linkNDPPDConf points the daemon's default config path at vpsmgr's rendered
+// file. Pinned sudo command (no wildcards), idempotent.
+func (m *Manager) linkNDPPDConf() error {
+	_, err := su.Run("/bin/ln", "-sf", ndppdConfPath, ndppdConfLink)
+	return err
+}
+
+// unlinkNDPPDConf removes the root-owned symlink (pinned sudo rm). A missing
+// file is not an error.
+func (m *Manager) unlinkNDPPDConf() error {
+	_, err := su.Run("/bin/rm", "-f", ndppdConfLink)
+	return err
+}
 
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
 // under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
@@ -368,9 +388,16 @@ func (m *Manager) writeNDPPD(add, drop string) error {
 	if conf == "" {
 		_, _ = su.Run("/usr/sbin/service", "ndppd", "stop")
 		_ = os.Remove(ndppdConfPath)
+		_ = m.unlinkNDPPDConf()
 		return nil
 	}
 	if err := os.WriteFile(ndppdConfPath, []byte(conf), 0o644); err != nil {
+		return err
+	}
+	// Point the daemon's default config path at the rendered file BEFORE the
+	// restart, or ndppd exits with "Failed to load configuration file
+	// '/etc/ndppd.conf'" and every WireIPv6/UnwireIPv6 fails.
+	if err := m.linkNDPPDConf(); err != nil {
 		return err
 	}
 	return m.restartNDPPD()
