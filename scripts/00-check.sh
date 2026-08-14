@@ -92,13 +92,12 @@ fi
 #   - zfsutils-linux: Incus does NOT bundle the ZFS userspace tools; the
 #     storage pool is ZFS-only (dir backend is not supported), so zpool/zfs
 #     must be present or pool creation fails
-#   - linux-headers-amd64 (meta, no version) + build-essential: on Debian the
-#     ZFS kernel modules are compiled with DKMS. The meta package tracks the
-#     installed kernel, so after a kernel upgrade the postinst hook
-#     (/etc/kernel/postinst.d/dkms) has the matching headers and rebuilds the
-#     module automatically. (Ubuntu ships prebuilt modules and needs none of
-#     this.) If the module is ever missing for the running kernel, the
-#     dkms autoinstall below rebuilds it.
+#   - linux-headers-amd64 (meta, no version) + build-essential: Debian only.
+#     On Debian the ZFS kernel modules are compiled with DKMS against the
+#     running kernel; the meta package tracks the installed kernel so the
+#     postinst hook rebuilds the module after every kernel upgrade. Ubuntu
+#     ships the ZFS module PREBUILT inside the kernel (linux-modules), so it
+#     needs none of the DKMS toolchain — no compile time at all.
 #   - ca-certificates: without it every curl HTTPS call (Zabbly key, traefik
 #     download, image pulls) fails with a certificate error
 #   - python3: used by 00-ip-ask.sh (prefix/subnet validation) and the
@@ -106,7 +105,24 @@ fi
 #   - tar/xz-utils: traefik tarball extraction; curl: downloads; gpg: Zabbly
 #     key verification; nftables/zstd: firewall + Incus image compression
 KERNEL_REL=$(uname -r)
-for p in zfsutils-linux linux-headers-amd64 build-essential ca-certificates python3 tar xz-utils nftables zstd curl gpg; do
+BASE_DEPS="zfsutils-linux ca-certificates python3 tar xz-utils nftables zstd curl gpg"
+if [[ "$ID" == "debian" ]]; then
+  BASE_DEPS="$BASE_DEPS linux-headers-amd64 build-essential"
+  log "Debian detected — ZFS module will be DKMS-compiled (one-time build)"
+else
+  log "Ubuntu detected — ZFS module is prebuilt in the kernel, no compilation"
+  # Ubuntu minimal/cloud images often ship with only the 'main' component; the
+  # installer needs packages from universe (ndppd for IPv6 pass-through, among
+  # others). Enable it idempotently.
+  if ! grep -rhE "^[^#].*universe" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
+    log "enabling the Ubuntu universe repository (needed for ndppd etc.)"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
+    add-apt-repository -y universe >/dev/null 2>&1 || die "could not enable the universe repository"
+    apt-get update -qq
+  fi
+fi
+for p in $BASE_DEPS; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
     log "installing $p"
     apt-get update -qq
@@ -114,10 +130,11 @@ for p in zfsutils-linux linux-headers-amd64 build-essential ca-certificates pyth
   fi
 done
 
-# ZFS module present and loadable for the RUNNING kernel? After a kernel
-# upgrade the DKMS rebuild should have happened (postinst hook), but when the
-# headers were missing at that moment the module can be absent. Rebuild it for
-# the running kernel rather than failing later at pool creation.
+# ZFS module present and loadable for the RUNNING kernel? On Debian a kernel
+# upgrade can leave the DKMS module missing (headers were unavailable at
+# postinst time); rebuild it for the running kernel rather than failing later
+# at pool creation. On Ubuntu the module ships with the kernel, so this is a
+# no-op.
 if ! modprobe zfs 2>/dev/null; then
   log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
   for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
