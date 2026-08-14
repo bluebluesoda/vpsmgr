@@ -11,10 +11,45 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="bluebluesoda/lxc-hosting"
 
 ensure_go(){
-  command -v go >/dev/null 2>&1 && return 0
-  log "installing golang-go (needed for local build)..."
-  apt-get update -qq || return 1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq golang-go || return 1
+  # If a usable go is already on PATH (>= 1.21, toolchain auto-switch works),
+  # nothing to do. Otherwise install one: distro package first, and if that is
+  # too old (Debian 12 ships 1.19), fetch the official Go from go.dev.
+  if command -v go >/dev/null 2>&1; then
+    if GO_VER=$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); then
+      major=${GO_VER%%.*}; minor=${GO_VER#*.}; minor=${minor%%.*}
+      if (( major > 1 || (major == 1 && minor >= 21) )); then
+        log "go $GO_VER is new enough (>= 1.21, toolchain auto-switch works)"
+        return 0
+      fi
+      log "go $GO_VER on PATH is too old (< 1.21) — will install a newer one"
+    fi
+  else
+    log "installing golang-go (needed for local build)..."
+    apt-get update -qq || return 1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq golang-go || return 1
+    command -v go >/dev/null 2>&1 || return 1
+  fi
+  # go.mod requires go >= 1.21 (it pins `toolchain go1.26.5` and relies on
+  # auto toolchain download). Debian 12 ships golang-go 1.19, which cannot
+  # even parse the go.mod. Install the official Go from go.dev into
+  # /usr/local/go and put it first on PATH for this installer's shell.
+  log "installing official Go to /usr/local/go..."
+  local arch tarball url
+  case "$(uname -m)" in
+    x86_64)  arch=amd64 ;;
+    aarch64) arch=arm64 ;;
+    *) die "no official Go for arch $(uname -m)" ;;
+  esac
+  # resolve the latest 1.26.x patch version from go.dev (returns e.g. go1.26.6)
+  local latest
+  latest=$(curl -fsSL --max-time 20 https://go.dev/VERSION?m=text 2>/dev/null | head -1) || latest="go1.26.5"
+  tarball="/tmp/${latest}.linux-${arch}.tar.gz"
+  url="https://go.dev/dl/${latest}.linux-${arch}.tar.gz"
+  log "  downloading $url"
+  curl -fsSL --max-time 300 -o "$tarball" "$url" || return 1
+  rm -rf /usr/local/go && tar -C /usr/local -xzf "$tarball" || return 1
+  rm -f "$tarball"
+  export PATH="/usr/local/go/bin:$PATH"
   command -v go >/dev/null 2>&1
 }
 
