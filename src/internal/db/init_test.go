@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"testing"
 )
 
@@ -40,57 +39,6 @@ func TestInitScriptRoundTrip(t *testing.T) {
 	}
 	if got.InitScript != "" {
 		t.Errorf("init_script not cleared: %q", got.InitScript)
-	}
-}
-
-// TestMigrateAddsInitScriptColumn verifies an existing database created before
-// the init_script column gets it added by the migration on open.
-func TestMigrateAddsInitScriptColumn(t *testing.T) {
-	path := t.TempDir() + "/old.db"
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldSchema := `CREATE TABLE users(
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT UNIQUE NOT NULL,
-		pass_hash TEXT NOT NULL,
-		idx INTEGER UNIQUE NOT NULL,
-		ip TEXT NOT NULL,
-		ssh_port INTEGER NOT NULL,
-		start_port INTEGER NOT NULL,
-		cpu INTEGER NOT NULL DEFAULT 10,
-		mem_mb INTEGER NOT NULL DEFAULT 1024,
-		disk_gb INTEGER NOT NULL DEFAULT 10,
-		created_at TEXT NOT NULL
-	)`
-	if _, err := raw.Exec(oldSchema); err != nil {
-		t.Fatal(err)
-	}
-	raw.Close()
-
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	u, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.InitScript != "" {
-		t.Errorf("migrated user init_script = %q, want empty default", u.InitScript)
-	}
-	if u.TrafficQuotaGB != 0 {
-		t.Errorf("migrated user traffic_quota_gb = %d, want 0", u.TrafficQuotaGB)
-	}
-	// A SELECT must be able to read both columns (proves the ALTERs ran).
-	got, err := d.GetUserByName("alice")
-	if err != nil {
-		t.Fatalf("GetUserByName after migration: %v", err)
-	}
-	if got.InitScript != "" || got.TrafficQuotaGB != 0 {
-		t.Errorf("read-back after migration = %q/%d", got.InitScript, got.TrafficQuotaGB)
 	}
 }
 

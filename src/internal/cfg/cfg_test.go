@@ -3,8 +3,6 @@ package cfg
 import (
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestIPv6Network(t *testing.T) {
@@ -85,34 +83,6 @@ func TestValidatePaths(t *testing.T) {
 		if err := cfg.ValidatePaths(); err == nil {
 			t.Errorf("ValidatePaths(%q,%q): expected error", c.user, c.adm)
 		}
-	}
-}
-
-func TestVersionFieldsRoundTrip(t *testing.T) {
-	c := Default()
-	c.InstalledVersion = "0.2.1"
-	c.UninstalledVersion = "0.2.0"
-	b, err := yaml.Marshal(c)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	got := Default()
-	if err := yaml.Unmarshal(b, got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got.InstalledVersion != "0.2.1" {
-		t.Errorf("installed_version = %q, want 0.2.1", got.InstalledVersion)
-	}
-	if got.UninstalledVersion != "0.2.0" {
-		t.Errorf("uninstalled_version = %q, want 0.2.0", got.UninstalledVersion)
-	}
-	if !strings.Contains(string(b), "installed_version: 0.2.1") {
-		t.Errorf("marshaled yaml missing installed_version:\n%s", b)
-	}
-	// Empty versions must be omitted (omitempty) so existing configs stay clean.
-	empty := Default()
-	if b, _ := yaml.Marshal(empty); strings.Contains(string(b), "installed_version") || strings.Contains(string(b), "uninstalled_version") {
-		t.Errorf("empty version fields should be omitted:\n%s", b)
 	}
 }
 

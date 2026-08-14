@@ -106,7 +106,7 @@ fi
 
 # --- UFW conflict ---
 # Incus manages its own `table inet incus` nftables rules (DHCP/DNS/forwarding)
-# on lxdbr0, but UFW's `table ip filter` runs at the same priority with a DROP
+# on incusbr0, but UFW's `table ip filter` runs at the same priority with a DROP
 # policy, so it drops container DHCP/forwarding traffic before Incus's rules
 # ever see it. Result: containers get no IPv4 (no DHCP, no DNS, no NAT) and
 # the image build fails. See:
@@ -119,8 +119,8 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   # the user may have re-enabled it on purpose.
   V4_NET="${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}"
   V4_MATCH="$(printf '%s' "${V4_NET%/*}" | sed 's/\./\\./g')"
-  if ufw status verbose 2>/dev/null | grep -qE "lxdbr0|$V4_MATCH"; then
-    log "ufw active but already has Incus/lxdbr0 allow rules — leaving it as-is"
+  if ufw status verbose 2>/dev/null | grep -qE "incusbr0|$V4_MATCH"; then
+    log "ufw active but already has Incus/incusbr0 allow rules — leaving it as-is"
   else
     log "ufw is ACTIVE with default-DROP policy — this breaks Incus container IPv4"
     log "  (Incus's own nftables rules are shadowed by ufw's DROP; known issue:"

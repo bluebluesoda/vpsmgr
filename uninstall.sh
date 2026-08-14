@@ -34,35 +34,21 @@ if [[ -n "$V6SUBNET" ]]; then
     done
     sysctl -w net.ipv6.conf."$EXT_IF".proxy_ndp=0 >/dev/null 2>&1 || true
   fi
-  # remove per-container /128 routes via lxdbr0 for the prefix
-  ip -6 route show dev lxdbr0 2>/dev/null | awk '{print $1}' | while read -r a; do
+  # remove per-container /128 routes via incusbr0 for the prefix
+  ip -6 route show dev incusbr0 2>/dev/null | awk '{print $1}' | while read -r a; do
     case "$a" in
-      ${V6SUBNET%%/*}*) ip -6 route del "$a" dev lxdbr0 2>/dev/null || true ;;
+      ${V6SUBNET%%/*}*) ip -6 route del "$a" dev incusbr0 2>/dev/null || true ;;
     esac
   done
-  # restore lxdbr0 IPv6 to disabled (matches vpsmgr default)
-  if command -v incus >/dev/null 2>&1 && incus network show lxdbr0 >/dev/null 2>&1; then
-    incus network set lxdbr0 ipv6.address none 2>/dev/null || true
-    incus network set lxdbr0 ipv6.nat false 2>/dev/null || true
-    incus network set lxdbr0 ipv6.routing false 2>/dev/null || true
-    incus network set lxdbr0 ipv6.dhcp.stateful false 2>/dev/null || true
+  # restore incusbr0 IPv6 to disabled (matches vpsmgr default)
+  if command -v incus >/dev/null 2>&1 && incus network show incusbr0 >/dev/null 2>&1; then
+    incus network set incusbr0 ipv6.address none 2>/dev/null || true
+    incus network set incusbr0 ipv6.nat false 2>/dev/null || true
+    incus network set incusbr0 ipv6.routing false 2>/dev/null || true
+    incus network set incusbr0 ipv6.dhcp.stateful false 2>/dev/null || true
   fi
   # live sysctls back to defaults
   sysctl -w net.ipv6.conf.all.forwarding=0 net.ipv6.conf.default.forwarding=0 >/dev/null 2>&1 || true
-fi
-
-# Record the version being uninstalled into the KEPT config BEFORE removing the
-# binary: a future release that makes breaking changes can then detect which
-# version this config/db came from and migrate or warn. Only when the config is
-# kept (no --purge) — with --purge /etc/vpsmgr is deleted anyway. Graceful: if
-# the binary or the note-version command is missing/old, warn and carry on.
-if [[ $PURGE -eq 0 ]] && [[ -f /etc/vpsmgr/config.yaml ]] && command -v vps >/dev/null 2>&1; then
-  VERSION="$(vps version 2>/dev/null || true)"
-  if [[ -n "$VERSION" ]] && vps note-version "$VERSION" >/dev/null 2>&1; then
-    log "recorded uninstall version $VERSION in /etc/vpsmgr/config.yaml"
-  else
-    log "warn: could not record uninstall version in config (${VERSION:-no version})"
-  fi
 fi
 
 log "removing files..."

@@ -136,12 +136,6 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
-	case "note-version":
-		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps note-version <version>")
-			break
-		}
-		err = cmdNoteVersion(os.Args[2])
 	case "config":
 		err = cmdConfig(os.Args[2:])
 	case "version":
@@ -171,7 +165,7 @@ usage:
   vps config list|set|help         inspect/change config.yaml (per-field validated edits)
   vps version
 system:
-  vps install | serve | ipv6-reapply | note-version <ver>
+  vps install | serve | ipv6-reapply
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
@@ -194,56 +188,13 @@ func panelPath(c *cfg.Config) string {
 	return "/" + c.Panel.URLPath
 }
 
-// blockUnadoptable refuses to run against a config/db that records an origin
-// older than this binary can adopt. v0.3 makes breaking changes, so a config
-// whose origin is 0.2.x (or older, or not recorded) must not be adopted:
-// `vps install` would migrate it, and `vps serve` runs the db migration
-// on open — either would corrupt 0.2.x data. Guard both entry points.
-//
-// The origin is installed_version when set (the last binary to adopt the
-// config), falling back to uninstalled_version (a kept config from a
-// non-purging uninstall). Only when NEITHER is set is the origin unknown and
-// treated as too old. A config that already records 0.3.x must not be blocked
-// on an empty counterpart field — that is a normal 0.3.x re-upgrade.
-//
-// A config whose origin equals this binary's own version is never "older":
-// `vps install` records ver.Version as installed_version, so a fresh install
-// (and a same-version re-adoption) is always self-signed and safe to run.
-// Only a config written by a DIFFERENT, older binary is refused.
-func blockUnadoptable(c *cfg.Config) error {
-	origin := c.InstalledVersion
-	if origin == "" {
-		origin = c.UninstalledVersion
-	}
-	if origin == ver.Version {
-		return nil
-	}
-	if ver.Blocked(origin) {
-		return fmt.Errorf("vpsmgr %s cannot adopt a setup from an older release "+
-			"(config origin %s): v0.3 makes breaking changes and the migration "+
-			"from 0.2.x is not ready yet. Do not upgrade — stay on v0.2.x until "+
-			"a migration path exists.",
-			ver.Version, orUnknown(origin))
-	}
-	return nil
-}
-
-func orUnknown(v string) string {
-	if v == "" {
-		return "(unknown)"
-	}
-	return v
-}
-
 func cmdInstall() error {
 	c := cfg.Default()
-	adopting := false
 	if _, err := os.Stat(cfg.Path()); err == nil {
 		c, err = cfg.Load()
 		if err != nil {
 			return err
 		}
-		adopting = true
 	} else {
 		if err := c.FillAuto(); err != nil {
 			return err
@@ -258,17 +209,6 @@ func cmdInstall() error {
 			c.Panel.Listen = fmt.Sprintf(":%d", p)
 		}
 	}
-	// Adopting an existing config: refuse to touch one that came from a release
-	// too old to migrate. Check BEFORE overwriting installed_version below.
-	if adopting {
-		if err := blockUnadoptable(c); err != nil {
-			return err
-		}
-	}
-	// Record which binary version installed (or adopted/upgraded) this config so
-	// a future release that makes breaking changes can detect the version the
-	// config/db came from and migrate or warn instead of corrupting user data.
-	c.InstalledVersion = ver.Version
 	if err := cfg.Save(c); err != nil {
 		return err
 	}
@@ -409,27 +349,9 @@ func cmdInstall() error {
 	if err := m2.ApplyV4State(); err != nil {
 		return fmt.Errorf("apply v4 policy: %w", err)
 	}
-	// Admin password now lives in the DB (settings table). Migrate a legacy
-	// hash found in the config file once, then drop it from the file so the
-	// credential is no longer a hand-editable config field.
-	if c.Panel.AdminPass != "" {
-		if _, ok, err := d2.GetSetting(db.SettingAdminPassHash); err != nil {
-			return err
-		} else if !ok {
-			if err := d2.SetSetting(db.SettingAdminPassHash, c.Panel.AdminPass); err != nil {
-				return err
-			}
-			log.Printf("migrated admin password hash from config.yaml to database")
-		}
-		c.Panel.AdminPass = ""
-		if err := cfg.Save(c); err != nil {
-			return err
-		}
-	}
 	// Admin panel: on a FRESH install (admin enabled and no hash yet in the
-	// DB) generate a random admin password and show it once. On adoption the
-	// existing hash is kept — never reprint a password the admin may not
-	// expect to be displayed. When admin is disabled nothing is printed.
+	// DB) generate a random admin password and show it once. When admin is
+	// disabled nothing is printed.
 	if c.Panel.AdminPath != "" {
 		if _, ok, err := d2.GetSetting(db.SettingAdminPassHash); err != nil {
 			return err
@@ -567,9 +489,6 @@ func cmdServe() error {
 	if err != nil {
 		return err
 	}
-	if err := blockUnadoptable(c); err != nil {
-		return err
-	}
 	if err := c.ValidatePaths(); err != nil {
 		return fmt.Errorf("invalid panel paths: %w", err)
 	}
@@ -650,27 +569,6 @@ func sampleTrafficLoop(m *mgr.Manager) {
 func startTLS(c *cfg.Config, h http.Handler, tlsCfg *tls.Config) error {
 	srv := &http.Server{Addr: c.Panel.Listen, Handler: h, TLSConfig: tlsCfg}
 	return srv.ListenAndServeTLS(c.Panel.Cert, c.Panel.Key)
-}
-
-// cmdNoteVersion records the version of the binary that is being uninstalled.
-// uninstall.sh calls it with the running binary's version BEFORE removing the
-// binary, so a config kept by a non-purging uninstall remembers which version it
-// came from. A future release that makes breaking changes can use this to warn
-// or migrate instead of failing on incompatible data.
-func cmdNoteVersion(v string) error {
-	if v == "" {
-		return fmt.Errorf("version is empty")
-	}
-	c, err := cfg.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	c.UninstalledVersion = v
-	if err := cfg.Save(c); err != nil {
-		return err
-	}
-	fmt.Printf("recorded version %s (last uninstalled)\n", v)
-	return nil
 }
 
 func cmdPanelURL() error {

@@ -1,8 +1,4 @@
 # vpsmgr config example — generated at /etc/vpsmgr/config.yaml on install
-# installed_version / uninstalled_version are auto-written metadata: install
-# records the binary version, a non-purging uninstall records the version being
-# removed, so future releases with breaking changes can detect the origin
-# version. Do not edit by hand.
 panel:
   listen: ":8443"           # a FRESH install picks a random free port in 2000-9999;
                             # this line is where it lands (change it only if you know why)
@@ -42,4 +38,4 @@ incus:
   image: "vpsmgr/debian-sshd"
   image_fallback: "images:debian/13"
   pool: vpsmgr
-  bridge: lxdbr0
+  bridge: incusbr0

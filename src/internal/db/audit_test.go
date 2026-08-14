@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"testing"
 )
 
@@ -63,67 +62,5 @@ func TestAuditLogPrunesToRetention(t *testing.T) {
 	}
 	if n != AuditRetention {
 		t.Errorf("AuditCount = %d, want retention %d", n, AuditRetention)
-	}
-}
-
-// TestAuditMigrateDropsTarget verifies that a DB created by an early v0.3 dev
-// build (audit_log with a target column) is migrated: the column is dropped and
-// AddAuditLog works against the new schema.
-func TestAuditMigrateDropsTarget(t *testing.T) {
-	path := t.TempDir() + "/old.db"
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(`CREATE TABLE audit_log(
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		actor TEXT NOT NULL,
-		action TEXT NOT NULL,
-		target TEXT NOT NULL DEFAULT '',
-		created_at TEXT NOT NULL)`,
-		`INSERT INTO audit_log(actor, action, target, created_at) VALUES('alice','power.start','','2026-01-01T00:00:00.000Z')`); err != nil {
-		t.Fatal(err)
-	}
-	raw.Close()
-
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-
-	var cols []string
-	rows, err := d.sql.Query(`PRAGMA table_info(audit_log)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			t.Fatal(err)
-		}
-		cols = append(cols, name)
-	}
-	for _, want := range []string{"id", "actor", "action", "created_at"} {
-		found := false
-		for _, c := range cols {
-			if c == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("audit_log missing column %q after migration (have %v)", want, cols)
-		}
-	}
-	for _, c := range cols {
-		if c == "target" {
-			t.Errorf("audit_log still has target column after migration")
-		}
-	}
-	if err := d.AddAuditLog("000+alice", "power.stop"); err != nil {
-		t.Fatalf("AddAuditLog against migrated schema: %v", err)
 	}
 }

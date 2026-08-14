@@ -17,7 +17,7 @@ import (
 
 // IPv6 pass-through support (verified empirically):
 //
-//   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
+//   incusbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
 //   or the /80 slice a provider hands the host — with ipv6.routing + stateful
 //   DHCPv6. For a shorter prefix (/48 /56 /60) the bridge carries the FIRST
 //   /64 slice of it, because Incus's dnsmasq rejects non-/64 networks and every
@@ -88,7 +88,7 @@ func (m *Manager) IPv6Addr(name string) (string, error) {
 	return addHostOffset(b.IP, 1).String(), nil
 }
 
-// SetupIPv6Bridge configures lxdbr0 for IPv6 pass-through. Idempotent.
+// SetupIPv6Bridge configures incusbr0 for IPv6 pass-through. Idempotent.
 func (m *Manager) SetupIPv6Bridge() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
@@ -212,7 +212,7 @@ func addHostOffset(netAddr net.IP, k uint64) net.IP {
 	return ip
 }
 
-// bridgePrefixLen clamps the configured prefix length for the lxdbr0 bridge.
+// bridgePrefixLen clamps the configured prefix length for the incusbr0 bridge.
 // Incus's dnsmasq only serves /64 networks (a /48 /56 /60 makes it error "only
 // /64 allowed"), and every deterministic container address falls inside the
 // FIRST /64 of the configured prefix — so shorter prefixes ride on that /64;

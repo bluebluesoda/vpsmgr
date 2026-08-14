@@ -293,18 +293,6 @@ var Fields = []Field{
 		"/var/lib/incus/unix.socket",
 		getStr(func(c *Config) string { return c.Incus.Socket }),
 		nonEmpty("incus.socket", func(c *Config, v string) { c.Incus.Socket = v })},
-	{"installed_version", KindAuto, ApplyNone, "binary version that installed/adopted this config (auto)",
-		"",
-		getStr(func(c *Config) string { return c.InstalledVersion }),
-		func(c *Config, v string) error {
-			return fmt.Errorf("installed_version is auto-written by `vps install`")
-		}},
-	{"uninstalled_version", KindAuto, ApplyNone, "binary version that a non-purging uninstall removed (auto)",
-		"",
-		getStr(func(c *Config) string { return c.UninstalledVersion }),
-		func(c *Config, v string) error {
-			return fmt.Errorf("uninstalled_version is auto-written by `vps note-version`")
-		}},
 }
 
 var secretPathRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

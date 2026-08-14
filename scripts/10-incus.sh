@@ -44,8 +44,8 @@ log "incus version: $(incus version 2>/dev/null | head -1)"
 
 # Make the incus-admin group available to the vps service user (created by
 # 40-panel.sh / `vps install`). The panel talks to Incus over its Unix socket,
-# which is group-readable by incus-admin — membership grants the same control
-# the root-only LXD snap used to give, without running as root.
+# which is group-readable by incus-admin — membership grants full management
+# of Incus without running as root.
 if id -u vps >/dev/null 2>&1; then
   usermod -aG incus-admin vps >/dev/null 2>&1 || true
   log "added user 'vps' to group incus-admin (panel can manage Incus via the API)"
@@ -60,9 +60,8 @@ done
 
 # --- storage pool ---
 # The Debian-package Incus bundles its own userspace tools; on a kernel that
-# ships the zfs module the pool is created with zfs. Like the LXD snap, no
-# host zfsutils are needed. Fall back to dir (no quotas) when zfs is
-# unavailable.
+# ships the zfs module the pool is created with zfs. No host zfsutils are
+# needed. Fall back to dir (no quotas) when zfs is unavailable.
 POOL=vpsmgr
 POOL_EXISTS=0
 if incus storage show "$POOL" >/dev/null 2>&1; then
@@ -116,7 +115,7 @@ else
 fi
 
 # --- incus admin init (preseed) ---
-# IPv6 pass-through: when VPSMGR_IPV6_SUBNET is set, lxdbr0 carries the global
+# IPv6 pass-through: when VPSMGR_IPV6_SUBNET is set, incusbr0 carries the global
 # prefix (no NAT) and containers SLAAC global addresses from it. The bridge
 # ADDRESS is deliberately not set here: the Go setup (SetupIPv6Bridge, run at
 # `vps install`) picks a free address inside the prefix and skips any the host
@@ -125,12 +124,12 @@ fi
 V6_IP="none"
 V6_NAT="false"
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
-  log "IPv6 pass-through enabled: lxdbr0 address chosen by \`vps install\` (clash-avoiding)"
+  log "IPv6 pass-through enabled: incusbr0 address chosen by \`vps install\` (clash-avoiding)"
 fi
 # Container IPv4 subnet (10.<n>.0.0/24): the bridge gateway is .1. Defaults to
 # 10.115.0.1/24; 00-ip-ask.sh exports the chosen subnet before this step.
 V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
-if [[ $POOL_EXISTS -eq 0 ]] || ! incus network show lxdbr0 >/dev/null 2>&1; then
+if [[ $POOL_EXISTS -eq 0 ]] || ! incus network show incusbr0 >/dev/null 2>&1; then
   PRESEED=/tmp/vpsmgr-preseed.yaml
   cat > "$PRESEED" <<EOF
 config: {}
@@ -148,7 +147,7 @@ networks:
     # forwarding but drops the instance-name records.
     dns.mode: none
   description: ""
-  name: lxdbr0
+  name: incusbr0
   type: bridge
 storage_pools:
 - config:
@@ -164,7 +163,7 @@ profiles:
     eth0:
       name: eth0
       nictype: bridged
-      parent: lxdbr0
+      parent: incusbr0
       type: nic
     root:
       path: /
@@ -176,9 +175,9 @@ EOF
   if ! incus admin init --preseed < "$PRESEED"; then
     log "preseed failed — creating missing pieces"
     if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
-      incus network show lxdbr0 >/dev/null 2>&1 || incus network create lxdbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none
+      incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none
     else
-      incus network show lxdbr0 >/dev/null 2>&1 || incus network create lxdbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none dns.mode=none
+      incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none dns.mode=none
     fi
     if ! incus storage show "$POOL" >/dev/null 2>&1; then
       if [[ -n "$SPARE" ]]; then
@@ -196,7 +195,7 @@ EOF
   # ensure default profile devices point at our pool/bridge
   incus profile set default root.pool "$POOL" 2>/dev/null || true
   incus profile device set default root pool "$POOL" 2>/dev/null || true
-  incus profile device set default eth0 parent lxdbr0 2>/dev/null || true
+  incus profile device set default eth0 parent incusbr0 2>/dev/null || true
 else
   log "Incus already initialized (pool+network present)"
 fi
@@ -204,7 +203,7 @@ fi
 # Always re-assert dns.mode=none (fresh install and upgrade alike): this is the
 # only thing that stops Incus from publishing <username>.lxd DNS/PTR records
 # that let any tenant enumerate every other user's username with a subnet scan.
-incus network set lxdbr0 dns.mode=none 2>/dev/null || true
+incus network set incusbr0 dns.mode=none 2>/dev/null || true
 
 DRIVER_NOW=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"

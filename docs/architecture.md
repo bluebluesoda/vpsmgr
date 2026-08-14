@@ -36,7 +36,7 @@ src/      Go source (single binary: CLI + panel)
 - **Go binary** — CLI commands (`vps add/show/del/...`) and the HTTPS panel
   (`vps.service`). The web templates are embedded (`//go:embed`).
 - **Incus** (Zabbly LTS 7.0, Debian package) — runs the containers. Storage
-  pool `vpsmgr` (ZFS), bridge `lxdbr0` (10.<n>.0.0/24, octet chosen at
+  pool `vpsmgr` (ZFS), bridge `incusbr0` (10.<n>.0.0/24, octet chosen at
   install, default 115). The panel talks to the daemon over its
   **Unix-socket REST API** (`internal/lx`, one reusable HTTP connection, no
   `incus` process spawn per call). **Every** operation including `exec`
@@ -58,9 +58,9 @@ src/      Go source (single binary: CLI + panel)
   rules yourself (see `00-check.sh`):
 
   ```sh
-  ufw allow in on lxdbr0 to any port 67 proto udp   # DHCP
-  ufw allow in on lxdbr0 to any port 53             # DNS
-  ufw route allow in on lxdbr0 from 10.<n>.0.0/24    # container forwarding
+  ufw allow in on incusbr0 to any port 67 proto udp   # DHCP
+  ufw allow in on incusbr0 to any port 53             # DNS
+  ufw route allow in on incusbr0 from 10.<n>.0.0/24    # container forwarding
   ```
 - **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
@@ -204,7 +204,7 @@ sshd enabled — the service is `sshd` on RHEL and `ssh` on Debian).
 
 ## Container isolation on the bridge
 
-All containers share the single `lxdbr0` L2 segment `10.<n>.0.0/24` (the second
+All containers share the single `incusbr0` L2 segment `10.<n>.0.0/24` (the second
 octet is chosen at install; default `10.115.0.0/24`). To make
 sure a scan does **not** reveal usernames:
 
@@ -212,7 +212,7 @@ sure a scan does **not** reveal usernames:
   `<instance>.lxd` records (instance name = username) that turn into
   `username.lxd` PTR answers — this is independent of the randomized in-guest
   hostname, so it would leak usernames anyway. `10-incus.sh` therefore sets
-  `dns.mode=none` on `lxdbr0` (DHCP and upstream forwarding still work; the
+  `dns.mode=none` on `incusbr0` (DHCP and upstream forwarding still work; the
   `search lxd` suffix is dropped and reverse lookups fall back to the random
   guest hostname or the upstream resolver).
 - The in-guest hostname is already randomized (see above), so nothing

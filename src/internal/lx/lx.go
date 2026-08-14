@@ -563,10 +563,23 @@ func (c *Client) NicRateLimit(name string) (string, error) {
 	return eth0["limits.ingress"], nil
 }
 
-// HardenIsolation ensures a container's eth0 carries the NIC isolation options
-// (nicIsolation). Idempotent.
+// HardenIsolation ensures a container's eth0 carries the NIC isolation options.
+// Idempotent. IPv6 filtering is only applied when eth0 already has an IPv6
+// address or route (Incus 7.0 rejects ipv6_filtering without one).
 func (c *Client) HardenIsolation(name string) (bool, error) {
-	return c.EnsureEth0Options(name, nicIsolation)
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
+		return false, err
+	}
+	eth0, ok := it.Devices["eth0"]
+	if !ok {
+		return false, fmt.Errorf("incus: instance %s has no eth0 device", name)
+	}
+	iso := nicIsolation
+	if eth0["ipv6.address"] == "" && eth0["ipv6.routes"] == "" {
+		iso = nicIsolationNoV6
+	}
+	return c.EnsureEth0Options(name, iso)
 }
 
 // Delete force-stops the container if needed and removes it. Already-gone
@@ -695,11 +708,22 @@ func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 //
 // A side effect of port isolation is that containers can no longer talk to
 // each other on the private bridge — by design (see docs/architecture.md).
-var nicIsolation = map[string]string{
-	"security.port_isolation": "true",
-	"security.ipv4_filtering": "true",
-	"security.ipv6_filtering": "true",
-}
+//
+// IPv6 filtering is applied only when the eth0 device carries an IPv6 address
+// or route: Incus 7.0 rejects `security.ipv6_filtering=true` on a device with
+// no `ipv6.address` when the parent bridge has IPv6 disabled (a validation
+// change from LXD, where an empty IPv6 was accepted).
+var (
+	nicIsolation = map[string]string{
+		"security.port_isolation": "true",
+		"security.ipv4_filtering": "true",
+		"security.ipv6_filtering": "true",
+	}
+	nicIsolationNoV6 = map[string]string{
+		"security.port_isolation": "true",
+		"security.ipv4_filtering": "true",
+	}
+)
 
 // Launch creates a container with limits, static IPv4 (and optional static
 // IPv6 primary address + routed /112 block), root size and autostart enabled,
@@ -728,7 +752,13 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, 
 	if block != "" {
 		eth0["ipv6.routes"] = block
 	}
-	for k, v := range nicIsolation {
+	// security.ipv6_filtering needs an IPv6 address/route on the device (Incus
+	// 7.0 validation); skip it when the container has no IPv6 at all.
+	iso := nicIsolation
+	if ipv6 == "" && block == "" {
+		iso = nicIsolationNoV6
+	}
+	for k, v := range iso {
 		eth0[k] = v
 	}
 	config := cpuLimitConfig(cpu)

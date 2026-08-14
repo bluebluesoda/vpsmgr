@@ -38,8 +38,6 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.pool` | **fixed at install** | — | storage pool |
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
-| `installed_version` | auto (panel-managed) | — | binary version that installed/adopted the config |
-| `uninstalled_version` | auto (panel-managed) | — | binary version a non-purging uninstall removed |
 
 ### How "fixed at install" is enforced
 
@@ -51,13 +49,6 @@ live config against that snapshot and **refuses to run** if any of them drifted
 (`panel.url_path`) is immutable on purpose: moving it strands every user who
 bookmarked it. The admin path is NOT immutable — it can be rotated and emptied
 to disable the admin panel.
-
-### Auto-written metadata
-
-`installed_version` / `uninstalled_version` are written by `vps install` and a
-non-purging `uninstall.sh` (`vps note-version`). Both survive a reinstall
-(`/etc/vpsmgr` is kept) so a future release that makes breaking changes can
-detect which version a config/db came from and migrate or warn.
 
 ## Managed files
 
@@ -87,7 +78,7 @@ panel:
   session_days: 3              # login session lifetime (days)
   url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
   admin_url_path: AUTO         # random secret path of the admin panel; do not change after first install
-  admin_pass_hash: AUTO        # bcrypt hash of the admin password — stored in the DB since v0.3.x, not in this file
+  admin_pass_hash: AUTO        # bcrypt hash of the admin password — stored in the DB, not in this file
 
 net:
   subnet: "10.115.0.0/24"      # container subnet 10.<n>.0.0/24 — only the second octet is settable, at install
@@ -103,7 +94,7 @@ incus:
   image: "vpsmgr/debian-sshd"
   image_fallback: "images:debian/13"
   pool: vpsmgr
-  bridge: lxdbr0
+  bridge: incusbr0
   socket: "/var/lib/incus/unix.socket"   # Incus daemon Unix socket (REST API)
 ```
 
@@ -160,10 +151,3 @@ goes away when the panel is uninstalled.
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
   address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.
-- **v0.3 upgrade gate:** v0.3 makes breaking changes, so it refuses to adopt a
-  config/db recorded as originating from an older release. `vps install`
-  and `vps serve` both abort (and `install.sh` aborts early) when
-  `installed_version` / `uninstalled_version` is missing or older than 0.3.0.
-  A config with no recorded version is treated as too old — it predates the
-  metadata fields. Existing 0.2.x installs must stay on v0.2.x until a
-  migration path exists.

@@ -121,7 +121,6 @@ func TestEditableClassification(t *testing.T) {
 		"incus.pool":            "no",
 		"incus.bridge":          "no",
 		"panel.admin_pass_hash": "no",
-		"installed_version":     "no",
 	}
 	for key, want := range cases {
 		if got := FieldFor(key).Editable(); got != want {

@@ -19,18 +19,6 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# The Incus-based vpsmgr is a new product line. A leftover binary from the old
-# LXD-based v0.2.x/early-v0.3 line is not compatible — refuse to run over it
-# so the box cannot end up half-upgraded. A non-purging uninstall of the old
-# line leaves no binary (uninstall.sh removes it), so this only fires when the
-# old panel was never uninstalled.
-if [[ -x /usr/local/bin/vpsmgr ]] && ! /usr/local/bin/vpsmgr version 2>/dev/null | grep -q "0.3"; then
-  echo "error: an old LXD-based vpsmgr binary is still installed." >&2
-  echo "       this installer uses Incus and cannot run over it." >&2
-  echo "       uninstall the old version first (bash uninstall.sh --purge)." >&2
-  exit 1
-fi
-
 # Local build: make it obvious WHICH branch will be compiled, and give the user
 # a chance to abort — some people want a dev build but end up building stable.
 if [[ "$BUILD_MODE" == "local" ]]; then

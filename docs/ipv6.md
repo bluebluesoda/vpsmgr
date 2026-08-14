@@ -38,7 +38,7 @@ applies it.
 
 ## Bridge setup (`SetupIPv6Bridge`)
 
-The bridge (`lxdbr0`) gets:
+The bridge (`incusbr0`) gets:
 
 ```
 ipv6.address = <gw>/<len>     # len = bridgePrefixLen(ones)
@@ -86,7 +86,7 @@ For each container:
 
 vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
 restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
-by `vpsmgr-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
+by `vps-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
 rules survive reboots. `vps ipv6-reapply` also re-applies the per-container
 routed-IPv6 config (self-healing: containers created before the host-routed
 scheme, or whose networkd config was corrupted, are repaired on every boot).
@@ -99,7 +99,7 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
   reuses an existing config's `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh` — installs `ndppd` (only when IPv6 is enabled; it is not part
   of the default small install otherwise).
-- `10-lxd.sh` — creates `lxdbr0` without an IPv6 address (the address is
+- `10-incus.sh` — creates `incusbr0` without an IPv6 address (the address is
   chosen clash-free by `SetupIPv6Bridge` at `vps install`).
 - `20-network.sh` — enables IPv6 forwarding.
 - `50-image.sh` — bakes the Debian networkd IPv6 config (`DHCP=ipv4`,
@@ -130,4 +130,4 @@ host does not proxy the private subnet.
 `uninstall.sh` reads the prefix from the config before removal, then: stops
 and disables `ndppd` and removes `/etc/ndppd.conf`, removes any leftover
 kernel `proxy_ndp` entries and `/128` routes matching the prefix, resets
-`lxdbr0` IPv6 to disabled, and restores forwarding sysctls.
+`incusbr0` IPv6 to disabled, and restores forwarding sysctls.

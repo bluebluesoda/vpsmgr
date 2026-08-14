@@ -28,7 +28,7 @@ const (
 	DefaultListen     = ":8443"
 	DefaultSubnet     = "10.115.0.0/24"
 	DefaultGateway    = "10.115.0.1"
-	DefaultBridge     = "lxdbr0"
+	DefaultBridge     = "incusbr0"
 	DefaultPool       = "vpsmgr"
 	DefaultImage      = "vpsmgr/debian-sshd"
 	DefaultImageFB    = "images:debian/13"
@@ -74,16 +74,7 @@ const GeneratedBanner = "# Managed by vpsmgr — generated file, do not edit by 
 type Config struct {
 	Panel PanelCfg `yaml:"panel"`
 	Net   NetCfg   `yaml:"net"`
-	Incus IncusCfg  `yaml:"incus"`
-	// InstalledVersion is the binary version that installed (or adopted/upgraded)
-	// this config, written by `vps install`. UninstalledVersion is the version
-	// of the binary that a NON-purging uninstall removed, written by
-	// `vps note-version` (called from uninstall.sh before the binary is
-	// deleted). Both survive a reinstall because /etc/vpsmgr is kept, so a future
-	// release that makes breaking changes can detect which version a config/db
-	// came from and migrate or warn instead of corrupting user data.
-	InstalledVersion   string `yaml:"installed_version,omitempty"`
-	UninstalledVersion string `yaml:"uninstalled_version,omitempty"`
+	Incus IncusCfg `yaml:"incus"`
 }
 
 type PanelCfg struct {
@@ -105,10 +96,6 @@ type PanelCfg struct {
 	// a second random path generated at install. Requests that match neither
 	// URLPath nor AdminPath get a bare, headerless 404.
 	AdminPath string `yaml:"admin_url_path,omitempty"`
-	// AdminPass is the bcrypt hash of the admin panel password. There is no
-	// admin username — only this password is checked. Stored in the config
-	// (0600) instead of the DB to avoid touching the user database schema.
-	AdminPass string `yaml:"admin_pass_hash,omitempty"`
 }
 
 type NetCfg struct {
@@ -126,7 +113,7 @@ type NetCfg struct {
 	// IPv6Subnet is the global prefix handed out to containers (e.g.
 	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
 	// Empty means IPv6 pass-through is disabled.
-	// Containers get global addresses via SLAAC on lxdbr0; the host proxies
+	// Containers get global addresses via SLAAC on incusbr0; the host proxies
 	// their neighbor discovery. No NAT, no DB schema change: a container's
 	// IPv6 is whatever Incus/SLAAC assigned, read live from `incus list`.
 	IPv6Subnet string `yaml:"ipv6_subnet,omitempty"`
@@ -425,7 +412,7 @@ func DetectExtIF() string {
 	if s := shCmd("sh", "-c", "ip route show default | awk '{print $5; exit}'"); s != "" {
 		return s
 	}
-	if s := shCmd("sh", "-c", "ip -o link show up | grep -v -E 'lo|lxdbr|virbr|docker' | awk -F': ' '{print $2; exit}'"); s != "" {
+	if s := shCmd("sh", "-c", "ip -o link show up | grep -v -E 'lo|incusbr|virbr|docker' | awk -F': ' '{print $2; exit}'"); s != "" {
 		return s
 	}
 	return "eth0"
