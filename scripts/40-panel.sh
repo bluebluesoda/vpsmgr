@@ -35,6 +35,7 @@ install_prebuilt(){
     *) log "warn: no prebuilt binary for $(uname -m), falling back to local build"; return 1 ;;
   esac
   dir="$(mktemp -d /tmp/vpsmgr-dl.XXXXXX)"
+  trap 'rm -rf "$dir"' EXIT
   bin_url="https://github.com/$REPO/releases/latest/download/vps-$arch"
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."

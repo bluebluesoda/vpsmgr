@@ -57,6 +57,10 @@ type hostView struct {
 type userView struct {
 	Name       string
 	State      string
+	// Status is the persistent lifecycle state (ready/creating/reinstalling/
+	// failed). Non-ready states are shown to the operator so a crashed
+	// Add/Reinstall is visible instead of looking like a healthy user.
+	Status     string
 	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
 	PortsShort string // compact form, e.g. 107xx
 	SSHPort    string
@@ -118,6 +122,7 @@ func (s *Server) loadUsers(d *pageData) {
 		vs = append(vs, userView{
 			Name:       u.Name,
 			State:      st.State,
+			Status:     u.Status,
 			Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
 			PortsShort: mgr.UserPortsShort(u.StartPort),
 			SSHPort:    strconv.Itoa(u.SSHPort),
