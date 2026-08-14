@@ -22,7 +22,16 @@ build_local(){
   ensure_go || die "go toolchain install failed"
   log "building vpsmgr from source..."
   bash "$ROOT/build.sh" || die "build failed"
-  cp "$ROOT/bin/vps" /usr/local/bin/vps
+  # Replacing a running binary fails with ETXTBSY ("Text file busy") on an
+  # adopted install where vps.service is already active. Stop the service
+  # first, then copy, then let the installer re-enable it below.
+  if systemctl is-active --quiet vps.service 2>/dev/null; then
+    systemctl stop vps.service >/dev/null 2>&1 || true
+    log "stopped vps.service to replace the running binary"
+  fi
+  if ! cp "$ROOT/bin/vps" /usr/local/bin/vps; then
+    die "could not copy built binary to /usr/local/bin/vps"
+  fi
   chmod 755 /usr/local/bin/vps
   log "installed /usr/local/bin/vps from source ($(/usr/local/bin/vps version))"
 }
@@ -78,6 +87,9 @@ log "running vps install (config/cert/db/nft/systemd)..."
 # admin password).
 INSTALL_OUT=/etc/vpsmgr/.last-install.out
 rm -f "$INSTALL_OUT"
+# `vps install` creates /etc/vpsmgr itself — make sure it exists before tee
+# opens the capture file, or the pipeline fails on a fresh host.
+install -d -m 0755 /etc/vpsmgr
 if /usr/local/bin/vps install 2>&1 | tee "$INSTALL_OUT"; then
   chmod 600 "$INSTALL_OUT"
 else

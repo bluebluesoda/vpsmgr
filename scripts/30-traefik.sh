@@ -66,7 +66,12 @@ if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   fi
   chown -R root:traefik /etc/traefik
   chmod 750 /etc/traefik
-  chown vps:vps /etc/traefik/dynamic
+  # The panel user 'vps' is created later by 40-panel.sh / `vps install`; when
+  # it does not exist yet, skip the chown here and let ensureVPSUser do it
+  # (it re-chowns the dynamic dir on every install).
+  if id -u vps >/dev/null 2>&1; then
+    chown vps:vps /etc/traefik/dynamic
+  fi
   chmod 750 /etc/traefik/dynamic
   chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service
