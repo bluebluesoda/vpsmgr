@@ -59,14 +59,21 @@ done
 [[ -S /var/lib/incus/unix.socket ]] || die "incus daemon socket not ready"
 
 # --- storage pool ---
-# The Debian-package Incus bundles its own userspace tools; on a kernel that
-# ships the zfs module the pool is created with zfs. No host zfsutils are
-# needed. Fall back to dir (no quotas) when zfs is unavailable.
+# ZFS only: Incus quotas, snapshots and clone-on-create (the whole disk model)
+# depend on it. Incus does NOT bundle the ZFS userspace tools, so
+# zfsutils-linux must be installed (00-check.sh ensures it). The dir backend is
+# deliberately not offered — it has no quotas, which silently breaks the disk
+# limits every container is supposed to have.
+command -v zpool >/dev/null 2>&1 || die "zfsutils-linux is not installed (zpool missing) — 00-check.sh should have installed it; run it or: apt-get install -y zfsutils-linux"
 POOL=vpsmgr
 POOL_EXISTS=0
 if incus storage show "$POOL" >/dev/null 2>&1; then
   POOL_EXISTS=1
-  log "storage pool '$POOL' exists ($(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}'))"
+  DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
+  if [[ "$DRIVER" != "zfs" ]]; then
+    die "existing storage pool '$POOL' uses driver '$DRIVER' — this installer requires ZFS (dir has no quotas)"
+  fi
+  log "storage pool '$POOL' exists ($DRIVER)"
 fi
 
 # find a spare whole-disk block device (no partitions, not the root disk, unmounted)
@@ -180,15 +187,12 @@ EOF
     fi
     if ! incus storage show "$POOL" >/dev/null 2>&1; then
       if [[ -n "$SPARE" ]]; then
-        incus storage create "$POOL" zfs source="$SPARE" || true
+        incus storage create "$POOL" zfs source="$SPARE" || die "zfs pool creation on $SPARE failed"
       elif [[ -n "$POOL_SIZE_MB" ]]; then
-        incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || true
+        incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
+      else
+        die "no disk for the zfs pool and no loop-file size decided"
       fi
-      # last resort: dir backend (no quotas)
-      incus storage show "$POOL" >/dev/null 2>&1 || {
-        log "  warn: zfs pool creation failed, using dir backend (quotas disabled)"
-        incus storage create "$POOL" dir
-      }
     fi
   fi
 else
@@ -214,8 +218,8 @@ incus network set incusbr0 dns.mode=none 2>/dev/null || true
 
 DRIVER_NOW=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"
-if [[ "$DRIVER_NOW" == "dir" ]]; then
-  log "  warn: dir backend — disk quotas NOT enforced"
+if [[ "$DRIVER_NOW" != "zfs" ]]; then
+  die "storage pool '$POOL' is not ZFS ('$DRIVER_NOW') — this installer requires ZFS (quotas, snapshots, clones)"
 fi
 
 echo "[10] incus ready"

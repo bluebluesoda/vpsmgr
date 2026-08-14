@@ -86,13 +86,43 @@ else
 fi
 
 # --- packages ---
-for p in nftables zstd curl gpg; do
+# Debian minimal images are notoriously bare (sometimes even curl is missing),
+# so every tool the installer needs is ensured here, before any later step
+# depends on it:
+#   - zfsutils-linux: Incus does NOT bundle the ZFS userspace tools; the
+#     storage pool is ZFS-only (dir backend is not supported), so zpool/zfs
+#     must be present or pool creation fails
+#   - linux-headers-$(uname -r) + build-essential: on Debian the ZFS kernel
+#     modules are compiled with DKMS against the CURRENT kernel, so the
+#     matching headers and a compiler are required (Ubuntu ships prebuilt
+#     modules and does not need these)
+#   - ca-certificates: without it every curl HTTPS call (Zabbly key, traefik
+#     download, image pulls) fails with a certificate error
+#   - python3: used by 00-ip-ask.sh (prefix/subnet validation) and the
+#     check-ipv6-support.sh probe
+#   - tar/xz-utils: traefik tarball extraction; curl: downloads; gpg: Zabbly
+#     key verification; nftables/zstd: firewall + Incus image compression
+KERNEL_REL=$(uname -r)
+for p in zfsutils-linux "linux-headers-${KERNEL_REL}" build-essential ca-certificates python3 tar xz-utils nftables zstd curl gpg; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
     log "installing $p"
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$p"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$p" || log "  warn: could not install $p"
   fi
 done
+
+# The zfs-dkms package may have installed before the current kernel's headers
+# were available (kernel upgraded since boot). Compile the module for the
+# running kernel so zpool is actually usable, then load it.
+if ! modprobe zfs 2>/dev/null; then
+  log "building ZFS kernel modules for $KERNEL_REL (first run compiles; takes a minute)..."
+  for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
+    dkms build "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
+    dkms install "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
+  done
+  modprobe zfs || die "ZFS kernel module failed to load — check 'dkms status' and 'dmesg | grep zfs'"
+fi
+log "zfs: $(zpool version 2>/dev/null | head -1)"
 
 # --- Go toolchain (only needed for local build; installed lazily by 40-panel.sh) ---
 if command -v go >/dev/null 2>&1; then

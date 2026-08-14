@@ -20,6 +20,16 @@ case "$ARCH" in
 esac
 TRAEFIK_URL="https://github.com/traefik/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_v${TRAEFIK_VERSION}_linux_${TARCH}.tar.gz"
 
+# Defensive dependency check (00-check.sh already installs these on a full
+# install; this covers running 30-traefik.sh standalone on a bare Debian).
+for p in curl tar ca-certificates; do
+  if ! dpkg -s "$p" >/dev/null 2>&1; then
+    log "installing $p (needed for the traefik download)"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$p"
+  fi
+done
+
 if [[ ! -x /usr/local/bin/traefik ]]; then
   log "downloading traefik ${TRAEFIK_VERSION} (${TARCH})"
   log "  ${TRAEFIK_URL}"
