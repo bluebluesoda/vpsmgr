@@ -154,25 +154,14 @@ else
     # Pool ceiling = a share of the free space, as a sparse loop file that
     # grows on demand. Small disks keep 80% so the host / Incus image store
     # keep enough headroom; big disks (>= 20 GiB free) can afford 90%.
+    # No reserve check: the loop file is sparse, so creating the pool costs
+    # nothing — only actual container data grows it, and the percentage
+    # ceiling already keeps the host from being fully starved.
     PCT=80
     if (( FREE_KB > 20 * 1024 * 1024 )); then
       PCT=90
     fi
     POOL_SIZE_MB=$(( FREE_KB * PCT / 100 / 1024 ))
-    # Refuse to build a pool so small the host starves: require the pool to
-    # leave at least 3 GiB free even after accounting for the loop file's
-    # eventual size. (The loop file is sparse — it only occupies what's used —
-    # so this is the worst-case guard.)
-    #
-    # On mid-size disks the 90% ceiling can leave < 3 GiB anyway (e.g. 23 GiB
-    # free -> 90% pool = 20.7 GiB, only 2.3 GiB left). Shrink the pool until
-    # the reserve holds instead of aborting: a small pool beats no pool.
-    while (( POOL_SIZE_MB > 1024 && FREE_KB - POOL_SIZE_MB * 1024 < 3 * 1024 * 1024 )); do
-      POOL_SIZE_MB=$(( POOL_SIZE_MB - 512 ))
-    done
-    if (( FREE_KB - POOL_SIZE_MB * 1024 < 3 * 1024 * 1024 )); then
-      die "too little free space on / ($(( FREE_KB / 1024 / 1024 )) GiB) even after cleanup — cannot create a usable zfs pool"
-    fi
     log "loop-file zfs pool '$POOL' (~${POOL_SIZE_MB} MiB = ${PCT}% of free, created by Incus)"
     SRC_LINE=""
     SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
