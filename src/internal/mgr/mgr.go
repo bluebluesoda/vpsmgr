@@ -195,6 +195,13 @@ func (m *Manager) Provision(name, image, pass string) error {
 	// (present in the distro images) from resetting it back to the instance
 	// name (= username) on the next boot.
 	hostSetup := `
+# Wait for systemd to be ready: right after boot /run/systemd/private may not
+# exist yet, making hostnamectl/systemctl fail with "Failed to connect to
+# system scope bus". Bounded, cheap.
+for i in $(seq 1 40); do
+  [ -S /run/systemd/private ] && break
+  sleep 0.5
+done
 VPSMGR_HOST='` + host + `'
 printf '%s\n' "$VPSMGR_HOST" > /etc/hostname
 hostname "$VPSMGR_HOST" 2>/dev/null || true

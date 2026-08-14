@@ -124,11 +124,19 @@ func (m *Manager) SetupIPv6Bridge() error {
 			return err
 		}
 	}
-	// Remove the conflicting route Incus auto-creates on the bridge for the
-	// bridge's own prefix when the host itself is inside it (eth0 keeps the
-	// authoritative route). Needs CAP_NET_ADMIN → sudoers whitelist.
+	// Route the bridge's own prefix through the bridge so Incus can program
+	// the per-container /112 routes (ipv6.routes). On LXD the bridge address
+	// auto-created this route; Incus 7.0 does not when the external interface
+	// already holds an equal-prefix route, and without a dev incusbr0 route the
+	// container's ipv6.routes cannot be installed ("no route to host"). Adding
+	// the route is idempotent (EEXIST is fine). Needs CAP_NET_ADMIN → sudoers
+	// whitelist.
 	bridgeNet := &net.IPNet{IP: net.ParseIP(gw).Mask(net.CIDRMask(bridgeOnes, 128)), Mask: net.CIDRMask(bridgeOnes, 128)}
-	_, _ = su.Run("/sbin/ip", "-6", "route", "del", bridgeNet.String(), "dev", bridge)
+	_, _ = su.Run("/sbin/ip", "-6", "route", "add", bridgeNet.String(), "dev", bridge)
+	// Give the bridge a fixed link-local address (fe80::1) so containers can
+	// statically point their default route at it — no dependency on learning
+	// the gateway from router advertisements.
+	_, _ = su.Run("/sbin/ip", "-6", "addr", "add", "fe80::1/64", "dev", bridge)
 	_ = m.enableForwarding()
 	return nil
 }

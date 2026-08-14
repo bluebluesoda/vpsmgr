@@ -41,6 +41,13 @@ func (m *Manager) ipv6ContainerScript(name string) (string, error) {
 	// to the parent prefix, e.g. 2406:da14:1dd2:a807:753a for a /80.
 	prefix := strings.TrimSuffix(n.IP.String(), "::")
 	script := fmt.Sprintf(`set -e
+# Wait for systemd to be ready before touching it: right after boot the
+# /run/systemd/private bus socket may not exist yet, and systemctl then fails
+# with "Failed to connect to system scope bus". Bounded, cheap.
+for i in $(seq 1 40); do
+  [ -S /run/systemd/private ] && break
+  sleep 0.5
+done
 if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
   CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
   [ -n "$CONN" ] && nmcli con mod "$CONN" ipv6.method ignore >/dev/null 2>&1 || true
@@ -52,16 +59,21 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
     printf 'net.ipv6.conf.eth0.accept_ra = 1\nnet.ipv6.conf.eth0.accept_ra_pinfo = 0\nnet.ipv6.conf.eth0.accept_redirects = 0\n' > /etc/sysctl.d/99-vpsmgr-ipv6.conf
   fi
   sysctl -p /etc/sysctl.d/99-vpsmgr-ipv6.conf 2>/dev/null || true
-  if [ ! -f /usr/local/sbin/vpsmgr-ipv6 ]; then
-    printf '#!/bin/sh\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 0\nip -6 addr replace "$(cat /etc/vpsmgr-ipv6.conf)" dev eth0\n' > /usr/local/sbin/vpsmgr-ipv6
-    chmod +x /usr/local/sbin/vpsmgr-ipv6
-  fi
-  if [ ! -f /etc/systemd/system/vpsmgr-ipv6.service ]; then
-    printf '[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/vpsmgr-ipv6.service
-    systemctl daemon-reload >/dev/null 2>&1 || true
-  fi
-  systemctl enable --now vpsmgr-ipv6.service >/dev/null 2>&1 || true
-  ip -6 addr replace %q/128 dev eth0 2>/dev/null || true
+  # Fully static IPv6: the panel writes /etc/vpsmgr-ipv6.conf with the
+  # deterministic /128. The helper temporarily enables RA processing to learn
+  # the gateway from the bridge dnsmasq, then disables RA and pins the address
+  # + a static default route via the learned gateway. Waits for DAD to finish
+  # (a tentative source breaks the route add) and exits 1 on any failure so
+  # the unit (Restart=on-failure) retries. Rewritten on EVERY configure run.
+  printf '#!/bin/sh\nfor i in $(seq 1 150); do\n  [ -f /etc/vpsmgr-ipv6.conf ] && break\n  sleep 2\ndone\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 1\nADDR=$(cat /etc/vpsmgr-ipv6.conf)\nADDR_BARE=${ADDR%%/*}\nsysctl -w net.ipv6.conf.eth0.accept_ra=1 >/dev/null 2>&1\nsysctl -w net.ipv6.conf.all.accept_ra=1 >/dev/null 2>&1\nGW=""\nfor i in $(seq 1 60); do\n  GW=$(ip -6 route show dev eth0 | awk "/default/{print \\$3; exit}")\n  [ -n "$GW" ] && break\n  sleep 2\ndone\n[ -n "$GW" ] || exit 1\nsysctl -w net.ipv6.conf.eth0.accept_ra=0 >/dev/null 2>&1\nsysctl -w net.ipv6.conf.all.accept_ra=0 >/dev/null 2>&1\nip -6 addr replace "$ADDR" dev eth0 2>/dev/null\nip -6 addr show dev eth0 scope global | grep inet6 | while read -r line; do\n  a=$(echo "$line" | awk "{print \\$2}" | cut -d/ -f1)\n  [ "$a" != "$ADDR_BARE" ] && ip -6 addr del "$a" dev eth0 2>/dev/null\ndone\n# Wait for DAD to complete (tentative -> valid), then pin the static route.\nfor i in $(seq 1 30); do\n  ip -6 addr show dev eth0 scope global | grep -q tentative || break\n  sleep 1\ndone\nip -6 route flush dev eth0 2>/dev/null\nip -6 route add default via "$GW" dev eth0 src "$ADDR_BARE" || exit 1\nip -6 route flush cache 2>/dev/null\n' > /usr/local/sbin/vpsmgr-ipv6
+  chmod +x /usr/local/sbin/vpsmgr-ipv6
+  printf '[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\nRestart=on-failure\nRestartSec=10\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/vpsmgr-ipv6.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true
+  # Start the staticize unit in the background: it waits for conf + the RA
+  # default route and retries (Restart=on-failure) until it converges, and
+  # must not block the panel's configure call.
+  systemctl --no-block start vpsmgr-ipv6.service >/dev/null 2>&1 || true
 else
   CFG=/etc/systemd/network/eth0.network
   changed=0
@@ -98,7 +110,7 @@ for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
     %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
   esac
 done
-ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, ipv6, ipv6, ipv6, prefix)
+ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, ipv6, ipv6, prefix)
 	return script, nil
 }
 

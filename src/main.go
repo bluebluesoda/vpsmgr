@@ -430,6 +430,19 @@ func ensureVPSUser(c *cfg.Config) {
 	_ = exec.Command("chown", "vps:vps", c.TraefikDir()).Run()
 	// 3. incus-admin group membership (the Incus socket's owning group).
 	_ = exec.Command("usermod", "-aG", "incus-admin", "vps").Run()
+	// 3b. Traefik cross-link: vps must traverse /etc/traefik (group traefik) to
+	// write the dynamic files, and the traefik service must read the dynamic
+	// dir (owned by vps). See scripts/30-traefik.sh.
+	if _, err := exec.Command("id", "-u", "traefik").CombinedOutput(); err == nil {
+		_ = exec.Command("usermod", "-aG", "traefik", "vps").Run()
+		_ = exec.Command("usermod", "-aG", "vps", "traefik").Run()
+		_ = exec.Command("chown", "vps:vps", c.TraefikDir()).Run()
+		_ = exec.Command("chmod", "0750", "/etc/traefik").Run()
+		_ = exec.Command("chmod", "0750", c.TraefikDir()).Run()
+	}
+	// 3c. ndppd.conf: the panel renders this file as the unprivileged user.
+	_ = exec.Command("touch", "/etc/ndppd.conf").Run()
+	_ = exec.Command("chown", "vps:vps", "/etc/ndppd.conf").Run()
 	// 4. sudoers whitelist.
 	ensureSudoers()
 }
@@ -458,6 +471,8 @@ vps ALL=(root) NOPASSWD: /sbin/ip -6 route replace *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh del proxy *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh add proxy *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 addr replace *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 addr add *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 addr del *
 vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start

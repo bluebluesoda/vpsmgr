@@ -161,7 +161,6 @@ profiles:
   description: Default Incus profile
   devices:
     eth0:
-      name: eth0
       nictype: bridged
       parent: incusbr0
       type: nic
@@ -192,13 +191,21 @@ EOF
       }
     fi
   fi
-  # ensure default profile devices point at our pool/bridge
-  incus profile set default root.pool "$POOL" 2>/dev/null || true
-  incus profile device set default root pool "$POOL" 2>/dev/null || true
-  incus profile device set default eth0 parent incusbr0 2>/dev/null || true
 else
   log "Incus already initialized (pool+network present)"
 fi
+
+# Ensure the default profile carries the root disk + eth0 devices. This runs on
+# EVERY install (not only preseed) because Incus's preseed may leave the default
+# profile untouched ("unless you explicitly express that in the YAML") and an
+# adopted/partially-initialized daemon can have an empty profile.
+incus profile show default >/dev/null 2>&1 || incus profile create default
+incus profile device list default | grep -q "root" || \
+  incus profile device add default root disk path=/ pool="$POOL" || true
+incus profile device set default root pool "$POOL" 2>/dev/null || true
+incus profile device list default | grep -q "eth0" || \
+  incus profile device add default eth0 nic nictype=bridged parent=incusbr0 || true
+incus profile device set default eth0 parent incusbr0 2>/dev/null || true
 
 # Always re-assert dns.mode=none (fresh install and upgrade alike): this is the
 # only thing that stops Incus from publishing <username>.lxd DNS/PTR records

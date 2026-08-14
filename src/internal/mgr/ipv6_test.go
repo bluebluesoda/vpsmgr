@@ -169,8 +169,9 @@ func TestIPv6ContainerScript(t *testing.T) {
 		"2602:fada:6*",                        // stale on-link route flush
 		"ip -6 route flush cache",
 		"net.ipv6.conf.eth0.accept_ra_pinfo = 0", // RHEL: no on-link prefix
-		`ip -6 addr replace "$(cat /etc/vpsmgr-ipv6.conf)" dev eth0`, // RHEL boot helper
-		"ExecStart=/usr/local/sbin/vpsmgr-ipv6",                      // RHEL boot unit
+		`ADDR=$(cat /etc/vpsmgr-ipv6.conf)`,       // RHEL boot helper (prunes SLAAC + on-link)
+		"ip -6 addr replace \"$ADDR\" dev eth0",
+		"ExecStart=/usr/local/sbin/vpsmgr-ipv6", // RHEL boot unit
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)

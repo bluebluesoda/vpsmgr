@@ -40,13 +40,22 @@ fi
 if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   # Fresh install: run Traefik as a dedicated unprivileged user that can only
   # read /etc/traefik (config + dynamic rules) and bind ports 80/443. The panel
-  # keeps writing the dynamic files as root; existing installs are untouched.
+  # (unprivileged 'vps') writes the dynamic files, so the two groups cross-link:
+  # vps joins traefik (to traverse /etc/traefik) and traefik joins vps (to read
+  # the dynamic dir, which vps owns). Existing installs are untouched.
   if ! id -u traefik >/dev/null 2>&1; then
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin traefik
     log "created unprivileged user 'traefik'"
   fi
+  if id -u vps >/dev/null 2>&1; then
+    usermod -aG traefik vps >/dev/null 2>&1 || true
+    usermod -aG vps traefik >/dev/null 2>&1 || true
+    log "cross-linked groups: vps<->traefik (panel writes dynamic, traefik reads it)"
+  fi
   chown -R root:traefik /etc/traefik
-  chmod 750 /etc/traefik /etc/traefik/dynamic
+  chmod 750 /etc/traefik
+  chown vps:vps /etc/traefik/dynamic
+  chmod 750 /etc/traefik/dynamic
   chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service
   systemctl daemon-reload
