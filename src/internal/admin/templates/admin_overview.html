@@ -180,7 +180,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small></td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>
-          <td>{{if eq .State "Running"}}{{.Procs}} / {{.ProcsLimit}}{{else}}-{{end}}</td>
+          <td>{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
           <td>{{.DiskUsed}}</td>
           <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
           <td>

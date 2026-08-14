@@ -49,6 +49,7 @@ code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: 12p
   <h1>{{if eq .Lang "zh"}}域名管理{{else}}Domain management{{end}}</h1>
   <div class="actions">
     <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}总览{{else}}Overview{{end}}</a>
+    <a href="{{.Prefix}}/audit" class="btn">{{if eq .Lang "zh"}}审计日志{{else}}Audit{{end}}</a>
     <span class="lang"><a href="{{.Prefix}}/domains?lang=zh">中文</a><a href="{{.Prefix}}/domains?lang=en">EN</a></span>
     <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
   </div>
