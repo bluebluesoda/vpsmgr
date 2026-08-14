@@ -51,28 +51,18 @@ fi
 
 if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   # Fresh install: run Traefik as a dedicated unprivileged user that can only
-  # read /etc/traefik (config + dynamic rules) and bind ports 80/443. The panel
-  # (unprivileged 'vps') writes the dynamic files, so the two groups cross-link:
-  # vps joins traefik (to traverse /etc/traefik) and traefik joins vps (to read
-  # the dynamic dir, which vps owns). Existing installs are untouched.
+  # read /etc/traefik (config + dynamic rules) and bind ports 80/443. The
+  # dynamic dir is world-readable (traefik reads it as any other user) and
+  # owned by 'vps' once that user exists; until then root owns it, and
+  # ensureVPSUser (40-panel.sh -> vps install) chowns it to vps:vps 0755.
   if ! id -u traefik >/dev/null 2>&1; then
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin traefik
     log "created unprivileged user 'traefik'"
   fi
-  if id -u vps >/dev/null 2>&1; then
-    usermod -aG traefik vps >/dev/null 2>&1 || true
-    usermod -aG vps traefik >/dev/null 2>&1 || true
-    log "cross-linked groups: vps<->traefik (panel writes dynamic, traefik reads it)"
-  fi
   chown -R root:traefik /etc/traefik
-  chmod 750 /etc/traefik
-  # The panel user 'vps' is created later by 40-panel.sh / `vps install`; when
-  # it does not exist yet, skip the chown here and let ensureVPSUser do it
-  # (it re-chowns the dynamic dir on every install).
-  if id -u vps >/dev/null 2>&1; then
-    chown vps:vps /etc/traefik/dynamic
-  fi
-  chmod 750 /etc/traefik/dynamic
+  chmod 755 /etc/traefik
+  chown root:traefik /etc/traefik/dynamic
+  chmod 755 /etc/traefik/dynamic
   chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service
   systemctl daemon-reload

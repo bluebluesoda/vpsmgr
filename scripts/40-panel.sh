@@ -8,7 +8,7 @@ log(){ echo "[40] $*"; }
 die(){ echo "[40] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="bluebluesoda/lxc-hosting"
+REPO="bluebluesoda/vpsmgr"
 
 ensure_go(){
   # Reuse a usable go on PATH (>= 1.21, toolchain auto-switch works) when one
@@ -100,7 +100,12 @@ install_prebuilt(){
     *) log "warn: no prebuilt binary for $(uname -m), falling back to local build"; return 1 ;;
   esac
   dir="$(mktemp -d /tmp/vpsmgr-dl.XXXXXX)"
-  trap 'rm -rf "$dir"' EXIT
+  # EXIT trap for cleanup. Must NOT reference the local $dir: the trap string
+  # is evaluated when the script EXITS, after the function returned and $dir
+  # went out of scope — under `set -u` that would raise "unbound variable"
+  # (and skip the cleanup) at the very end of a successful install. Globbing
+  # the unique mktemp prefix is local-agnostic and only ever matches this dir.
+  trap 'rm -rf /tmp/vpsmgr-dl.*' EXIT
   bin_url="https://github.com/$REPO/releases/latest/download/vps-$arch"
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."
