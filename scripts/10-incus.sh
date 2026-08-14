@@ -163,6 +163,13 @@ else
     # leave at least 3 GiB free even after accounting for the loop file's
     # eventual size. (The loop file is sparse — it only occupies what's used —
     # so this is the worst-case guard.)
+    #
+    # On mid-size disks the 90% ceiling can leave < 3 GiB anyway (e.g. 23 GiB
+    # free -> 90% pool = 20.7 GiB, only 2.3 GiB left). Shrink the pool until
+    # the reserve holds instead of aborting: a small pool beats no pool.
+    while (( POOL_SIZE_MB > 1024 && FREE_KB - POOL_SIZE_MB * 1024 < 3 * 1024 * 1024 )); do
+      POOL_SIZE_MB=$(( POOL_SIZE_MB - 512 ))
+    done
     if (( FREE_KB - POOL_SIZE_MB * 1024 < 3 * 1024 * 1024 )); then
       die "too little free space on / ($(( FREE_KB / 1024 / 1024 )) GiB) even after cleanup — cannot create a usable zfs pool"
     fi
