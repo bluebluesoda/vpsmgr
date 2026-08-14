@@ -138,6 +138,10 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
+	case "ip6":
+		// Root helper behind the sudoers whitelist: validates every argument
+		// before running the pinned ip -6 operations (see main_ip6.go).
+		err = cmdIP6(os.Args[2:])
 	case "config":
 		err = cmdConfig(os.Args[2:])
 	case "version":
@@ -311,6 +315,13 @@ func cmdInstall() error {
 	if err := ensureVPSUser(c); err != nil {
 		return fmt.Errorf("vps user setup: %w", err)
 	}
+	// The `vps ip6` sudoers entry runs this very binary as root; it must be
+	// root-owned and not writable by the panel user, or the whitelist would be
+	// subvertible. The installer places it root-owned, but re-affirm on every
+	// install (adoption/upgrade paths may have changed ownership).
+	if err := ensureBinaryIsRootOwned(); err != nil {
+		return fmt.Errorf("secure vps binary: %w", err)
+	}
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {
 		return err
@@ -483,10 +494,10 @@ vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now traefik.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now traefik.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl restart vps.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet vps.service
-vps ALL=(root) NOPASSWD: /sbin/ip -6 route del *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 route add *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh del proxy *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 addr add *
+# IPv6 route/neigh/addr changes go through the vps ip6 root helper, which
+# validates every argument (IPv6 address/CIDR + interface name) before running
+# ip — the panel never gets bare ip -6 wildcard rights.
+vps ALL=(root) NOPASSWD: /usr/local/bin/vps ip6 *
 vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start

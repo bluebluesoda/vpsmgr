@@ -45,12 +45,19 @@ func (c *Config) VerifyImmutable(snapshot string) error {
 	}
 	// Pre-incus-rename snapshots used lxd.pool / lxd.bridge; treat them as the
 	// same fields so an upgrade is verified against the historical baseline
-	// instead of silently skipping the check.
+	// instead of silently skipping the check. A legacy snapshot where these
+	// are EMPTY means they were never snapshotted (the pre-fix code always
+	// wrote "") — treat that as missing and skip, so an existing install is
+	// not falsely flagged as drifted on upgrade.
 	if v, ok := m["lxd.pool"]; ok {
-		m["incus.pool"] = v
+		if v != "" {
+			m["incus.pool"] = v
+		}
 	}
 	if v, ok := m["lxd.bridge"]; ok {
-		m["incus.bridge"] = v
+		if v != "" {
+			m["incus.bridge"] = v
+		}
 	}
 	var drifted []string
 	for _, k := range ImmutableFields {

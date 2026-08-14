@@ -105,3 +105,18 @@ func TestVerifyImmutableMigratesLegacyLxdKeys(t *testing.T) {
 		t.Fatal("drifted legacy lxd.bridge accepted")
 	}
 }
+
+// TestVerifyImmutableSkipsEmptyLegacyPool covers real installations: the
+// pre-fix snapshot code ALWAYS wrote lxd.pool/lxd.bridge as "" (the registry
+// had no such fields), so a real legacy snapshot carries empty values. Those
+// must be treated as "never snapshotted" — skipped — or every existing install
+// would be flagged as drifted on upgrade.
+func TestVerifyImmutableSkipsEmptyLegacyPool(t *testing.T) {
+	c := Default()
+	c.Incus.Pool = "vpsmgr"
+	c.Incus.Bridge = "incusbr0"
+	legacy := `{"lxd.pool":"","lxd.bridge":"","net.subnet":"10.115.0.0/24"}`
+	if err := c.VerifyImmutable(legacy); err != nil {
+		t.Fatalf("empty legacy lxd.* snapshot blocked: %v", err)
+	}
+}

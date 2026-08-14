@@ -138,7 +138,7 @@ func (m *Manager) SetupIPv6Bridge() error {
 	// Give the bridge a fixed link-local address (fe80::1) so containers can
 	// statically point their default route at it — no dependency on learning
 	// the gateway from router advertisements.
-	if _, err := su.Run("/sbin/ip", "-6", "addr", "add", "fe80::1/64", "dev", bridge); err != nil && !isExistsErr(err) {
+	if _, err := su.IP6("addr-add", "fe80::1/64", bridge); err != nil && !isExistsErr(err) {
 		return fmt.Errorf("add bridge link-local address: %w", err)
 	}
 	if err := m.enableForwarding(); err != nil {
@@ -150,21 +150,23 @@ func (m *Manager) SetupIPv6Bridge() error {
 // ipRouteAdd adds an IPv6 route, tolerating "already exists" (the command is
 // idempotent across installs/reapplies) but failing on any real error.
 func (m *Manager) ipRouteAdd(route, dev string) error {
-	_, err := su.Run("/sbin/ip", "-6", "route", "add", route, "dev", dev)
+	_, err := su.IP6("route-add", route, dev)
 	if err != nil && !isExistsErr(err) {
 		return err
 	}
 	return nil
 }
 
-// isExistsErr reports whether a su.Run error is the kernel's "already exists"
-// (route/address/neighbor), which is the idempotent no-op case for these
-// setup commands — any other failure is a real error.
+// isExistsErr reports whether a su.Run/su.IP6 error is the kernel's
+// "already exists / already assigned" (route/address/neighbor), which is the
+// idempotent no-op case for these setup commands — any other failure is a
+// real error.
 func isExistsErr(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "file exists") ||
-		strings.Contains(msg, "exists") ||
 		strings.Contains(msg, "already exist") ||
+		strings.Contains(msg, "already assigned") ||
+		strings.Contains(msg, "exists") ||
 		strings.Contains(msg, "einval") && strings.Contains(msg, "address")
 }
 
@@ -414,9 +416,9 @@ func (m *Manager) cleanLegacyKernelProxy() {
 			continue
 		}
 		if ext != "" {
-			_, _ = su.Run("/sbin/ip", "-6", "neigh", "del", "proxy", addr, "dev", ext)
+			_, _ = su.IP6("neigh-del-proxy", addr, ext)
 		}
-		_, _ = su.Run("/sbin/ip", "-6", "route", "del", addr+"/128", "dev", bridge)
+		_, _ = su.IP6("route-del", addr, bridge)
 	}
 }
 

@@ -26,3 +26,13 @@ func Run(args ...string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// IP6 runs one of the restricted IPv6 network operations through the `vps ip6`
+// root helper (sudoers: /usr/local/bin/vps ip6 *). The helper validates every
+// argument — an IPv6 address/CIDR and a legal interface name — before touching
+// the network, so the panel never gets bare `ip -6 ... *` rights (which would
+// let it run ip with arbitrary arguments). op is one of route-add, addr-add,
+// route-del, neigh-del-proxy; val is the address/CIDR; dev is the interface.
+func IP6(op, val, dev string) (string, error) {
+	return Run("/usr/local/bin/vps", "ip6", op, val, dev)
+}

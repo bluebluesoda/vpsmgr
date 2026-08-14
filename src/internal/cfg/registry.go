@@ -310,6 +310,11 @@ var secretPathRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // rule that later fails (or, with special chars, changes rule semantics).
 var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,14}$`)
 
+// ValidIfaceName reports whether v is a legal Linux network interface name.
+// Exported for the `vps ip6` root helper, which validates its dev arguments
+// the same way config does.
+func ValidIfaceName(v string) bool { return ifaceNameRe.MatchString(v) }
+
 // setIfaceName validates a Linux interface name before storing it.
 func setIfaceName(key string, set func(c *Config, v string)) func(c *Config, v string) error {
 	return func(c *Config, v string) error {
