@@ -92,10 +92,13 @@ fi
 #   - zfsutils-linux: Incus does NOT bundle the ZFS userspace tools; the
 #     storage pool is ZFS-only (dir backend is not supported), so zpool/zfs
 #     must be present or pool creation fails
-#   - linux-headers-$(uname -r) + build-essential: on Debian the ZFS kernel
-#     modules are compiled with DKMS against the CURRENT kernel, so the
-#     matching headers and a compiler are required (Ubuntu ships prebuilt
-#     modules and does not need these)
+#   - linux-headers-amd64 (meta, no version) + build-essential: on Debian the
+#     ZFS kernel modules are compiled with DKMS. The meta package tracks the
+#     installed kernel, so after a kernel upgrade the postinst hook
+#     (/etc/kernel/postinst.d/dkms) has the matching headers and rebuilds the
+#     module automatically. (Ubuntu ships prebuilt modules and needs none of
+#     this.) If the module is ever missing for the running kernel, the
+#     dkms autoinstall below rebuilds it.
 #   - ca-certificates: without it every curl HTTPS call (Zabbly key, traefik
 #     download, image pulls) fails with a certificate error
 #   - python3: used by 00-ip-ask.sh (prefix/subnet validation) and the
@@ -103,7 +106,7 @@ fi
 #   - tar/xz-utils: traefik tarball extraction; curl: downloads; gpg: Zabbly
 #     key verification; nftables/zstd: firewall + Incus image compression
 KERNEL_REL=$(uname -r)
-for p in zfsutils-linux "linux-headers-${KERNEL_REL}" build-essential ca-certificates python3 tar xz-utils nftables zstd curl gpg; do
+for p in zfsutils-linux linux-headers-amd64 build-essential ca-certificates python3 tar xz-utils nftables zstd curl gpg; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
     log "installing $p"
     apt-get update -qq
@@ -111,11 +114,12 @@ for p in zfsutils-linux "linux-headers-${KERNEL_REL}" build-essential ca-certifi
   fi
 done
 
-# The zfs-dkms package may have installed before the current kernel's headers
-# were available (kernel upgraded since boot). Compile the module for the
-# running kernel so zpool is actually usable, then load it.
+# ZFS module present and loadable for the RUNNING kernel? After a kernel
+# upgrade the DKMS rebuild should have happened (postinst hook), but when the
+# headers were missing at that moment the module can be absent. Rebuild it for
+# the running kernel rather than failing later at pool creation.
 if ! modprobe zfs 2>/dev/null; then
-  log "building ZFS kernel modules for $KERNEL_REL (first run compiles; takes a minute)..."
+  log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
   for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
     dkms build "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
     dkms install "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
