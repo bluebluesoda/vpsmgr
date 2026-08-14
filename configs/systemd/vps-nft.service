@@ -9,8 +9,9 @@ Before=vps.service
 [Service]
 Type=oneshot
 # The config file starts with a delete-table line so the whole ruleset reloads
-# as ONE atomic batch (a failed rule keeps the previous table intact).
-ExecStart=/usr/sbin/nft -f /etc/vpsmgr/nftables.conf
+# as ONE atomic batch (a failed rule keeps the previous table intact). The
+# table is ensured first because nft rules do not survive a reboot.
+ExecStart=/bin/sh -c '/usr/sbin/nft add table inet vpsmgr 2>/dev/null; exec /usr/sbin/nft -f /etc/vpsmgr/nftables.conf'
 RemainAfterExit=yes
 
 [Install]
