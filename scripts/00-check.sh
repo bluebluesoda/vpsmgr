@@ -128,6 +128,16 @@ if ! modprobe zfs 2>/dev/null; then
 fi
 log "zfs: $(zpool version 2>/dev/null | head -1)"
 
+# Make ZFS boot-safe: the module must be loaded and the pool imported on every
+# boot, or Incus's storage pool is unavailable after a reboot. zfsutils-linux
+# normally enables these in its postinst; ensure them explicitly so a kernel
+# update + manual reboot "just works": module loads, pool imports, datasets
+# mount, then Incus and the panel come up on top.
+for unit in zfs-import-cache.service zfs-mount.service zfs-zed.service zfs.target; do
+  systemctl enable "$unit" >/dev/null 2>&1 || log "  warn: could not enable $unit"
+done
+log "zfs boot units enabled (import + mount on every boot)"
+
 # --- Go toolchain (only needed for local build; installed lazily by 40-panel.sh) ---
 if command -v go >/dev/null 2>&1; then
   log "go: $(go version 2>/dev/null | awk '{print $3}')"
