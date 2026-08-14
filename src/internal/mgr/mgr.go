@@ -322,15 +322,29 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	// From here on any failure must roll the container and its host-side
-	// plumbing back, so a half-created user cannot leak a container, an IPv6
-	// route, nft rules or a dangling database record.
+	// plumbing back. Cleanup distinguishes a SUCCESSFUL rollback (delete the DB
+	// record, resources are reusable) from a FAILED one (keep the record marked
+	// 'failed' so the operator can see the orphan instead of a silent leak —
+	// deleting the row would make the leftover container/IP invisible and let
+	// NextFreeIdx hand them out again).
 	var createdID int64
 	cleanup := func() {
 		m.UnwireIPv6(name)
-		_ = m.lx.Delete(name)
-		_ = m.fw.RemoveUser(name)
-		_ = m.fw.Reload()
+		delErr := m.lx.Delete(name)
+		fwErr := m.fw.RemoveUser(name)
+		relErr := m.fw.Reload()
 		if createdID != 0 {
+			if delErr != nil {
+				// Orphan container left behind: keep the row, mark it failed.
+				_ = m.db.UpdateUserStatus(createdID, db.StatusFailed)
+				return
+			}
+			if fwErr != nil || relErr != nil {
+				// Container is gone but the firewall may still reference it.
+				// Keep the row (marked failed) until a repair pass cleans up.
+				_ = m.db.UpdateUserStatus(createdID, db.StatusFailed)
+				return
+			}
 			_ = m.db.DeleteUser(createdID)
 		}
 	}
@@ -349,7 +363,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("config container ipv6: %w", err)
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB)
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -364,6 +378,14 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.fw.Reload(); err != nil {
 		cleanup()
 		return nil, err
+	}
+	// The container and all host-side plumbing exist now — the user is live.
+	if err := m.db.UpdateUserStatus(u.ID, db.StatusReady); err != nil {
+		// The container is fully working; a status write failure must not
+		// roll it back. Mark it failed so the operator can see the anomaly
+		// instead of silently keeping a 'creating' user forever.
+		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
+		return nil, fmt.Errorf("db: mark user ready: %w", err)
 	}
 	return m.ResultFor(u, pass), nil
 }
@@ -872,7 +894,23 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Persistent lifecycle state: mark reinstalling BEFORE destroying the old
+	// container so a crash mid-reinstall leaves a visible state instead of a
+	// DB row that pretends the container is fine.
+	if err := m.db.UpdateUserStatus(u.ID, db.StatusReinstalling); err != nil {
+		return "", fmt.Errorf("mark reinstalling: %w", err)
+	}
+	rollback := func() error {
+		// Best-effort removal of the half-built container; the row stays in
+		// 'failed' so the operator sees what happened and a repair pass can
+		// retry or clean up.
+		m.UnwireIPv6(u.Name)
+		_ = m.lx.Delete(u.Name)
+		_ = m.db.UpdateUserStatus(u.ID, db.StatusFailed)
+		return nil
+	}
 	if err := m.lx.Delete(u.Name); err != nil {
+		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", fmt.Errorf("delete container: %w", err)
 	}
 	// Default image (or empty): resolve to the configured alias / fallback and
@@ -882,12 +920,15 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	if isDefault {
 		image, err = m.imageName()
 		if err != nil {
+			rollback()
 			return "", err
 		}
 		if err := m.lx.EnsureImage(image); err != nil {
+			rollback()
 			return "", fmt.Errorf("ensure image %s: %w", image, err)
 		}
 	} else if ok, _ := m.lx.ImageExists(image); !ok {
+		rollback()
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
 	ipv6, _ := m.IPv6Addr(u.Name)
@@ -897,16 +938,20 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		blockStr = block.String()
 	}
 	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
+		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)
 	if err := m.Provision(u.Name, image, pass); err != nil {
+		rollback()
 		return "", fmt.Errorf("provision container: %w", err)
 	}
 	if err := m.WireIPv6(u.Name); err != nil {
+		rollback()
 		return "", fmt.Errorf("wire ipv6: %w", err)
 	}
 	if err := m.ConfigureContainerIPv6(u.Name); err != nil {
+		rollback()
 		return "", fmt.Errorf("config container ipv6: %w", err)
 	}
 	// User-defined init script (if any): run it detached inside the container,
@@ -918,6 +963,17 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			fmt.Printf("  ! warn: init script: %v (container still recreated)\n", err)
 		}
 	}
+	// The reinstall is complete: back to ready. Also drop any in-memory
+	// throttled flag for this user — the old container's NIC limit died with
+	// it, so the next EnforceBandwidthLimits pass must re-evaluate from the
+	// actual Incus state instead of believing a stale "already throttled".
+	if err := m.db.UpdateUserStatus(u.ID, db.StatusReady); err != nil {
+		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
+		return "", fmt.Errorf("db: mark user ready: %w", err)
+	}
+	m.limitMu.Lock()
+	delete(m.throttled, u.Name)
+	m.limitMu.Unlock()
 	return pass, nil
 }
 

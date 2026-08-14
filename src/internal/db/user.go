@@ -22,6 +22,9 @@ type User struct {
 	MemMB      int
 	DiskGB     int
 	CreatedAt  string
+	// Status is the persistent lifecycle state: ready / creating /
+	// reinstalling / failed. See the Status* constants in db.go.
+	Status string
 	// BandwidthQuotaGB is the monthly bandwidth quota (upload + download) in GiB.
 	// 0 means unlimited.
 	BandwidthQuotaGB int
@@ -45,7 +48,12 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 // bandwidthGB > 0) the monthly bandwidth quota in ONE SQLite transaction. The Add
 // flow uses this so a crash can never leave a user row without its bandwidth
 // state — the "half-created user" failure mode of the original design.
-func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int) (*User, error) {
+// status is the initial lifecycle state (StatusCreating during Add, the
+// default otherwise).
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status string) (*User, error) {
+	if status == "" {
+		status = StatusReady
+	}
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return nil, err
@@ -53,11 +61,11 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	defer tx.Rollback()
 
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now()}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status}
 	r, err := tx.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt)
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +150,7 @@ func (d *DB) UsedSSHPorts() (map[int]bool, error) {
 func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -151,19 +159,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -173,7 +181,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -206,5 +214,11 @@ func (d *DB) UpdateInitScript(id int64, script string) error {
 // UpdateBandwidthQuota sets a user's monthly bandwidth quota in GiB (0 = unlimited).
 func (d *DB) UpdateBandwidthQuota(id int64, gb int) error {
 	_, err := d.sql.Exec(`UPDATE users SET bandwidth_quota_gb=? WHERE id=?`, gb, id)
+	return err
+}
+
+// UpdateUserStatus sets a user's persistent lifecycle state.
+func (d *DB) UpdateUserStatus(id int64, status string) error {
+	_, err := d.sql.Exec(`UPDATE users SET status=? WHERE id=?`, status, id)
 	return err
 }

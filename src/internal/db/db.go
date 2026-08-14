@@ -51,8 +51,18 @@ func Open(path string) (*DB, error) {
 
 func (d *DB) Close() error { return d.sql.Close() }
 
-func (d *DB) migrate() error {
-	stmts := []string{
+// schemaVersion is the current schema version. Every migration in
+// migrations must be applied in order; Open refuses to start on a database
+// whose version is newer than this binary understands (downgrade protection).
+const schemaVersion = 2
+
+// migrations are applied in order, each inside its own transaction. v1 is the
+// original schema (baseline); later versions only add/alter, never drop.
+var migrations = []struct {
+	version int
+	stmts   []string
+}{
+	{1, []string{
 		`CREATE TABLE IF NOT EXISTS users(
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT UNIQUE NOT NULL,
@@ -99,15 +109,91 @@ func (d *DB) migrate() error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS schema_migrations(
+			version INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_user ON domains(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
-	}
-	for _, s := range stmts {
+	}},
+	// v2: persistent user lifecycle state. Existing rows are 'ready' — they
+	// were fully created under the old (no-state) schema.
+	{2, []string{
+		`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'`,
+	}},
+}
+
+// userStatus values (kept as plain strings in the DB).
+const (
+	StatusReady        = "ready"
+	StatusCreating     = "creating"
+	StatusReinstalling = "reinstalling"
+	StatusFailed       = "failed"
+)
+
+func (d *DB) migrate() error {
+	// Version 1 baseline: the original code created these tables directly (no
+	// migration tracking). Ensure they exist before checking the version table.
+	for _, s := range migrations[0].stmts {
 		if _, err := d.sql.Exec(s); err != nil {
-			return fmt.Errorf("migrate: %w", err)
+			return fmt.Errorf("migrate v1: %w", err)
+		}
+	}
+	applied, err := d.appliedMigrations()
+	if err != nil {
+		return err
+	}
+	cur := 1
+	for v := range applied {
+		if v > cur {
+			cur = v
+		}
+	}
+	if cur > schemaVersion {
+		return fmt.Errorf("database schema version %d is newer than this binary (%d) — upgrade the panel before opening this database", cur, schemaVersion)
+	}
+	for _, m := range migrations {
+		if m.version <= cur {
+			continue
+		}
+		tx, err := d.sql.Begin()
+		if err != nil {
+			return fmt.Errorf("migrate v%d begin: %w", m.version, err)
+		}
+		for _, s := range m.stmts {
+			if _, err := tx.Exec(s); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migrate v%d: %w", m.version, err)
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES(?,?)`,
+			m.version, now()); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate v%d record: %w", m.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate v%d commit: %w", m.version, err)
 		}
 	}
 	return nil
+}
+
+// appliedMigrations returns the set of recorded migration versions.
+func (d *DB) appliedMigrations() (map[int]bool, error) {
+	rows, err := d.sql.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	defer rows.Close()
+	out := map[int]bool{}
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
 }
 
 
