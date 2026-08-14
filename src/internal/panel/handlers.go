@@ -71,12 +71,17 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 // triggered by a top-level GET navigation (CSRF via SameSite=Lax). A wrong
 // method gets the same bare 404 as any other wrong path — never a 405, which
 // would advertise that a POST-only endpoint exists here.
+//
+// It also caps the request body: every panel form is small (the largest,
+// init script, is bounded to 64 KiB at the manager layer), so a 1 MiB limit
+// rejects oversized submissions early — before ParseForm allocates anything.
 func (s *Server) requirePost(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			featureless404(w)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		next(w, r)
 	}
 }
@@ -118,6 +123,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				pageData{Title: "Login", Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), 400)
 			return

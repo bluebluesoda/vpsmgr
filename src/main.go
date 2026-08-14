@@ -583,7 +583,16 @@ func sampleBandwidthLoop(m *mgr.Manager) {
 }
 
 func startTLS(c *cfg.Config, h http.Handler, tlsCfg *tls.Config) error {
-	srv := &http.Server{Addr: c.Panel.Listen, Handler: h, TLSConfig: tlsCfg}
+	srv := &http.Server{
+		Addr:              c.Panel.Listen,
+		Handler:           h,
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
+	}
 	return srv.ListenAndServeTLS(c.Panel.Cert, c.Panel.Key)
 }
 

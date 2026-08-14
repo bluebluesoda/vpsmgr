@@ -217,6 +217,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				pageData{Title: "Admin Login", Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), 400)
 			return

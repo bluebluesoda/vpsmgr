@@ -141,14 +141,16 @@ func (m *Manager) allocSSHPort() (int, error) {
 }
 
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by
-// Incus, or -1 if it cannot be determined.
+// Incus. The error is returned to the caller instead of being swallowed: a
+// capacity check that cannot read the pool must fail closed (refuse to create),
+// never pass through as "0% used".
 func (m *Manager) PoolUsage() (float64, error) {
 	total, used, err := m.lx.PoolResources(m.cfg.Incus.Pool)
 	if err != nil {
-		return -1, nil
+		return 0, fmt.Errorf("storage pool %s: %w", m.cfg.Incus.Pool, err)
 	}
 	if total <= 0 {
-		return -1, nil
+		return 0, fmt.Errorf("storage pool %s: Incus reported total size %d", m.cfg.Incus.Pool, total)
 	}
 	if used > total {
 		used = total

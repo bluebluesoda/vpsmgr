@@ -205,12 +205,16 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 // triggered by a top-level GET navigation. A wrong method gets the same bare
 // 404 as any other wrong path — never a 405, which would advertise that a
 // POST-only endpoint exists here.
+//
+// It also caps the request body at 1 MiB (all admin forms are small), so
+// oversized submissions are rejected before ParseForm allocates anything.
 func (s *Server) requirePost(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		next(w, r)
 	}
 }
