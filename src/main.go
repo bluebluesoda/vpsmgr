@@ -62,10 +62,11 @@ Wants=network-online.target
 Before=vps.service
 [Service]
 Type=oneshot
-# The config file starts with a delete-table line so the whole ruleset reloads
-# as ONE atomic batch (a failed rule keeps the previous table intact). The
-# table is ensured first because nft rules do not survive a reboot.
-ExecStart=/bin/sh -c '/usr/sbin/nft add table inet vpsmgr 2>/dev/null; exec /usr/sbin/nft -f /etc/vpsmgr/nftables.conf'
+# Validate the ruleset with nft -c BEFORE applying it. The config file is
+# written by the unprivileged panel user, so the check must run before any of
+# its content reaches the live ruleset; the batch itself starts with
+# delete-table, so even an apply failure keeps the previous table intact.
+ExecStart=/bin/sh -c '/usr/sbin/nft -c -f /etc/vpsmgr/nftables.conf || exit 1; /usr/sbin/nft add table inet vpsmgr 2>/dev/null; exec /usr/sbin/nft -f /etc/vpsmgr/nftables.conf'
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -453,9 +454,8 @@ func ensureVPSUser(c *cfg.Config) error {
 		_ = exec.Command("chmod", "0750", "/etc/traefik").Run()
 		_ = exec.Command("chmod", "0750", c.TraefikDir()).Run()
 	}
-	// 3c. ndppd.conf: the panel renders this file as the unprivileged user.
-	_ = exec.Command("touch", "/etc/ndppd.conf").Run()
-	_ = exec.Command("chown", "vps:vps", "/etc/ndppd.conf").Run()
+	// 3c. ndppd.conf: the panel renders this file itself inside /etc/vpsmgr
+	// (its own writable dir) — no root-zone file to create or chown here.
 	// 4. sudoers whitelist — a hard requirement: without it every privileged
 	// operation (nft reload, traefik/systemctl, IPv6 wiring) fails at runtime.
 	if err := ensureSudoers(); err != nil {
@@ -477,6 +477,7 @@ func ensureSudoers() error {
 # root-privileged commands it may run, each pinned to its exact invocation.
 # Keep this list in sync with the actual su.Run calls (see P2-7 review item).
 vps ALL=(root) NOPASSWD: /usr/sbin/nft add table inet vpsmgr
+vps ALL=(root) NOPASSWD: /usr/sbin/nft -c -f /etc/vpsmgr/nftables.conf
 vps ALL=(root) NOPASSWD: /usr/sbin/nft -f /etc/vpsmgr/nftables.conf
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now traefik.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now traefik.service

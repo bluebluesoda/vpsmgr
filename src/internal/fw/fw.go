@@ -109,9 +109,17 @@ func (f *Firewall) RemoveUser(name string) error {
 // table exists first. The batch then delete-and-recreates atomically: any rule
 // error rolls the whole batch back and the previous table stays intact.
 //
+// The config is validated with `nft -c` BEFORE it is applied (the panel
+// daemon, an unprivileged user, writes these files — the check keeps a syntax
+// or semantic error from ever reaching the live ruleset; combined with the
+// atomic batch, a bad generation leaves the previous table running).
+//
 // nft needs CAP_NET_ADMIN, so the reload runs through the sudoers whitelist
 // (the panel daemon is unprivileged; only this exact command is allowed).
 func (f *Firewall) Reload() error {
+	if _, err := su.Run("/usr/sbin/nft", "-c", "-f", f.MainPath()); err != nil {
+		return fmt.Errorf("nft config check failed (not applied): %w", err)
+	}
 	_, _ = su.Run("/usr/sbin/nft", "add", "table", "inet", "vpsmgr")
 	if _, err := su.Run("/usr/sbin/nft", "-f", f.MainPath()); err != nil {
 		return err

@@ -266,8 +266,12 @@ func (m *Manager) enableForwarding() error {
 	return err
 }
 
-// ndppdConfPath is where vpsmgr renders the ndppd rules.
-const ndppdConfPath = "/etc/ndppd.conf"
+// ndppdConfPath is where vpsmgr renders the ndppd rules. It lives inside
+// /etc/vpsmgr (the panel's own writable dir) instead of /etc/ndppd.conf in the
+// root-owned area of the filesystem — the panel daemon generates this file, so
+// giving it a root-zone path just to chown it back would widen the "unprivileged
+// user writes root-consumed files" surface for no gain.
+const ndppdConfPath = "/etc/vpsmgr/ndppd.conf"
 
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
 // under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
