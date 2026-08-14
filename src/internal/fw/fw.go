@@ -35,7 +35,7 @@ table inet vpsmgr {
   }
 
   chain output {
-    type nat hook output priority dstnat; policy accept;
+    type nat hook output priority 100; policy accept;
   }
 
   chain postrouting {
@@ -117,10 +117,16 @@ func (f *Firewall) RemoveUser(name string) error {
 // nft needs CAP_NET_ADMIN, so the reload runs through the sudoers whitelist
 // (the panel daemon is unprivileged; only this exact command is allowed).
 func (f *Firewall) Reload() error {
+	// Ensure the table exists BEFORE the -c check: the batch starts with
+	// `delete table`, so checking against a missing table (fresh install,
+	// reboot after `nft flush ruleset`) fails even though the config is
+	// perfectly valid. `nft add table` is idempotent, so this is safe on
+	// every reload. The check itself is still what guards against bad rules
+	// reaching the live ruleset.
+	_, _ = su.Run("/usr/sbin/nft", "add", "table", "inet", "vpsmgr")
 	if _, err := su.Run("/usr/sbin/nft", "-c", "-f", f.MainPath()); err != nil {
 		return fmt.Errorf("nft config check failed (not applied): %w", err)
 	}
-	_, _ = su.Run("/usr/sbin/nft", "add", "table", "inet", "vpsmgr")
 	if _, err := su.Run("/usr/sbin/nft", "-f", f.MainPath()); err != nil {
 		return err
 	}
