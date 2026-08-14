@@ -976,6 +976,37 @@ func (c *Client) Exec(name string, command []string, stdin string, timeout time.
 		errText = s.text
 	default:
 	}
+
+	// The command has exited: read the operation's metadata.return — the exit
+	// status the server recorded via op.ExtendMetadata. Relying on "stdout EOF"
+	// or "stderr non-empty" alone misclassifies `sh -c 'exit 1'` (no output,
+	// non-zero exit) as success. The websocket control channel is
+	// client→server only (signals/resize), so the exit code cannot come from
+	// there — it is always on the operation record.
+	status := -1
+	var opStatus struct {
+		Metadata struct {
+			Return *int   `json:"return"`
+			Err    string `json:"err"`
+		} `json:"metadata"`
+		StatusCode int `json:"status_code"`
+	}
+	if err := c.get("/1.0/operations/"+opID, &opStatus); err != nil {
+		return "", fmt.Errorf("incus exec %s: read operation status: %w", name, err)
+	}
+	if opStatus.Metadata.Return != nil {
+		status = *opStatus.Metadata.Return
+	}
+	if status != 0 {
+		msg := strings.TrimSpace(errText)
+		if msg == "" {
+			msg = strings.TrimSpace(outText)
+		}
+		if msg != "" {
+			return "", fmt.Errorf("command exited %d: %s", status, msg)
+		}
+		return "", fmt.Errorf("command exited %d", status)
+	}
 	if errText != "" {
 		return "", errors.New(strings.TrimSpace(errText))
 	}
