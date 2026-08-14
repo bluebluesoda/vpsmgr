@@ -122,10 +122,29 @@ else
       DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq 2>/dev/null || true
       journalctl --vacuum-time=3d >/dev/null 2>&1 || true
       rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
-      # Stale kernels: keep the two newest, remove the rest (the running one
-      # and one fallback). Only touches linux-image-* packages.
-      mapfile -t OLD_KERNELS < <(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v -- "-dbg" | sort -V | head -n -2)
+      # Stale kernels: purge ALL linux-image-* except the RUNNING kernel — but
+      # if a NEWER kernel than the running one is already installed (upgraded,
+      # not yet rebooted), keep that newest one too: deleting it would make the
+      # next reboot BOOT AN OLDER KERNEL than the one currently running. The
+      # meta package linux-image-<arch> (no version, e.g. linux-image-amd64) is
+      # excluded — it holds no image payload but keeps apt pulling future
+      # kernels; purging it would silently stop kernel upgrades.
+      RUNNING_KERNEL=$(uname -r)
+      mapfile -t ALL_KERNELS < <(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v -- "-dbg" | grep -E -- "-[0-9]+" | sort -V)
+      KEEP=("linux-image-$RUNNING_KERNEL")
+      NEWEST=${ALL_KERNELS[-1]}
+      if [[ -n "$NEWEST" && "$NEWEST" != "linux-image-$RUNNING_KERNEL" ]]; then
+        KEEP+=("$NEWEST")
+        log "  keeping $NEWEST (newer than running kernel — reboot pending)"
+      fi
+      OLD_KERNELS=()
+      for k in "${ALL_KERNELS[@]}"; do
+        keep=0
+        for kk in "${KEEP[@]}"; do [[ "$k" == "$kk" ]] && keep=1; done
+        (( keep )) || OLD_KERNELS+=("$k")
+      done
       if (( ${#OLD_KERNELS[@]} > 0 )); then
+        log "  purging ${#OLD_KERNELS[@]} old kernel(s): ${OLD_KERNELS[*]}"
         DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${OLD_KERNELS[@]}" >/dev/null 2>&1 || true
       fi
       rm -rf /root/.cache/pip /root/.cache/go-build /root/go/pkg/mod/cache/download 2>/dev/null || true
