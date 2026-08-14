@@ -132,13 +132,40 @@ func (m *Manager) SetupIPv6Bridge() error {
 	// the route is idempotent (EEXIST is fine). Needs CAP_NET_ADMIN → sudoers
 	// whitelist.
 	bridgeNet := &net.IPNet{IP: net.ParseIP(gw).Mask(net.CIDRMask(bridgeOnes, 128)), Mask: net.CIDRMask(bridgeOnes, 128)}
-	_, _ = su.Run("/sbin/ip", "-6", "route", "add", bridgeNet.String(), "dev", bridge)
+	if err := m.ipRouteAdd(bridgeNet.String(), bridge); err != nil {
+		return fmt.Errorf("add bridge route %s dev %s: %w", bridgeNet.String(), bridge, err)
+	}
 	// Give the bridge a fixed link-local address (fe80::1) so containers can
 	// statically point their default route at it — no dependency on learning
 	// the gateway from router advertisements.
-	_, _ = su.Run("/sbin/ip", "-6", "addr", "add", "fe80::1/64", "dev", bridge)
-	_ = m.enableForwarding()
+	if _, err := su.Run("/sbin/ip", "-6", "addr", "add", "fe80::1/64", "dev", bridge); err != nil && !isExistsErr(err) {
+		return fmt.Errorf("add bridge link-local address: %w", err)
+	}
+	if err := m.enableForwarding(); err != nil {
+		return fmt.Errorf("enable ipv6 forwarding: %w", err)
+	}
 	return nil
+}
+
+// ipRouteAdd adds an IPv6 route, tolerating "already exists" (the command is
+// idempotent across installs/reapplies) but failing on any real error.
+func (m *Manager) ipRouteAdd(route, dev string) error {
+	_, err := su.Run("/sbin/ip", "-6", "route", "add", route, "dev", dev)
+	if err != nil && !isExistsErr(err) {
+		return err
+	}
+	return nil
+}
+
+// isExistsErr reports whether a su.Run error is the kernel's "already exists"
+// (route/address/neighbor), which is the idempotent no-op case for these
+// setup commands — any other failure is a real error.
+func isExistsErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "file exists") ||
+		strings.Contains(msg, "exists") ||
+		strings.Contains(msg, "already exist") ||
+		strings.Contains(msg, "einval") && strings.Contains(msg, "address")
 }
 
 // bridgeGateway picks the first usable address inside the prefix (net+1,
@@ -353,12 +380,14 @@ func (m *Manager) WireIPv6(name string) error {
 	return m.writeNDPPD(name, "")
 }
 
-// UnwireIPv6 removes a container's /112 from the NDP proxy.
-func (m *Manager) UnwireIPv6(name string) {
+// UnwireIPv6 removes a container's /112 from the NDP proxy. Returns the error
+// so a failed proxy reconfiguration is not silently swallowed in Del/cleanup —
+// a leftover ndppd rule would keep answering for a deleted container's block.
+func (m *Manager) UnwireIPv6(name string) error {
 	if !m.cfg.IPv6Enabled() {
-		return
+		return nil
 	}
-	_ = m.writeNDPPD("", name)
+	return m.writeNDPPD("", name)
 }
 
 // cleanLegacyKernelProxy removes the per-address kernel proxy_ndp entries and

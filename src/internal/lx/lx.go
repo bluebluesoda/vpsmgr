@@ -203,15 +203,16 @@ type instance struct {
 type device map[string]string
 
 type instState struct {
-	Status string `json:"status"`
-	CPU    *struct {
+	Status    string `json:"status"`
+	Pid       int64  `json:"pid"`
+	Processes int64  `json:"processes"`
+	CPU       *struct {
 		Usage int64 `json:"usage"`
 	} `json:"cpu"`
 	Memory *struct {
 		Usage int64 `json:"usage"`
 		Total int64 `json:"total"`
 	} `json:"memory"`
-	Processes int64 `json:"processes"`
 	Network map[string]struct {
 		Addresses []struct {
 			Family  string `json:"family"`
@@ -275,7 +276,7 @@ func (c *Client) stateOf(name string) (*instState, error) {
 
 // containerInfo maps a live state into the ContainerInfo shape.
 func containerInfo(name string, st *instState) ContainerInfo {
-	ci := ContainerInfo{Status: st.Status}
+	ci := ContainerInfo{Status: st.Status, Pid: st.Pid}
 	if st.CPU != nil {
 		ci.CPUUsage = st.CPU.Usage
 	}
@@ -360,10 +361,13 @@ func (c *Client) UsageMap() (map[string]Usage, error) {
 
 // Bandwidth describes a container's cumulative network counters since its last
 // start. Counters are per-device and reset to zero when the container is
-// restarted or reinstalled.
+// restarted or reinstalled. Pid is the init PID at sample time — a change of
+// PID between samples is the reliable signal that the counters genuinely reset
+// (restart/reinstall) rather than an out-of-order older sample arriving late.
 type Bandwidth struct {
-	Rx int64 // bytes received (download)
-	Tx int64 // bytes sent (upload)
+	Rx  int64 // bytes received (download)
+	Tx  int64 // bytes sent (upload)
+	Pid int64 // init PID of the running container at sample time
 }
 
 // BandwidthMap returns the cumulative network counters of every running
@@ -379,7 +383,7 @@ func (c *Client) BandwidthMap() (map[string]Bandwidth, error) {
 		if ci.Status != "Running" {
 			continue
 		}
-		m[name] = Bandwidth{Rx: ci.Rx, Tx: ci.Tx}
+		m[name] = Bandwidth{Rx: ci.Rx, Tx: ci.Tx, Pid: ci.Pid}
 	}
 	return m, nil
 }
@@ -387,6 +391,7 @@ func (c *Client) BandwidthMap() (map[string]Bandwidth, error) {
 // ContainerInfo is one snapshot of a container taken from a single state read.
 type ContainerInfo struct {
 	Status     string
+	Pid        int64 // init PID of the running container (0 if not running)
 	CPUUsage   int64 // nanoseconds of CPU time since start (0 if not running)
 	MemUsage   int64 // bytes currently used (0 if not running)
 	MemTotal   int64 // memory limit in bytes (0 if not running)

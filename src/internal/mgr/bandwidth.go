@@ -47,7 +47,7 @@ func (m *Manager) sampleBandwidth(tm map[string]lx.Bandwidth) error {
 			// container stopped: no counters available, nothing to add
 			continue
 		}
-		if err := m.db.ApplyBandwidth(u.ID, period, t.Rx, t.Tx); err != nil && firstErr == nil {
+		if err := m.db.ApplyBandwidth(u.ID, period, t.Rx, t.Tx, t.Pid); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

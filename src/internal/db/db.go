@@ -54,7 +54,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -120,6 +120,13 @@ var migrations = []struct {
 	// were fully created under the old (no-state) schema.
 	{2, []string{
 		`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'`,
+	}},
+	// v3: per-user init PID baseline for bandwidth sampling. A PID change is
+	// the reliable "counters genuinely reset" signal (container restart /
+	// reinstall); without it a late out-of-order sample would be mistaken for
+	// a restart and double-counted (review P2-3).
+	{3, []string{
+		`ALTER TABLE bandwidth ADD COLUMN last_pid INTEGER NOT NULL DEFAULT 0`,
 	}},
 }
 

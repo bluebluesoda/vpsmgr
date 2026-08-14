@@ -336,7 +336,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	// NextFreeIdx hand them out again).
 	var createdID int64
 	cleanup := func() {
-		m.UnwireIPv6(name)
+		unwireErr := m.UnwireIPv6(name)
 		delErr := m.lx.Delete(name)
 		fwErr := m.fw.RemoveUser(name)
 		relErr := m.fw.Reload()
@@ -346,8 +346,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 				_ = m.db.UpdateUserStatus(createdID, db.StatusFailed)
 				return
 			}
-			if fwErr != nil || relErr != nil {
-				// Container is gone but the firewall may still reference it.
+			if fwErr != nil || relErr != nil || unwireErr != nil {
+				// Container is gone but the firewall/NDP may still reference it.
 				// Keep the row (marked failed) until a repair pass cleans up.
 				_ = m.db.UpdateUserStatus(createdID, db.StatusFailed)
 				return
@@ -550,7 +550,6 @@ func (m *Manager) Del(name string) error {
 	if err := m.lx.Delete(name); err != nil {
 		return fmt.Errorf("delete container: %w", err)
 	}
-	m.UnwireIPv6(name)
 	// The remaining host-side cleanup is best-effort: leftover nft rules
 	// without a container are harmless and re-runnable on retry.
 	if err := m.fw.RemoveUser(name); err != nil {
@@ -558,6 +557,9 @@ func (m *Manager) Del(name string) error {
 	}
 	if err := m.fw.Reload(); err != nil {
 		fmt.Printf("  ! warn: reload nft: %v\n", err)
+	}
+	if err := m.UnwireIPv6(name); err != nil {
+		fmt.Printf("  ! warn: unwire ipv6: %v\n", err)
 	}
 	if err := m.db.DeleteUser(u.ID); err != nil {
 		return err
@@ -916,7 +918,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		// Best-effort removal of the half-built container; the row stays in
 		// 'failed' so the operator sees what happened and a repair pass can
 		// retry or clean up.
-		m.UnwireIPv6(u.Name)
+		_ = m.UnwireIPv6(u.Name)
 		_ = m.lx.Delete(u.Name)
 		_ = m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return nil
