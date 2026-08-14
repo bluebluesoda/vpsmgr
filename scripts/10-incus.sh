@@ -114,8 +114,8 @@ else
     # Without this, a host close to full would carve a pool that then starves
     # the root filesystem.
     FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
-    if (( FREE_KB < 15 * 1024 * 1024 )); then
-      log "free space on / is $(( FREE_KB / 1024 / 1024 )) GiB (< 15 GiB) — reclaiming caches before sizing the pool..."
+    if (( FREE_KB < 20 * 1024 * 1024 )); then
+      log "free space on / is $(( FREE_KB / 1024 / 1024 )) GiB (< 20 GiB) — reclaiming caches before sizing the pool..."
       # Cleanest wins first; each is idempotent and never touches user data.
       DEBIAN_FRONTEND=noninteractive apt-get clean 2>/dev/null || true
       rm -rf /var/lib/apt/lists/* 2>/dev/null || true
