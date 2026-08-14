@@ -7,8 +7,10 @@ die(){ echo "[30] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# clean up the downloaded tarball / extracted binary on exit (success or failure)
-trap 'rm -f /tmp/traefik.tar.gz /tmp/traefik' EXIT
+# Private scratch dir (root-only, unique): never write downloads to a fixed
+# /tmp path another process could pre-create or race (review P2-9).
+SCRATCH="$(mktemp -d /tmp/vpsmgr-traefik.XXXXXX)"
+trap 'rm -rf "$SCRATCH"' EXIT
 
 # fixed version + per-arch download URLs (no bundled binaries in the repo)
 TRAEFIK_VERSION=3.3.5
@@ -33,9 +35,9 @@ done
 if [[ ! -x /usr/local/bin/traefik ]]; then
   log "downloading traefik ${TRAEFIK_VERSION} (${TARCH})"
   log "  ${TRAEFIK_URL}"
-  curl -fsSL -o /tmp/traefik.tar.gz "$TRAEFIK_URL" || die "traefik download failed"
-  tar -xzf /tmp/traefik.tar.gz -C /tmp traefik
-  cp /tmp/traefik /usr/local/bin/traefik
+  curl -fsSL -o "$SCRATCH/traefik.tar.gz" "$TRAEFIK_URL" || die "traefik download failed"
+  tar -xzf "$SCRATCH/traefik.tar.gz" -C "$SCRATCH" traefik
+  cp "$SCRATCH/traefik" /usr/local/bin/traefik
   chmod 755 /usr/local/bin/traefik
   log "installed /usr/local/bin/traefik"
 fi

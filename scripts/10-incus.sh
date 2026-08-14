@@ -90,7 +90,7 @@ find_spare_disk(){
   return 1
 }
 
-# decide how to configure the pool in preseed
+# Decide how to configure the pool in preseed.
 DRIVER=zfs
 SPARE=""
 POOL_SIZE_MB=""
@@ -106,7 +106,32 @@ else
     SRC_LINE="    source: \"$SPARE\""
     SIZE_LINE=""
   else
+    # Loop-file pool: the pool is a sparse file that grows on demand, so the
+    # ceiling is a share of the host's FREE space. Before sizing it, make sure
+    # the host actually has room: when free space is tight, reclaim caches and
+    # build artifacts FIRST (apt cache, autoremove, journal, stale kernels,
+    # /tmp, pip/go caches) so the pool + Incus image store + system still fit.
+    # Without this, a host close to full would carve a pool that then starves
+    # the root filesystem.
     FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
+    if (( FREE_KB < 15 * 1024 * 1024 )); then
+      log "free space on / is $(( FREE_KB / 1024 / 1024 )) GiB (< 15 GiB) — reclaiming caches before sizing the pool..."
+      # Cleanest wins first; each is idempotent and never touches user data.
+      DEBIAN_FRONTEND=noninteractive apt-get clean 2>/dev/null || true
+      rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+      DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq 2>/dev/null || true
+      journalctl --vacuum-time=3d >/dev/null 2>&1 || true
+      rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+      # Stale kernels: keep the two newest, remove the rest (the running one
+      # and one fallback). Only touches linux-image-* packages.
+      mapfile -t OLD_KERNELS < <(dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v -- "-dbg" | sort -V | head -n -2)
+      if (( ${#OLD_KERNELS[@]} > 0 )); then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${OLD_KERNELS[@]}" >/dev/null 2>&1 || true
+      fi
+      rm -rf /root/.cache/pip /root/.cache/go-build /root/go/pkg/mod/cache/download 2>/dev/null || true
+      FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
+      log "after reclaim: $(( FREE_KB / 1024 / 1024 )) GiB free on /"
+    fi
     # Pool ceiling = a share of the free space, as a sparse loop file that
     # grows on demand. Small disks keep 80% so the host / Incus image store
     # keep enough headroom; big disks (>= 20 GiB free) can afford 90%.
@@ -115,6 +140,13 @@ else
       PCT=90
     fi
     POOL_SIZE_MB=$(( FREE_KB * PCT / 100 / 1024 ))
+    # Refuse to build a pool so small the host starves: require the pool to
+    # leave at least 3 GiB free even after accounting for the loop file's
+    # eventual size. (The loop file is sparse — it only occupies what's used —
+    # so this is the worst-case guard.)
+    if (( FREE_KB - POOL_SIZE_MB * 1024 < 3 * 1024 * 1024 )); then
+      die "too little free space on / ($(( FREE_KB / 1024 / 1024 )) GiB) even after cleanup — cannot create a usable zfs pool"
+    fi
     log "loop-file zfs pool '$POOL' (~${POOL_SIZE_MB} MiB = ${PCT}% of free, created by Incus)"
     SRC_LINE=""
     SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
@@ -137,7 +169,8 @@ fi
 # 10.115.0.1/24; 00-ip-ask.sh exports the chosen subnet before this step.
 V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
 if [[ $POOL_EXISTS -eq 0 ]] || ! incus network show incusbr0 >/dev/null 2>&1; then
-  PRESEED=/tmp/vpsmgr-preseed.yaml
+  PRESEED="$(mktemp /tmp/vpsmgr-preseed.XXXXXX.yaml)"
+  trap 'rm -f "$PRESEED"' EXIT
   cat > "$PRESEED" <<EOF
 config: {}
 networks:

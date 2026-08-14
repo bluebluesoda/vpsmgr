@@ -71,10 +71,14 @@ fi
 
 log "running vps install (config/cert/db/nft/systemd)..."
 # Capture the install output so the one-time admin password printed by a fresh
-# `vps install` can be re-shown at the very end of the main installer.
-INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
+# `vps install` can be re-shown at the very end of the main installer. The
+# file lives under /etc/vpsmgr (root-only) with 0600, NOT a fixed /tmp path a
+# local attacker could pre-create or read (review P2-9 — it carries a one-time
+# admin password).
+INSTALL_OUT=/etc/vpsmgr/.last-install.out
+rm -f "$INSTALL_OUT"
 if /usr/local/bin/vps install 2>&1 | tee "$INSTALL_OUT"; then
-  :
+  chmod 600 "$INSTALL_OUT"
 else
   rm -f "$INSTALL_OUT"
   exit 1

@@ -74,7 +74,7 @@ if command -v vps >/dev/null 2>&1; then
   # On a FRESH install `vps install` printed the one-time admin password
   # mid-install (captured by 40-panel.sh); re-show it here so it cannot be
   # missed. On adoption/upgrade nothing is printed (no new password exists).
-  INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
+  INSTALL_OUT=/etc/vpsmgr/.last-install.out
   if [ -s "$INSTALL_OUT" ]; then
     echo
     grep -E "admin password|admin panel initialized" "$INSTALL_OUT" || true
