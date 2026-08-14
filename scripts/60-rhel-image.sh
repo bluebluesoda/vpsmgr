@@ -83,24 +83,11 @@ rm -rf /var/cache/dnf /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
 # machine-id means a shared DHCPv6 DUID, which breaks dnsmasq lease renewals
 # and drops the container global IPv6 at the 1h lease mark.
 rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
-# IPv6 for RHEL containers is kernel-managed: take the RA default route but
-# not the on-link prefix (peers route via the host), ignore redirects, and let
-# a boot unit apply the deterministic primary /128 that vpsmgr writes to
-# /etc/vpsmgr-ipv6.conf (NetworkManager ships ipv6.method=ignore and would
-# otherwise fight these settings). Double-quoted printf is required here: the
-# build runs inside a single-quoted sh -c block, so a single quote in the
-# format would close it early and the bake would silently never run.
-printf "net.ipv6.conf.eth0.accept_ra = 1\nnet.ipv6.conf.eth0.accept_ra_pinfo = 0\nnet.ipv6.conf.eth0.accept_redirects = 0\n" > /etc/sysctl.d/99-vpsmgr-ipv6.conf
-# Fully static IPv6: the helper waits for the panel-written conf, temporarily
-# enables RA to learn the gateway, then disables RA and pins the deterministic
-# /128 + a static default route. Waits for DAD and exits 1 on any failure so
-# the unit (Restart=on-failure) retries.
-# NOTE: the whole bake runs inside a single-quoted sh -c block, so no single
-# quotes may appear in the generated files.
-printf "#!/bin/sh\nfor i in \$(seq 1 150); do\n  [ -f /etc/vpsmgr-ipv6.conf ] && break\n  sleep 2\ndone\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 1\nADDR=\$(cat /etc/vpsmgr-ipv6.conf)\nADDR_BARE=\${ADDR%%/*}\nsysctl -w net.ipv6.conf.eth0.accept_ra=1 >/dev/null 2>&1\nsysctl -w net.ipv6.conf.all.accept_ra=1 >/dev/null 2>&1\nGW=\"\"\nfor i in \$(seq 1 60); do\n  GW=\$(ip -6 route show dev eth0 | awk \"/default/{print \\\$3; exit}\")\n  [ -n \"\$GW\" ] && break\n  sleep 2\ndone\n[ -n \"\$GW\" ] || exit 1\nsysctl -w net.ipv6.conf.eth0.accept_ra=0 >/dev/null 2>&1\nsysctl -w net.ipv6.conf.all.accept_ra=0 >/dev/null 2>&1\nip -6 addr replace \"\$ADDR\" dev eth0 2>/dev/null\nip -6 addr show dev eth0 scope global | grep inet6 | while read -r line; do\n  a=\$(echo \"\$line\" | awk \"{print \\\$2}\" | cut -d/ -f1)\n  [ \"\$a\" != \"\$ADDR_BARE\" ] && ip -6 addr del \"\$a\" dev eth0 2>/dev/null\ndone\nfor i in \$(seq 1 30); do\n  ip -6 addr show dev eth0 scope global | grep -q tentative || break\n  sleep 1\ndone\nip -6 route flush dev eth0 2>/dev/null\nip -6 route add default via \"\$GW\" dev eth0 src \"\$ADDR_BARE\" || exit 1\nip -6 route flush cache 2>/dev/null\n" > /usr/local/sbin/vpsmgr-ipv6
-chmod +x /usr/local/sbin/vpsmgr-ipv6
-printf "[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\nRestart=on-failure\nRestartSec=10\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/vpsmgr-ipv6.service
-systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true'; then
+# IPv6 for RHEL containers is configured at runtime by the panel: the
+# deterministic /128 + gateway are declared as a STATIC IPv6 connection
+# (nmcli ipv6.method manual), which makes NetworkManager own the stack
+# (accept_ra=0, no SLAAC, atomic address+route) with no extra daemon.
+#'; then
     incus stop "$NAME" --timeout=30 || true
     if incus publish "$NAME" --alias "$IMAGE"; then
       incus delete --force "$NAME" || true

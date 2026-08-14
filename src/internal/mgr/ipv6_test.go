@@ -166,12 +166,11 @@ func TestIPv6ContainerScript(t *testing.T) {
 		"DHCP=ipv4",                           // DHCPv6 off
 		"s/^DHCP=true$/DHCP=ipv4/",            // flips the baked DHCP=true
 		"n\\[IPv6AcceptRA\\]",                 // heals mangled old configs (awk regex)
-		"2602:fada:6*",                        // stale on-link route flush
+		"2602:fada:6*",                    // stale on-link route flush
 		"ip -6 route flush cache",
-		"net.ipv6.conf.eth0.accept_ra_pinfo = 0", // RHEL: no on-link prefix
-		`ADDR=$(cat /etc/vpsmgr-ipv6.conf)`,       // RHEL boot helper (prunes SLAAC + on-link)
-		"ip -6 addr replace \"$ADDR\" dev eth0",
-		"ExecStart=/usr/local/sbin/vpsmgr-ipv6", // RHEL boot unit
+		"ipv6.method manual",              // RHEL: NM owns the IPv6 stack
+		"ipv6.addresses 2602:fada:6::2bd8:6c9:1/128", // deterministic /128
+		"ipv6.gateway fe80::1",            // bridge's fixed link-local gateway
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
