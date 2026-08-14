@@ -519,7 +519,7 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 }
 
 // EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
-// bandwidth limit of a container. Changing only the limits.* keys is applied
+// rate limit of a container. Changing only the limits.* keys is applied
 // LIVE by Incus via tc (htb qdisc on the host veth) — it does NOT reset the NIC
 // or restart the container. An instance PATCH replaces the entire devices map,
 // so the device map is read first and patched as a whole. Safe on running and

@@ -568,7 +568,7 @@ func sampleBandwidthLoop(m *mgr.Manager) {
 		log.Printf("bandwidth sample: %v", err)
 	}
 	if err := m.EnforceBandwidthLimits(); err != nil {
-		log.Printf("bandwidth limits: %v", err)
+		log.Printf("bandwidth quota enforcement: %v", err)
 	}
 	tick := time.NewTicker(mgr.BandwidthInterval)
 	defer tick.Stop()
@@ -577,7 +577,7 @@ func sampleBandwidthLoop(m *mgr.Manager) {
 			log.Printf("bandwidth sample: %v", err)
 		}
 		if err := m.EnforceBandwidthLimits(); err != nil {
-			log.Printf("bandwidth limits: %v", err)
+			log.Printf("bandwidth quota enforcement: %v", err)
 		}
 	}
 }
