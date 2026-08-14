@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# 60-rhel-image.sh — OPTIONAL: build a RHEL-family "sshd + universal tooling"
+# image so users can reinstall their container with something other than the
+# default Debian 13. Run as root AFTER install.sh, only when you actually want
+# the extra image (a toy panel should not build it on every box).
+#
+#   sudo bash scripts/60-rhel-image.sh          # Alma 9 (recommended)
+#   sudo bash scripts/60-rhel-image.sh rocky     # Rocky 9 instead
+#
+# Same hygiene as 50-image.sh: sshd + common tools baked in, dnf caches and
+# logs cleaned before publishing, base image deleted afterwards.
+set -uo pipefail
+export PATH="$PATH:/snap/bin"
+
+DISTRO="${1:-alma}"
+case "$DISTRO" in
+  alma)  REMOTE_ALIAS=images:almalinux/9; IMAGE=vpsmgr/alma-sshd;  BASE_ALIAS=vpsmgr-almalinux-9 ;;
+  rocky) REMOTE_ALIAS=images:rockylinux/9; IMAGE=vpsmgr/rocky-sshd; BASE_ALIAS=vpsmgr-rockylinux-9 ;;
+  *) echo "usage: $0 [alma|rocky]" >&2; exit 1 ;;
+esac
+
+log(){ echo "[60] $*"; }
+
+lxc info >/dev/null 2>&1 || { echo "[60] error: LXD not ready" >&2; exit 1; }
+
+if lxc image show "$IMAGE" >/dev/null 2>&1; then
+  log "image $IMAGE already present"
+  exit 0
+fi
+
+if ! lxc image list "$BASE_ALIAS" --format=csv 2>/dev/null | grep -q .; then
+  log "pulling $REMOTE_ALIAS (fallback base, deleted after build)..."
+  if ! lxc image copy "$REMOTE_ALIAS" local: --alias "$BASE_ALIAS"; then
+    log "  warn: image pull failed — nothing built"
+    exit 0
+  fi
+else
+  log "base image $BASE_ALIAS already present"
+fi
+
+log "building $IMAGE (this takes a few minutes)..."
+NAME=tmp-rhel-builder
+lxc delete --force "$NAME" >/dev/null 2>&1 || true
+if lxc launch "$BASE_ALIAS" "$NAME"; then
+  # wait until usable
+  for i in $(seq 1 60); do
+    if lxc exec "$NAME" -- /bin/true >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  # RHEL containers bring eth0 up with NetworkManager, which lags the LXD agent
+  # by a few seconds: running dnf before DHCP has written resolv.conf makes it
+  # die with "Curl error (6): Couldn't resolve host". Wait until DNS answers,
+  # or the builder install fails and a broken image gets published.
+  DNS_OK=
+  for i in $(seq 1 30); do
+    if lxc exec "$NAME" -- getent hosts mirrors.almalinux.org >/dev/null 2>&1; then
+      DNS_OK=1; break
+    fi
+    sleep 2
+  done
+  if [ -z "$DNS_OK" ]; then
+    log "  warn: builder never got working DNS; nothing built"
+    lxc delete --force "$NAME" >/dev/null 2>&1 || true
+    lxc image delete "$BASE_ALIAS" >/dev/null 2>&1 || true
+  elif lxc exec "$NAME" -- sh -c '
+set -e
+# universal user tooling (mirrors the Debian image): sshd, curl/wget need
+# ca-certificates or HTTPS fails; bind-utils is the RHEL nslookup/dig package.
+# dnf is retried: the mirrorlist can flap on a slow uplink right after boot.
+for attempt in 1 2 3; do
+  dnf -y install openssh-server ca-certificates curl wget less bind-utils openssh-clients unzip nano && break
+  sleep 5
+done
+# hard gate: never publish an image without sshd baked in
+rpm -q openssh-server >/dev/null
+mkdir -p /etc/ssh/sshd_config.d
+printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
+systemctl enable sshd
+# slim the published image: drop dnf caches and logs
+dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
+# Drop the baked-in machine-id so every container boots its own: a shared
+# machine-id means a shared DHCPv6 DUID, which breaks dnsmasq lease renewals
+# and drops the container global IPv6 at the 1h lease mark.
+rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
+# IPv6 for RHEL containers is kernel-managed: take the RA default route but
+# not the on-link prefix (peers route via the host), ignore redirects, and let
+# a boot unit apply the deterministic primary /128 that vpsmgr writes to
+# /etc/vpsmgr-ipv6.conf (NetworkManager ships ipv6.method=ignore and would
+# otherwise fight these settings). Double-quoted printf is required here: the
+# build runs inside a single-quoted sh -c block, so a single quote in the
+# format would close it early and the bake would silently never run.
+printf "net.ipv6.conf.eth0.accept_ra = 1\nnet.ipv6.conf.eth0.accept_ra_pinfo = 0\nnet.ipv6.conf.eth0.accept_redirects = 0\n" > /etc/sysctl.d/99-vpsmgr-ipv6.conf
+printf "#!/bin/sh\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 0\nip -6 addr replace \"\$(cat /etc/vpsmgr-ipv6.conf)\" dev eth0\n" > /usr/local/sbin/vpsmgr-ipv6
+chmod +x /usr/local/sbin/vpsmgr-ipv6
+printf "[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/vpsmgr-ipv6.service
+systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true'; then
+    lxc stop "$NAME" --timeout=30 || true
+    if lxc publish "$NAME" --alias "$IMAGE"; then
+      lxc delete --force "$NAME" || true
+      # keep only the modified image — the base was a build intermediate
+      if lxc image delete "$BASE_ALIAS" >/dev/null 2>&1; then
+        log "removed base image $BASE_ALIAS (only $IMAGE kept)"
+      else
+        log "  warn: could not remove base image $BASE_ALIAS"
+      fi
+      log "image published: $IMAGE"
+    else
+      log "  warn: publish FAILED — $IMAGE NOT built (base image kept; re-run to retry)"
+      lxc delete --force "$NAME" >/dev/null 2>&1 || true
+      exit 1
+    fi
+  else
+    log "  warn: install in builder failed; nothing built"
+    lxc delete --force "$NAME" >/dev/null 2>&1 || true
+    lxc image delete "$BASE_ALIAS" >/dev/null 2>&1 || true
+  fi
+else
+  log "  warn: could not launch builder; nothing built"
+fi
+
+echo "[60] done"

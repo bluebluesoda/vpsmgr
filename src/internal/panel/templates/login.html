@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+:root{
+  --bg:#f1f5f9; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
+  --accent:#2563eb; --on-accent:#fff; --err-bg:#fef2f2; --err-fg:#dc2626;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8;
+    --accent:#3b82f6; --on-accent:#fff; --err-bg:#450a0a; --err-fg:#fecaca;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;padding:8vh 1rem 0;margin:0;min-height:calc(100vh - 8vh)}
+.card{background:var(--card);border:1px solid var(--border);padding:1.6rem;border-radius:12px;width:320px}
+h1{font-size:1.3rem;margin:0 0 1rem;font-weight:600}
+label{display:block;margin:.6rem 0 .2rem;font-size:.84rem;color:var(--muted)}
+input{width:100%;padding:.5rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit}
+button{margin-top:1.2rem;width:100%;padding:.55rem;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent);cursor:pointer;font-family:inherit;font-size:.92rem}
+button:hover{filter:brightness(1.08)}
+.err{background:var(--err-bg);color:var(--err-fg);padding:.5rem;border-radius:8px;margin-top:1rem;font-size:.84rem}
+footer{margin-top:1.5rem;color:var(--muted);font-size:.8rem}
+footer a{color:var(--muted);text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>{{if eq .Lang "zh"}}VPS Manager 登录{{else}}VPS Manager Login{{end}}</h1>
+<form method="post" action="{{.Prefix}}/login">
+<label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="username" autofocus required>
+<label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input type="password" name="password" required>
+<button type="submit">{{if eq .Lang "zh"}}登录{{else}}Log in{{end}}</button>
+</form>
+{{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+</div>
+<footer>
+{{if eq .Lang "zh"}}<a href="{{.Prefix}}/login?lang=en">English</a>{{else}}<a href="{{.Prefix}}/login?lang=zh">中文</a>{{end}}
+</footer>
+</body>
+</html>

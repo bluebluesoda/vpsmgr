@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Login — VPS Manager</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #f5f6f8; color: #1c1e21;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #14161a; color: #e6e8eb; }
+}
+.card {
+  width: min(360px, 92vw); padding: 28px 26px; border-radius: 12px;
+  background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  .card { background: #1e2126; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+}
+h1 { font-size: 19px; margin: 0 0 4px; }
+.sub { color: #6b7280; font-size: 13px; margin: 0 0 20px; }
+@media (prefers-color-scheme: dark) { .sub { color: #9aa0a8; } }
+label { display: block; font-size: 13px; margin-bottom: 6px; color: #4b5563; }
+@media (prefers-color-scheme: dark) { label { color: #c3c8cf; } }
+input[type=password] {
+  width: 100%; padding: 10px 12px; margin-bottom: 16px; border: 1px solid #d1d5db;
+  border-radius: 8px; font-size: 14px; background: #fff; color: inherit;
+}
+@media (prefers-color-scheme: dark) { input[type=password] { background: #15171b; border-color: #3a3f47; } }
+button {
+  width: 100%; padding: 10px 12px; border: 0; border-radius: 8px; cursor: pointer;
+  background: #2563eb; color: #fff; font-size: 14px; font-weight: 600;
+}
+button:hover { background: #1d4ed8; }
+.err { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 10px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .err { background: #3b1414; color: #fca5a5; border-color: #7f1d1d; } }
+.lang { position: absolute; top: 14px; right: 16px; font-size: 12px; }
+.lang a { color: #6b7280; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>{{if eq .Lang "zh"}}管理员登录{{else}}Admin Login{{end}}</h1>
+  <p class="sub">{{if eq .Lang "zh"}}密码登录 · 无用户名{{else}}Password only · no username{{end}}</p>
+  {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+  <form action="{{.Prefix}}/login" method="post">
+    <label for="password">{{if eq .Lang "zh"}}管理员密码{{else}}Admin password{{end}}</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+    <button type="submit">{{if eq .Lang "zh"}}登 录{{else}}Log in{{end}}</button>
+  </form>
+  <p class="lang" style="text-align:center;margin-top:14px;margin-bottom:0;position:static;">
+    {{if eq .Lang "zh"}}<a href="{{.Prefix}}/login?lang=en">English</a>{{else}}<a href="{{.Prefix}}/login?lang=zh">中文</a>{{end}}
+  </p>
+</div>
+</body>
+</html>

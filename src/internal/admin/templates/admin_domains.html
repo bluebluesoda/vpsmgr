@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Lang "zh"}}域名管理 — VPS Manager{{else}}Domains — VPS Manager{{end}}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #1c1e21; }
+@media (prefers-color-scheme: dark) { body { background: #14161a; color: #e6e8eb; } }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+@media (prefers-color-scheme: dark) { header { background: #1e2126; border-bottom-color: #2c3036; } }
+header h1 { font-size: 17px; margin: 0; }
+header .actions { display: flex; gap: 8px; align-items: center; }
+main { padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3036; } }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin: 0 0 12px; }
+@media (prefers-color-scheme: dark) { .card h2 { color: #9aa0a8; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
+th { color: #6b7280; font-weight: 600; }
+@media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+button:hover, .btn:hover { background: #f3f4f6; }
+@media (prefers-color-scheme: dark) { button:hover, .btn:hover { background: #343a41; } }
+button.danger { border-color: #fca5a5; color: #b91c1c; }
+@media (prefers-color-scheme: dark) { button.danger { color: #f87171; } }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover { background: #1d4ed8; }
+input[type=checkbox] { width: 1rem; height: 1rem; cursor: pointer; }
+.empty { color: #9ca3af; text-align: center; padding: 20px; }
+.msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
+.err { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .err { background: #3b1414; color: #fca5a5; border-color: #7f1d1d; } }
+.lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+.muted { color: #6b7280; }
+code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+@media (prefers-color-scheme: dark) { code { background: #14161a; } }
+.savebar { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{if eq .Lang "zh"}}域名管理{{else}}Domain management{{end}}</h1>
+  <div class="actions">
+    <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}总览{{else}}Overview{{end}}</a>
+    <span class="lang"><a href="{{.Prefix}}/domains?lang=zh">中文</a><a href="{{.Prefix}}/domains?lang=en">EN</a></span>
+    <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
+  </div>
+</header>
+<main>
+  {{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}全部域名（按最后修改排序）{{else}}All domains (by last modified){{end}}</h2>
+    {{if .Domains}}
+    <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
+      <table>
+        <thead>
+          <tr>
+            <th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th>
+            <th>{{if eq .Lang "zh"}}添加者{{else}}Owner{{end}}</th>
+            <th>{{if eq .Lang "zh"}}最后修改（本地时区）{{else}}Last modified (local){{end}}</th>
+            <th>PROXY v2</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Domains}}
+          <tr>
+            <td><code>{{.Domain}}</code></td>
+            <td>{{.Username}}</td>
+            <td><time datetime="{{.UpdatedAt}}">{{.UpdatedAt}}</time></td>
+            <td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}} title="{{if eq $.Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: reports the visitor IP to the backend; the backend must support it{{end}}"></td>
+            <td><button type="button" class="btn danger" onclick="delDomain('{{.Domain}}')">{{if eq $.Lang "zh"}}删除{{else}}Remove{{end}}</button></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      <div class="savebar">
+        <button class="primary" type="submit" id="domSave" hidden>{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+        <span class="muted">{{if eq .Lang "zh"}}勾选后点击保存；修改以 UTC 记录，此处按浏览器时区显示。{{else}}Toggle, then Save; changes are recorded in UTC and shown in your timezone.{{end}}</span>
+      </div>
+    </form>
+    {{else}}
+    <div class="empty">{{if eq .Lang "zh"}}暂无域名{{else}}No domains{{end}}</div>
+    {{end}}
+  </div>
+</main>
+<script>
+var P='{{.Prefix}}';
+(function(){
+  var form=document.getElementById('domForm');
+  if(form){
+    var save=document.getElementById('domSave');
+    form.querySelectorAll('input[name=proto]').forEach(function(b){
+      b.addEventListener('change',function(){ save.hidden=false; });
+    });
+  }
+  window.delDomain=function(d){
+    if(!confirm("{{if eq .Lang "zh"}}删除域名 " + d + "？{{else}}Delete domain " + d + "?{{end}}")) return;
+    var f=document.createElement('form'); f.method='post'; f.action=P+'/domain-del';
+    f.innerHTML='<input type="hidden" name="domain" value="'+d+'">';
+    document.body.appendChild(f); f.submit();
+  };
+  // Show stored UTC timestamps in the browser's local timezone.
+  document.querySelectorAll('time[datetime]').forEach(function(el){
+    var t=new Date(el.getAttribute('datetime'));
+    if(!isNaN(t)) el.textContent=t.toLocaleString();
+  });
+  fetch(P+'/flash',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d&&d.msg) alert(d.msg);
+  }).catch(function(){});
+})();
+</script>
+</body>
+</html>

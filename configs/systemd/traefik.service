@@ -1,0 +1,30 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
+Description=Traefik reverse proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Unprivileged: Traefik only needs to read /etc/traefik and bind 80/443.
+User=traefik
+Group=traefik
+ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yaml
+Restart=always
+RestartSec=3
+# Bind the privileged ports without any other capability.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+# Config is read-only for the service; keep the rest of the FS out of reach.
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

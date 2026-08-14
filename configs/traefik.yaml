@@ -1,0 +1,17 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install; use the panel / `vps` CLI instead.
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+log:
+  level: INFO
+
+accessLog: false

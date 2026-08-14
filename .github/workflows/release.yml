@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+          cache: true
+
+      - name: Build (${{ matrix.arch }})
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd src
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go build \
+            -trimpath -buildvcs=false \
+            -ldflags="-s -w -X vpsmgr/internal/ver.Version=${VERSION}" \
+            -o "../vps-${{ matrix.arch }}" .
+
+      - name: Verify artifact
+        run: |
+          file vps-${{ matrix.arch }}
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            ./vps-${{ matrix.arch }} version
+          fi
+
+      # The project is pure Go (no cgo); keep tests C-free too so they never
+      # depend on a working C toolchain on the runner.
+      - name: Vet + test (CGO_ENABLED=0, amd64)
+        if: matrix.arch == 'amd64'
+        run: |
+          cd src
+          CGO_ENABLED=0 go vet ./...
+          CGO_ENABLED=0 go test ./...
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: vps-${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-${{ matrix.arch }}
+          path: vps-${{ matrix.arch }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum vps-amd64 vps-arm64 | tee SHA256SUMS
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vps-amd64
+            dist/vps-arm64
+            dist/SHA256SUMS
+          generate_release_notes: true

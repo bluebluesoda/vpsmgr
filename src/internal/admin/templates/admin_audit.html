@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Lang "zh"}}审计日志 — VPS Manager{{else}}Audit — VPS Manager{{end}}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #1c1e21; }
+@media (prefers-color-scheme: dark) { body { background: #14161a; color: #e6e8eb; } }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+@media (prefers-color-scheme: dark) { header { background: #1e2126; border-bottom-color: #2c3036; } }
+header h1 { font-size: 17px; margin: 0; }
+header .actions { display: flex; gap: 8px; align-items: center; }
+main { padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3036; } }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin: 0 0 12px; }
+@media (prefers-color-scheme: dark) { .card h2 { color: #9aa0a8; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
+th { color: #6b7280; font-weight: 600; }
+@media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+button:hover, .btn:hover { background: #f3f4f6; }
+@media (prefers-color-scheme: dark) { button:hover, .btn:hover { background: #343a41; } }
+.lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+.muted { color: #6b7280; }
+code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+@media (prefers-color-scheme: dark) { code { background: #14161a; } }
+.sys { color: #7c3aed; font-weight: 600; }
+.footer { margin-top: 12px; font-size: 12px; color: #6b7280; display: flex; gap: 10px; align-items: center; }
+#sentinel { height: 1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{if eq .Lang "zh"}}审计日志{{else}}Audit log{{end}}</h1>
+  <div class="actions">
+    <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}总览{{else}}Overview{{end}}</a>
+    <a href="{{.Prefix}}/domains" class="btn">{{if eq .Lang "zh"}}域名管理{{else}}Domains{{end}}</a>
+    <span class="lang"><a href="{{.Prefix}}/audit?lang=zh">中文</a><a href="{{.Prefix}}/audit?lang=en">EN</a></span>
+    <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}用户操作记录{{else}}User operations{{end}}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>{{if eq .Lang "zh"}}时间（本地时区）{{else}}Time (local){{end}}</th>
+          <th>{{if eq .Lang "zh"}}操作者{{else}}Actor{{end}}</th>
+          <th>{{if eq .Lang "zh"}}操作{{else}}Action{{end}}</th>
+        </tr>
+      </thead>
+      <tbody id="auditBody"></tbody>
+    </table>
+    <div class="footer" id="auditStatus">{{if eq .Lang "zh"}}加载中…{{else}}Loading…{{end}}</div>
+    <div id="sentinel"></div>
+  </div>
+</main>
+<script>
+var P='{{.Prefix}}';
+var LANG='{{.Lang}}';
+var RETENTION=5000;
+var ACT={
+  'power.start':{zh:'开机',en:'start'},
+  'power.stop':{zh:'关机',en:'stop'},
+  'power.restart':{zh:'重启',en:'restart'},
+  'reinstall':{zh:'重装系统',en:'reinstall'},
+  'reset_root_password':{zh:'重置 root 密码',en:'reset root password'},
+  'domain_update':{zh:'更新域名配置',en:'update domain config'}
+};
+function actLabel(a){var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);}
+function pad2(n){return (n<10?'0':'')+n;}
+function fmtTime(s){
+  if(!s) return '';
+  var d=new Date(s);
+  if(isNaN(d) && /^\d+$/.test(s)) d=new Date(parseInt(s,10));
+  if(isNaN(d)) return s;
+  return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+
+         pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds())+
+         '.'+('00'+d.getMilliseconds()).slice(-3);
+}
+var body=document.getElementById('auditBody');
+var status=document.getElementById('auditStatus');
+var sentinel=document.getElementById('sentinel');
+var loading=false, more=true, offset=0, total=0;
+function setStatus(){
+  var t=(LANG==='zh')
+    ? ('共 '+total+' 条 / 保留上限 '+RETENTION+(more?'':' · 已全部加载完'))
+    : ('total '+total+' / keep latest '+RETENTION+(more?'':' · all loaded'));
+  status.textContent=t;
+}
+function appendRows(rows){
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var tr=document.createElement('tr');
+    var time=document.createElement('td');
+    time.textContent=fmtTime(r.created_at);
+    var actor=document.createElement('td');
+    actor.textContent=r.actor;
+    if(r.actor.indexOf('000+')===0){actor.classList.add('sys');}
+    var action=document.createElement('td');
+    action.textContent=actLabel(r.action);
+    tr.appendChild(time);tr.appendChild(actor);tr.appendChild(action);
+    body.appendChild(tr);
+  }
+}
+function loadMore(){
+  if(loading||!more)return;
+  loading=true;
+  fetch(P+'/audit/api?offset='+offset+'&limit=500').then(function(res){return res.json();}).then(function(j){
+    loading=false;
+    total=j.total;more=j.more;
+    appendRows(j.rows);
+    offset+=j.rows.length;
+    setStatus();
+  }).catch(function(){loading=false;});
+}
+if('IntersectionObserver' in window){
+  new IntersectionObserver(function(es){
+    if(es[0].isIntersecting)loadMore();
+  }).observe(sentinel);
+}else{
+  // No observer support: load everything in one pass.
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+  loadMore();
+}
+loadMore();
+</script>
+</body>
+</html>
