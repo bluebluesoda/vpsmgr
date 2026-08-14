@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -14,6 +15,20 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
+	// The DB holds bcrypt hashes and session-token hashes, but permissions
+	// must still be explicit: a 0644 file (default umask) lets any local user
+	// read it. 0600 keeps it private to the owning (vps) user.
+	if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600); err != nil {
+		return nil, fmt.Errorf("create db %s: %w", path, err)
+	} else {
+		if err := f.Chmod(0o600); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("chmod db %s: %w", path, err)
+		}
+		if err := f.Close(); err != nil {
+			return nil, err
+		}
+	}
 	dsn := "file:" + url.PathEscape(path) +
 		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	s, err := sql.Open("sqlite", dsn)
@@ -25,6 +40,11 @@ func Open(path string) (*DB, error) {
 	if err := d.migrate(); err != nil {
 		s.Close()
 		return nil, err
+	}
+	// WAL journal and shared-memory files are created lazily alongside the DB;
+	// make sure any that already exist are equally private.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Chmod(path+suffix, 0o600)
 	}
 	return d, nil
 }
