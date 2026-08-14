@@ -53,6 +53,13 @@ type Manager struct {
 	// counter after a higher one was recorded — the SQL reset path would then
 	// mistake the stale value for a container restart and double-count it.
 	sampleMu sync.Mutex
+
+	// domainMu serializes domain mutations (AddDomain/DelDomain/
+	// SetDomainProtocol + SyncAllDomains) so two panel requests cannot race on
+	// the same domain's DB row and YAML file (review P2-12). SyncAllDomains is
+	// deliberately NOT held while Del removes domain files — Del already holds
+	// opMu, and holding both would risk lock-order deadlock with AddDomain.
+	domainMu sync.Mutex
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
@@ -526,6 +533,17 @@ func (m *Manager) Del(name string) error {
 	if err != nil {
 		return err
 	}
+	// Domain configs are removed FIRST, before the container and DB row. A
+	// leftover traefik YAML keeps proxying to the (about to be deleted) IP;
+	// if that IP is later reused by a new user, the old domain would silently
+	// point at the new tenant (cross-tenant hijack, review P1-7). So a failed
+	// domain-file removal aborts the whole delete; the retry re-runs it.
+	domains, _ := m.db.ListDomains(u.ID)
+	for _, d := range domains {
+		if err := m.tfx.RemoveDomain(d.Domain); err != nil {
+			return fmt.Errorf("remove traefik config for %s: %w (retry after fixing)", d.Domain, err)
+		}
+	}
 	// If the container cannot actually be removed, keep the DB record and let
 	// the admin retry. Deleting the row anyway would orphan the container and
 	// let NextFreeIdx reuse its IP/ports for a new user — a bridge IP conflict.
@@ -533,11 +551,8 @@ func (m *Manager) Del(name string) error {
 		return fmt.Errorf("delete container: %w", err)
 	}
 	m.UnwireIPv6(name)
-	// Capture the domains BEFORE the user row is deleted (DeleteUser cascades
-	// them away) so their per-domain traefik files can be removed after.
-	domains, _ := m.db.ListDomains(u.ID)
-	// The remaining cleanup is best-effort: leftover nft rules / traefik
-	// config without a container are harmless and re-runnable on retry.
+	// The remaining host-side cleanup is best-effort: leftover nft rules
+	// without a container are harmless and re-runnable on retry.
 	if err := m.fw.RemoveUser(name); err != nil {
 		fmt.Printf("  ! warn: remove nft rules: %v\n", err)
 	}
@@ -549,11 +564,6 @@ func (m *Manager) Del(name string) error {
 	}
 	if err := m.db.DeleteSessionsForUser(u.ID); err != nil {
 		return err
-	}
-	for _, d := range domains {
-		if err := m.tfx.RemoveDomain(d.Domain); err != nil {
-			fmt.Printf("  ! warn: remove traefik config for %s: %v\n", d.Domain, err)
-		}
 	}
 	m.limitMu.Lock()
 	delete(m.throttled, name)
@@ -638,6 +648,8 @@ func systemctl(args ...string) error {
 // leftover file that no longer matches a domain. This is the safety net that
 // fixes any drift left by a crash between a DB write and a file write.
 func (m *Manager) SyncAllDomains() error {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
 	domains, err := m.db.ListAllDomains()
 	if err != nil {
 		return err
@@ -981,6 +993,8 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 // atomically: insert the DB row, write the domain's YAML file, and if the file
 // write fails roll the DB row back so the two never disagree.
 func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
 	if !m.V4ForwardLive() {
 		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
 	}
@@ -1010,6 +1024,8 @@ func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 // DelDomain unbinds a domain, atomically: delete the DB row, remove the YAML
 // file, and if the file removal fails re-insert the row.
 func (m *Manager) DelDomain(name, domain string) error {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
@@ -1037,6 +1053,8 @@ func (m *Manager) DelDomain(name, domain string) error {
 // SetDomainProtocol toggles a user's domain PROXY protocol flag, atomically:
 // update the DB, rewrite the YAML, and on failure restore the old flag.
 func (m *Manager) SetDomainProtocol(name, domain string, on bool) error {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err

@@ -534,6 +534,17 @@ func cmdServe() error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
+	// Reconcile the traefik dynamic directory against the DB at every panel
+	// start (review P1-7/P2-11): a crash between a DB write and a file write
+	// leaves the two divergent, and the domain YAMLs are the only thing a
+	// proxy actually reads. Regenerating from the DB (and dropping orphan
+	// files) makes the panel self-heal after any crash. Only meaningful when
+	// v4 forwarding is on.
+	if m.V4ForwardLive() {
+		if err := m.SyncAllDomains(); err != nil {
+			log.Printf("warn: traefik reconciliation at startup: %v", err)
+		}
+	}
 	userPath := panelPath(c)
 	adminPath := "/" + c.Panel.AdminPath
 	var userSrv, adminSrv http.Handler

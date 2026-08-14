@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,6 +29,15 @@ type Client struct {
 	base   string
 	socket string
 	http   *http.Client
+
+	// devLocks serialize device-map read-modify-write PATCHes per instance.
+	// SetDisk, EnsureEth0Options and EnsureNicRateLimit each read the full
+	// devices map and PATCH it back as a whole; without a per-instance lock
+	// two concurrent updates would clobber each other's changes (review P1-5).
+	// The lock is held for the whole read-modify-write, so the snapshot a
+	// caller modifies is the one it patches.
+	devLocks   map[string]*sync.Mutex
+	devLocksMu sync.Mutex
 }
 
 // New creates a client for the Incus Unix socket at path. The connection is
@@ -40,7 +50,27 @@ func New(socket string) *Client {
 	}
 	// Per-request cap guards against a hung daemon. The operation wait uses
 	// timeout=30 server-side, so 60s covers it with margin.
-	return &Client{base: "http://unix", socket: socket, http: &http.Client{Transport: t, Timeout: 60 * time.Second}}
+	return &Client{
+		base:     "http://unix",
+		socket:   socket,
+		http:     &http.Client{Transport: t, Timeout: 60 * time.Second},
+		devLocks: map[string]*sync.Mutex{},
+	}
+}
+
+// lockDev returns the per-instance device-update lock, creating it on first
+// use. The map of locks is itself guarded; callers hold the returned mutex
+// for the whole read-modify-write and release it with Unlock (the entry stays
+// in the map so a waiting goroutine is guaranteed to block on the SAME mutex).
+func (c *Client) lockDev(name string) *sync.Mutex {
+	c.devLocksMu.Lock()
+	defer c.devLocksMu.Unlock()
+	l, ok := c.devLocks[name]
+	if !ok {
+		l = &sync.Mutex{}
+		c.devLocks[name] = l
+	}
+	return l
 }
 
 // dialer returns a websocket dialer that talks to the same Unix socket.
@@ -461,8 +491,13 @@ func (c *Client) SetMem(name string, mb int) error {
 }
 
 // SetDisk grows the root device's size. The device map is fetched first and
-// patched as a whole because a PATCH replaces the entire devices map.
+// patched as a whole because a PATCH replaces the entire devices map. Held
+// under the per-instance device lock so a concurrent EnsureNicRateLimit or
+// EnsureEth0Options cannot be lost in the PATCH.
 func (c *Client) SetDisk(name string, gb int) error {
+	l := c.lockDev(name)
+	l.Lock()
+	defer l.Unlock()
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return err
@@ -484,6 +519,9 @@ func (c *Client) SetDisk(name string, gb int) error {
 // container hot-removes eth0, which trips an Incus netprio bug and can leave
 // the option unapplied, so the container is stopped first.
 func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, error) {
+	l := c.lockDev(name)
+	l.Lock()
+	defer l.Unlock()
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return false, err
@@ -525,6 +563,9 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 // so the device map is read first and patched as a whole. Safe on running and
 // stopped instances.
 func (c *Client) EnsureNicRateLimit(name, rate string) error {
+	l := c.lockDev(name)
+	l.Lock()
+	defer l.Unlock()
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return err

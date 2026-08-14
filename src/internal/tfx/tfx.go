@@ -59,7 +59,7 @@ func (t *Traefik) WriteDomain(domain, ip string, proxyProtocol bool) error {
 	if proxyProtocol {
 		fmt.Fprintf(&b, "        proxyProtocol:\n          version: 2\n")
 	}
-	tmp := t.filePath(domain) + ".tmp"
+	tmp := t.filePath(domain) + fmt.Sprintf(".tmp.%d", os.Getpid())
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
 		return err
 	}
