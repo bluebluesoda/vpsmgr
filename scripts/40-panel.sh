@@ -3,7 +3,6 @@
 # Binary source: prebuilt GitHub release by default, local Go build as fallback
 # (or when VPSMGR_BUILD_MODE=local, e.g. via ./install.sh --local-build).
 set -uo pipefail
-export PATH="$PATH:/snap/bin"
 
 log(){ echo "[40] $*"; }
 die(){ echo "[40] error: $*" >&2; exit 1; }

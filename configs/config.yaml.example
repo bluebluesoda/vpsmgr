@@ -38,7 +38,7 @@ net:
                            # empty = IPv6 disabled (default). Containers get global
                            # addresses via SLAAC; no NAT; set at install time.
 
-lxd:
+incus:
   image: "vpsmgr/debian-sshd"
   image_fallback: "images:debian/13"
   pool: vpsmgr

@@ -3,14 +3,13 @@
 # and the traefik config are KEPT so a plain reinstall adopts the previous
 # users/domains/settings. --purge also removes those, plus containers/storage.
 set -uo pipefail
-export PATH="$PATH:/snap/bin"
 
 PURGE=0
 if [[ "${1:-}" == "--purge" ]]; then PURGE=1; fi
 log(){ echo "[un] $*"; }
 
 log "stopping services..."
-for svc in vpsmgr-panel vpsmgr-nft vpsmgr-ipv6 traefik; do
+for svc in vps vps-nft vps-ipv6 traefik; do
   systemctl disable --now "$svc.service" >/dev/null 2>&1 || true
 done
 systemctl daemon-reload >/dev/null 2>&1 || true
@@ -42,11 +41,11 @@ if [[ -n "$V6SUBNET" ]]; then
     esac
   done
   # restore lxdbr0 IPv6 to disabled (matches vpsmgr default)
-  if command -v lxc >/dev/null 2>&1 && lxc network show lxdbr0 >/dev/null 2>&1; then
-    lxc network set lxdbr0 ipv6.address none 2>/dev/null || true
-    lxc network set lxdbr0 ipv6.nat false 2>/dev/null || true
-    lxc network set lxdbr0 ipv6.routing false 2>/dev/null || true
-    lxc network set lxdbr0 ipv6.dhcp.stateful false 2>/dev/null || true
+  if command -v incus >/dev/null 2>&1 && incus network show lxdbr0 >/dev/null 2>&1; then
+    incus network set lxdbr0 ipv6.address none 2>/dev/null || true
+    incus network set lxdbr0 ipv6.nat false 2>/dev/null || true
+    incus network set lxdbr0 ipv6.routing false 2>/dev/null || true
+    incus network set lxdbr0 ipv6.dhcp.stateful false 2>/dev/null || true
   fi
   # live sysctls back to defaults
   sysctl -w net.ipv6.conf.all.forwarding=0 net.ipv6.conf.default.forwarding=0 >/dev/null 2>&1 || true
@@ -67,10 +66,8 @@ if [[ $PURGE -eq 0 ]] && [[ -f /etc/vpsmgr/config.yaml ]] && command -v vps >/de
 fi
 
 log "removing files..."
-# The CLI binary is `vps` in v0.3+; also remove a legacy vpsmgr binary left by
-# a pre-0.3 install.
-rm -f /usr/local/bin/vps /usr/local/bin/vpsmgr /usr/local/bin/traefik
-rm -f /etc/systemd/system/vpsmgr-panel.service /etc/systemd/system/vpsmgr-nft.service /etc/systemd/system/vpsmgr-ipv6.service /etc/systemd/system/traefik.service
+rm -f /usr/local/bin/vps /usr/local/bin/traefik
+rm -f /etc/systemd/system/vps.service /etc/systemd/system/vps-nft.service /etc/systemd/system/vps-ipv6.service /etc/systemd/system/traefik.service
 # Restore the host-wide io_uring clamp to the kernel default before dropping
 # 99-vpsmgr.conf (which sets it to 1 at install time).
 sysctl -w kernel.io_uring_disabled=0 >/dev/null 2>&1 || true
@@ -83,19 +80,22 @@ log "  kept /etc/vpsmgr and /etc/traefik (reinstall will adopt them)"
 if [[ $PURGE -eq 1 ]]; then
   log "purging vpsmgr config/db/certs and traefik config..."
   rm -rf /etc/vpsmgr /etc/traefik
-  log "purging LXD instances..."
-  for c in $(lxc list --format=csv -c n 2>/dev/null); do
+  log "purging Incus instances..."
+  for c in $(incus list --format=csv -c n 2>/dev/null); do
     log "  deleting container $c"
-    lxc delete --force "$c" >/dev/null 2>&1 || true
+    incus delete --force "$c" >/dev/null 2>&1 || true
   done
   log "removing storage pool..."
-  lxc storage delete vpsmgr >/dev/null 2>&1 || true
+  incus storage delete vpsmgr >/dev/null 2>&1 || true
   if command -v zpool >/dev/null 2>&1 && zpool list vpsmgr >/dev/null 2>&1; then
     zpool destroy -f vpsmgr >/dev/null 2>&1 || true
   fi
   rm -rf /var/lib/vpsmgr
-  log "removing lxd snap..."
-  snap remove lxd --purge >/dev/null 2>&1 || true
+  log "removing Incus (Zabbly package) and its repo..."
+  DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq incus >/dev/null 2>&1 || true
+  apt-get autoremove -y -qq >/dev/null 2>&1 || true
+  rm -f /etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources /etc/apt/keyrings/zabbly.asc
+  apt-get update -qq >/dev/null 2>&1 || true
 fi
 
 if [[ $PURGE -eq 1 ]]; then

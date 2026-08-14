@@ -1,0 +1,32 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+#
+# The vps panel runs as the unprivileged 'vps' user. These are the ONLY
+# root-privileged commands it may run, each pinned to its exact invocation:
+#   - nft: reload the vpsmgr nftables ruleset (fw.Reload)
+#   - systemctl: manage the traefik proxy and restart the vps panel itself
+#   - ip: IPv6 pass-through route / neighbor / addr changes
+#   - sysctl: toggle IPv6 forwarding
+#   - service/pkill/ndppd: control the ndppd NDP proxy daemon
+# Nothing else may be run as root by the panel.
+vps ALL=(root) NOPASSWD: /usr/sbin/nft add table inet vpsmgr
+vps ALL=(root) NOPASSWD: /usr/sbin/nft -f /etc/vpsmgr/nftables.conf
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl start traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl stop traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl restart vps.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active vps.service
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route del *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route add *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route replace *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh del proxy *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh add proxy *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 addr replace *
+vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd stop
+vps ALL=(root) NOPASSWD: /usr/bin/pkill -x ndppd
+vps ALL=(root) NOPASSWD: /usr/sbin/ndppd -d -p /var/run/ndppd.pid

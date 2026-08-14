@@ -11,8 +11,9 @@ if [[ $EUID -ne 0 ]]; then die "must run as root"; fi
 if [[ ! -f /etc/os-release ]]; then die "cannot find /etc/os-release"; fi
 . /etc/os-release
 case "${ID:-}:${VERSION_ID:-}" in
-  ubuntu:24.04|ubuntu:26.04) ;;
-  *) die "this installer targets Ubuntu 24.04 / 26.04 (got ${PRETTY_NAME:-unknown})" ;;
+  debian:12|debian:13) ;;
+  ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) ;;
+  *) die "this installer targets Debian 12/13 or Ubuntu 22.04/24.04/26.04 (got ${PRETTY_NAME:-unknown})" ;;
 esac
 
 # --- virtualization (require physical or KVM) ---
@@ -85,7 +86,7 @@ else
 fi
 
 # --- packages ---
-for p in snapd nftables zstd curl; do
+for p in nftables zstd curl gpg; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
     log "installing $p"
     apt-get update -qq
@@ -98,18 +99,18 @@ if command -v go >/dev/null 2>&1; then
   log "go: $(go version 2>/dev/null | awk '{print $3}')"
 fi
 
-# --- LXD snap ---
-if ! snap list lxd >/dev/null 2>&1; then
-  log "lxd snap not installed yet (installed by 10-lxd.sh)"
+# --- Incus ---
+if ! command -v incus >/dev/null 2>&1; then
+  log "incus not installed yet (installed by 10-incus.sh)"
 fi
 
 # --- UFW conflict ---
-# LXD manages its own `table inet lxd` nftables rules (DHCP/DNS/forwarding) on
-# lxdbr0, but UFW's `table ip filter` runs at the same priority with a DROP
-# policy, so it drops container DHCP/forwarding traffic before LXD's rules
+# Incus manages its own `table inet incus` nftables rules (DHCP/DNS/forwarding)
+# on lxdbr0, but UFW's `table ip filter` runs at the same priority with a DROP
+# policy, so it drops container DHCP/forwarding traffic before Incus's rules
 # ever see it. Result: containers get no IPv4 (no DHCP, no DNS, no NAT) and
 # the image build fails. See:
-#   https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/
+#   https://linuxcontainers.org/incus/docs/main/howto/network_bridge_firewalld/
 # vpsmgr manages its own firewall via `table inet vpsmgr` nftables, so the
 # cleanest fix is to disable UFW during install (idempotent: skipped when it
 # is already inactive).
@@ -119,11 +120,11 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   V4_NET="${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}"
   V4_MATCH="$(printf '%s' "${V4_NET%/*}" | sed 's/\./\\./g')"
   if ufw status verbose 2>/dev/null | grep -qE "lxdbr0|$V4_MATCH"; then
-    log "ufw active but already has LXD/lxdbr0 allow rules — leaving it as-is"
+    log "ufw active but already has Incus/lxdbr0 allow rules — leaving it as-is"
   else
-    log "ufw is ACTIVE with default-DROP policy — this breaks LXD container IPv4"
-    log "  (LXD's own nftables rules are shadowed by ufw's DROP; known issue:"
-    log "  https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/)"
+    log "ufw is ACTIVE with default-DROP policy — this breaks Incus container IPv4"
+    log "  (Incus's own nftables rules are shadowed by ufw's DROP; known issue:"
+    log "  https://linuxcontainers.org/incus/docs/main/howto/network_bridge_firewalld/)"
     log "  vpsmgr manages its firewall via nftables; disabling ufw."
     ufw disable >/dev/null 2>&1 && log "  ufw disabled" || die "failed to disable ufw"
     # Keep it off across reboots. Snap/systemd enable it on boot otherwise.
@@ -185,7 +186,7 @@ log "public/panel IP: $PUB_IP  (ext iface: ${EXT_IF:-auto})"
 
 # --- network reachability (warn only) ---
 if ! curl -sI --max-time 8 https://images.linuxcontainers.org >/dev/null 2>&1; then
-  log "  warn: cannot reach images.linuxcontainers.org — LXD image pull will fail unless cached"
+  log "  warn: cannot reach images.linuxcontainers.org — Incus image pull will fail unless cached"
 fi
 
 echo "[00] checks passed"

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # 20-network.sh — sysctl + nftables basics.
 set -uo pipefail
-export PATH="$PATH:/snap/bin"
 
 log(){ echo "[20] $*"; }
 
@@ -9,7 +8,7 @@ log(){ echo "[20] $*"; }
 # run (idempotent). io_uring_disabled=1 lets only init-userns CAP_SYS_ADMIN (the
 # host's own root services) create io_uring; container tenants — even container
 # root, which only has userns-scoped caps — get EPERM, closing the biggest
-# kernel LPE attack surface for tenants. Value 1, not 2: the host stack (LXD,
+# kernel LPE attack surface for tenants. Value 1, not 2: the host stack (Incus,
 # ZFS, Go panel/traefik) is untouched. Matches RHEL 9.3+'s shipped default.
 cat > /etc/sysctl.d/99-vpsmgr.conf <<EOF
 # Managed by vpsmgr — generated file, do not edit by hand.

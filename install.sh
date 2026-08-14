@@ -7,7 +7,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 ROOT="$PWD"
-export PATH="$PATH:/snap/bin"
 
 BUILD_MODE=release
 if [[ "${1:-}" == "--local-build" ]]; then
@@ -20,20 +19,16 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# v0.3 makes breaking changes; a 0.1.x/0.2.x install must NOT be upgraded yet.
-# Abort before any script runs so the box cannot end up half-upgraded (v0.3
-# scripts over a v0.2.x binary). A box that already uninstalled is still caught
-# later by `vps install`, which refuses to adopt an old config.
-if [[ -x /usr/local/bin/vpsmgr ]]; then
-  OLD_VER="$(/usr/local/bin/vpsmgr version 2>/dev/null || true)"
-  case "$OLD_VER" in
-    0.1.*|0.2.*)
-      echo "error: this is the vpsmgr v0.3 installer, which makes breaking changes." >&2
-      echo "       this box still runs vpsmgr $OLD_VER, which cannot be upgraded yet." >&2
-      echo "       stay on v0.2.x for now; a migration path will be released later." >&2
-      exit 1
-      ;;
-  esac
+# The Incus-based vpsmgr is a new product line. A leftover binary from the old
+# LXD-based v0.2.x/early-v0.3 line is not compatible — refuse to run over it
+# so the box cannot end up half-upgraded. A non-purging uninstall of the old
+# line leaves no binary (uninstall.sh removes it), so this only fires when the
+# old panel was never uninstalled.
+if [[ -x /usr/local/bin/vpsmgr ]] && ! /usr/local/bin/vpsmgr version 2>/dev/null | grep -q "0.3"; then
+  echo "error: an old LXD-based vpsmgr binary is still installed." >&2
+  echo "       this installer uses Incus and cannot run over it." >&2
+  echo "       uninstall the old version first (bash uninstall.sh --purge)." >&2
+  exit 1
 fi
 
 # Local build: make it obvious WHICH branch will be compiled, and give the user
@@ -72,7 +67,7 @@ if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   systemctl enable ndppd.service >/dev/null 2>&1 || true
 fi
 
-for step in 00-check 10-lxd 20-network 30-traefik 40-panel 50-image; do
+for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
   echo
   echo "===== $step ====="
   bash "$ROOT/scripts/$step.sh"

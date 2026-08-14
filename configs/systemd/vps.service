@@ -1,0 +1,19 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
+Description=vps panel
+After=network-online.target incus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Unprivileged: the panel talks to Incus over its group-readable socket
+# (incus-admin) and escalates only the exact whitelisted commands via sudo.
+User=vps
+Group=vps
+ExecStart=/usr/local/bin/vps serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

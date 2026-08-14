@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # 30-traefik.sh — install Traefik binary + static config + systemd service.
 set -uo pipefail
-export PATH="$PATH:/snap/bin"
 
 log(){ echo "[30] $*"; }
 die(){ echo "[30] error: $*" >&2; exit 1; }

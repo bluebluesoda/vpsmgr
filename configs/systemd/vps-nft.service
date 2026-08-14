@@ -1,0 +1,17 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
+Description=vps nftables rules
+After=network-online.target incus.service
+Wants=network-online.target
+Before=vps.service
+
+[Service]
+Type=oneshot
+# The config file starts with a delete-table line so the whole ruleset reloads
+# as ONE atomic batch (a failed rule keeps the previous table intact).
+ExecStart=/usr/sbin/nft -f /etc/vpsmgr/nftables.conf
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
