@@ -2,7 +2,7 @@
 
 vpsmgr is a lightweight LXC hosting panel: one Debian 13 container per user,
 managed from a web panel and a CLI. Everything ships as a single Go binary
-(`vpsmgr` = CLI + embedded web panel); LXD, nftables and Traefik provide the
+(`vps` = CLI + embedded web panel); Incus, nftables and Traefik provide the
 plumbing.
 
 ## Design goals
@@ -11,7 +11,7 @@ vpsmgr is a toy for small machines (≤ 4 GB RAM, small VPS). Storage and memory
 are treated as scarce, which drives every choice in this document:
 
 - the panel is a single static Go binary — the only new service vpsmgr adds
-  besides LXD and Traefik;
+  besides Incus and Traefik;
 - the storage pool is sparse (a loop file that only grows as it fills) and the
   published image is slimmed and the base image deleted, so disk is only
   consumed by what containers actually use, and clones share the image's
@@ -21,40 +21,41 @@ are treated as scarce, which drives every choice in this document:
   sampling runs every 60 s, keeping idle CPU/RAM use low.
 
 "Lightweight" refers to the panel and this storage/memory discipline, not to a
-zero-overhead platform: LXD (snap), nftables and Traefik are the minimal
-plumbing that makes the panel possible.
+zero-overhead platform: Incus, nftables and Traefik are the minimal plumbing
+that makes the panel possible.
 
 ## Components
 
 ```
 install.sh / uninstall.sh / build.sh   # lifecycle + local build
-scripts/  00-check 10-lxd 20-network 30-traefik 40-panel 50-image
-configs/  reference configs (traefik / systemd)
+scripts/  00-check 10-incus 20-network 30-traefik 40-panel 50-image
+configs/  reference configs (traefik / systemd / sudoers)
 src/      Go source (single binary: CLI + panel)
 ```
 
 - **Go binary** — CLI commands (`vps add/show/del/...`) and the HTTPS panel
-  (`vpsmgr-panel.service`). The web templates are embedded (`//go:embed`).
-- **LXD** (snap) — runs the containers. Storage pool `vpsmgr` (ZFS), bridge
-  `lxdbr0` (10.<n>.0.0/24, octet chosen at install, default 115). The panel talks to the daemon over its **Unix-socket
-  REST API** (`internal/lx`, one reusable HTTP connection, no `lxc` process
-  spawn per call); only `lxc exec` (provisioning scripts, the readiness probe,
-  the per-container `df` probe) still shells out to the CLI. Fractional CPU
+  (`vps.service`). The web templates are embedded (`//go:embed`).
+- **Incus** (Zabbly LTS 7.0, Debian package) — runs the containers. Storage
+  pool `vpsmgr` (ZFS), bridge `lxdbr0` (10.<n>.0.0/24, octet chosen at
+  install, default 115). The panel talks to the daemon over its
+  **Unix-socket REST API** (`internal/lx`, one reusable HTTP connection, no
+  `incus` process spawn per call). **Every** operation including `exec`
+  (provisioning scripts, the readiness probe, the per-container `df` probe)
+  goes over the API websocket transport — no CLI calls at all. Fractional CPU
   quotas (0.1..0.9) are enforced as `limits.cpu=1` plus
   `limits.cpu.allowance=<n>ms/100ms` — a one-core pin with a time slice.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
   ranges, MASQUERADE for NAT4. Reload applies the whole ruleset in a single
-  `nft -f` batch (with an idempotent `nft add table` first to cover boot where
-  the table is absent); `nft -f` is transactional, so a load error leaves the
-  previous ruleset in place. Restored on boot by `vpsmgr-nft.service`.
+  `nft -f` batch (the generated file starts with a delete-table line so a load
+  error leaves the previous ruleset in place). Restored on boot by
+  `vps-nft.service`. The reload runs through the sudoers whitelist (the panel
+  daemon is unprivileged).
 - **UFW** — vpsmgr manages its firewall through its own nftables table, so the
   installer **disables UFW** when it is active: UFW's default-DROP policy runs
-  before LXD's `table inet lxd` rules and silently kills container IPv4 (no
-  DHCP, no DNS, no forwarded traffic), which makes both the image build and
-  every container's network fail. This is a known LXD issue:
-  <https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/>.
-  If you keep UFW, you must add these rules yourself (see `00-check.sh`);
-  note that UFW's `route allow` is IPv4-only:
+  before Incus's `table inet incus` rules and silently kills container IPv4
+  (no DHCP, no DNS, no forwarded traffic), which makes both the image build
+  and every container's network fail. If you keep UFW, you must add these
+  rules yourself (see `00-check.sh`):
 
   ```sh
   ufw allow in on lxdbr0 to any port 67 proto udp   # DHCP
@@ -65,6 +66,24 @@ src/      Go source (single binary: CLI + panel)
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
 - **SQLite** — users, domains, sessions, traffic counters. Located at
   `/etc/vpsmgr/vpsmgr.db`.
+
+## Unprivileged panel
+
+The panel daemon runs as the dedicated unprivileged `vps` system user
+(`User=vps` in `vps.service`), never as root:
+
+- **Incus access** comes from group membership: the Incus Unix socket is
+  `group incus-admin` rw, and `vps install` adds `vps` to `incus-admin`. The
+  full management API is therefore available without any privilege elevation.
+- **The only root commands** the panel may run are pinned in a sudoers
+  whitelist (`/etc/sudoers.d/vps`, validated with `visudo -c` before
+  install): `nft` reloads, `systemctl` control of traefik / the panel itself,
+  IPv6 route/neighbor/addr changes, the IPv6-forwarding sysctl and ndppd
+  control. `internal/su` runs them via `sudo -n`; anything else fails instead
+  of prompting.
+- `vps install` (the install-time setup) still runs as root because it creates
+  the user, chowns the writable dirs, writes systemd units and loads kernel
+  modules. The long-running `vps serve` is fully unprivileged.
 
 ## Users and resources
 
@@ -83,11 +102,13 @@ src/      Go source (single binary: CLI + panel)
   only a full uninstall clears it.
 - Add/Del/Reinstall are serialized by a per-process mutex, and `mgr.Add` rolls
   back the container, IPv6 route, nft rules and DB record on any post-launch
-  failure. `mgr.Del` refuses to drop the DB row when the container cannot
-  actually be removed (it would orphan the container and let `NextFreeIdx`
-  reuse its IP for a new user); a fresh add also refuses a name/IP already
-  claimed by a live LXD instance, so orphaned containers cannot cause bridge
-  IP conflicts.
+  failure. The DB write is a **single transaction** (`db.CreateUserFull`):
+  user row + initial traffic row + optional quota commit atomically, so a
+  crash can never leave a half-created user. `mgr.Del` refuses to drop the DB
+  row when the container cannot actually be removed (it would orphan the
+  container and let `NextFreeIdx` reuse its IP for a new user); a fresh add
+  also refuses a name/IP already claimed by a live Incus instance, so orphaned
+  containers cannot cause bridge IP conflicts.
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.
@@ -95,9 +116,9 @@ src/      Go source (single binary: CLI + panel)
   (`users.traffic_quota_gb`, 0 = unlimited; counts upload + download of the
   current month). The 60s traffic sampler enforces it: over-quota containers
   get their eth0 rate-limited to 1Mbps each direction, back-under (e.g. monthly
-  rollover) is unthrottled. The NIC limits are applied LIVE by LXD via tc
+  rollover) is unthrottled. The NIC limits are applied LIVE by Incus via tc
   (htb qdisc on the host veth) — no container restart — and the manager keeps
-  an in-memory throttle state so LXD is only touched on state changes.
+  an in-memory throttle state so Incus is only touched on state changes.
 - **Domains**: the `domains` table (owner via `user_id`, PROXY flag, UTC
   created/updated timestamps) is the single source of truth; the traefik
   dynamic directory holds **one self-contained YAML per domain**
@@ -133,7 +154,7 @@ src/      Go source (single binary: CLI + panel)
 
 ## Storage
 
-- The pool is ZFS. On first install, `10-lxd.sh` either adopts an existing
+- The pool is ZFS. On first install, `10-incus.sh` either adopts an existing
   pool, uses a spare whole-disk block device, or (no spare disk) creates a
   **sparse loop-file pool** sized to a share of the free space on `/`:
   80% by default, 90% when ≥ 20 GiB free. The loop file only allocates blocks
@@ -141,7 +162,7 @@ src/      Go source (single binary: CLI + panel)
   (`zfs.arc_max`) so container memory keeps priority over the pool's cache.
 - Containers are ZFS clones of the image: the image's blocks are shared
   (copy-on-write), so a well-provisioned image costs one copy no matter how
-  many containers. Because LXD's `refquota` counts inherited blocks, image
+  many containers. Because Incus's `refquota` counts inherited blocks, image
   bloat also eats into every container's disk quota — images must stay slim.
 
 ## Image (`vpsmgr/debian-sshd`)
@@ -187,10 +208,10 @@ All containers share the single `lxdbr0` L2 segment `10.<n>.0.0/24` (the second
 octet is chosen at install; default `10.115.0.0/24`). To make
 sure a scan does **not** reveal usernames:
 
-- LXD's dnsmasq must NOT serve instance-name DNS: by default it publishes
+- Incus's dnsmasq must NOT serve instance-name DNS: by default it publishes
   `<instance>.lxd` records (instance name = username) that turn into
   `username.lxd` PTR answers — this is independent of the randomized in-guest
-  hostname, so it would leak usernames anyway. `10-lxd.sh` therefore sets
+  hostname, so it would leak usernames anyway. `10-incus.sh` therefore sets
   `dns.mode=none` on `lxdbr0` (DHCP and upstream forwarding still work; the
   `search lxd` suffix is dropped and reverse lookups fall back to the random
   guest hostname or the upstream resolver).
@@ -199,14 +220,14 @@ sure a scan does **not** reveal usernames:
 
 ### L2 isolation per container
 
-Every container's `eth0` is created (and migrated) with three LXD NIC security
-options (`lx.nicIsolation`):
+Every container's `eth0` is created (and migrated) with three Incus NIC
+security options (`lx.nicIsolation`):
 
 - `security.port_isolation=true` — the veth is an isolated bridge port
   (`isolated on`), so **no frames** (unicast, multicast, broadcast) flow
   between containers at L2. This blocks ARP/NDP spoofing, L2 sniffing, and
   rogue DHCP/DHCPv6/DNS servers.
-- `security.ipv4_filtering=true` + `security.ipv6_filtering=true` — LXD
+- `security.ipv4_filtering=true` + `security.ipv6_filtering=true` — Incus
   installs bridge `input`/`forward` nftables rules per NIC that only accept
   ARP/NDP/NA claiming the container's own addresses or MAC, and drop
   router-advertisements from containers. This protects the **host's own
@@ -229,12 +250,12 @@ Observed side effects compared with the flat-bridge baseline:
 ### `br_netfilter` requirement
 
 `security.ipv6_filtering` only works while the `br_netfilter` kernel module is
-loaded, and LXD does **not** load it itself — a container with the option
-**refuses to boot** without it (`lxc start` fails), so after a host reboot
-every isolated container would fail to start. `vps install`
-therefore writes `/etc/modules-load.d/br_netfilter.conf` and loads the module,
-so it is present before LXD starts any container. Harmless no-op where the
-module is built into the kernel.
+loaded, and Incus does **not** load it itself — a container with the option
+**refuses to boot** without it, so after a host reboot every isolated container
+would fail to start. `vps install` therefore writes
+`/etc/modules-load.d/br_netfilter.conf` and loads the module, so it is present
+before Incus starts any container. Harmless no-op where the module is built
+into the kernel.
 
 ## Security model
 
@@ -242,20 +263,22 @@ module is built into the kernel.
   bare, headerless 404 (no fingerprint, no auth cost).
 - Mutating actions are POST-only; sessions are 3-day HttpOnly+Secure+
   SameSite=Lax cookies; a per-IP login rate limiter.
-- Containers are LXD-unprivileged with `security.nesting=true`.
+- The panel daemon is **unprivileged** (see "Unprivileged panel" above): Incus
+  access via group membership, only whitelisted commands via sudo.
+- Containers are Incus-unprivileged with `security.nesting=true`.
 
 ## Bandwidth accounting
 
-Per-container NIC counters come from LXD. A background goroutine in the panel
+Per-container NIC counters come from Incus. A background goroutine in the panel
 samples every 60 s and accumulates deltas into SQLite (`traffic` table). The
-panel reads totals from the DB — it never blocks on `lxc` for bandwidth.
+panel reads totals from the DB — it never blocks on an exec for bandwidth.
 
 ## Install / uninstall lifecycle
 
 - `uninstall.sh` without `--purge` removes the software but **keeps**
   `/etc/vpsmgr` (config/db/certs) and `/etc/traefik`, so a reinstall adopts
   the previous users/domains/settings. `--purge` removes those plus
-  containers, the storage pool and the LXD snap.
+  containers, the storage pool and the Incus package.
 - `install.sh` detects an existing `/etc/vpsmgr/config.yaml` and adopts it
   (users/domains survive). `00-ip-ask.sh` reuses a previously configured
   `ipv6_subnet` / `subnet` instead of re-asking.

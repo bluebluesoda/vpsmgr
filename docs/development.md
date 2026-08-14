@@ -27,6 +27,23 @@ CGO_ENABLED=0 go test ./...
 
 The CI release workflow also runs vet+test with `CGO_ENABLED=0` on amd64.
 
+### Developing against Incus
+
+The panel talks to Incus over its Unix socket (`/var/lib/incus/unix.socket`,
+group `incus-admin`). For a local dev loop:
+
+```sh
+# add the Zabbly LTS repo and install Incus (Debian 12/13, Ubuntu 22.04+)
+curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+echo 'deb [signed-by=/etc/apt/keyrings/zabbly.asc] https://pkgs.zabbly.com/incus/lts-7.0/ trixie main' > /etc/apt/sources.list.d/zabbly-incus.list
+apt-get update && apt-get install -y incus
+incus admin init --preseed < ...   # or use scripts/10-incus.sh
+usermod -aG incus-admin "$USER"    # socket access without root
+```
+
+`vps install` does all of this on a real host; the exec API is exercised by
+`internal/lx` over websockets (no `incus` CLI needed at runtime).
+
 ## Releasing
 
 Tag a version (`v*`); the `.github/workflows/release.yml` builds amd64/arm64
@@ -48,8 +65,8 @@ from the latest release, falling back to a local build.
 
 ```
 install.sh / uninstall.sh / build.sh   # lifecycle + local build
-scripts/   00-check 10-lxd 20-network 30-traefik 40-panel 50-image
-configs/   reference configs (traefik / systemd)
+scripts/   00-check 10-incus 20-network 30-traefik 40-panel 50-image
+configs/   reference configs (traefik / systemd / sudoers)
 docs/      this documentation
 src/       Go source (single binary: CLI + panel)
 ```

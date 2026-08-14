@@ -18,7 +18,7 @@ same table; `vps config list` shows the live values with this annotation.
 
 | Key | Kind | Change applies | Notes |
 |---|---|---|---|
-| `panel.listen` | operator | `systemctl restart vpsmgr-panel` | a FRESH install picks a random free port in 2000-9999 |
+| `panel.listen` | operator | `systemctl restart vps` | a FRESH install picks a random free port in 2000-9999 |
 | `panel.cert` | operator | restart panel | TLS certificate path |
 | `panel.key` | operator | restart panel | TLS private key path |
 | `panel.db` | operator | restart panel | SQLite database path |
@@ -33,18 +33,18 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
-| `lxd.image` | operator | next `vps add` / reinstall | container image alias |
-| `lxd.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
-| `lxd.pool` | **fixed at install** | — | storage pool |
-| `lxd.bridge` | **fixed at install** | — | managed bridge |
-| `lxd.socket` | operator | restart panel | LXD daemon Unix socket |
+| `incus.image` | operator | next `vps add` / reinstall | container image alias |
+| `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
+| `incus.pool` | **fixed at install** | — | storage pool |
+| `incus.bridge` | **fixed at install** | — | managed bridge |
+| `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `installed_version` | auto (panel-managed) | — | binary version that installed/adopted the config |
 | `uninstalled_version` | auto (panel-managed) | — | binary version a non-purging uninstall removed |
 
 ### How "fixed at install" is enforced
 
-Fields marked **fixed at install** (`net.subnet`, `net.gateway`, `lxd.pool`,
-`lxd.bridge`, `panel.url_path`) are snapshotted into the DB settings table on
+Fields marked **fixed at install** (`net.subnet`, `net.gateway`, `incus.pool`,
+`incus.bridge`, `panel.url_path`) are snapshotted into the DB settings table on
 the first `vps install`. Every later `vps install` and `vps serve` compares the
 live config against that snapshot and **refuses to run** if any of them drifted
 — `vps config set` also refuses them up front. The user panel path
@@ -72,7 +72,7 @@ edit by hand` banner and are **overwritten on the next write**:
 | `/etc/traefik/dynamic/<domain>.yaml` | domain add/update/delete |
 | `/etc/ndppd.conf` | IPv6 pass-through updates |
 | `/etc/sysctl.d/99-vpsmgr.conf` | `vps install` |
-| systemd units (`vpsmgr-panel/nft/ipv6`, `traefik`) | `vps install` |
+| systemd units (`vps`/`vps-nft`/`vps-ipv6`, `traefik`) | `vps install` |
 
 ## Example
 
@@ -99,12 +99,12 @@ net:
                                # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default),
                                # but does not remove IPv6 state already applied
 
-lxd:
+incus:
   image: "vpsmgr/debian-sshd"
   image_fallback: "images:debian/13"
   pool: vpsmgr
   bridge: lxdbr0
-  socket: "/var/snap/lxd/common/lxd/unix.socket"   # LXD daemon Unix socket (REST API)
+  socket: "/var/lib/incus/unix.socket"   # Incus daemon Unix socket (REST API)
 ```
 
 ## Port scheme (fixed)
@@ -152,7 +152,7 @@ goes away when the panel is uninstalled.
 
 - `panel.listen`, `panel.public_ip`, `net.ext_if` only affect display/on how
   the panel listens.
-- `url_path`, `net.subnet`, `lxd.pool` etc. are bound to existing data — do not
+- `url_path`, `net.subnet`, `incus.pool` etc. are bound to existing data — do not
   change them after first install.
 - `net.ipv6_subnet` must be a **global** (non-ULA) IPv6 CIDR with an explicit
   prefix length — a bare address is rejected, never silently assumed `/64`.

@@ -28,7 +28,7 @@ block = [configured prefix][32-bit sha256(username)][16 host bits]
 
 | Prefix | Bridge uses | Notes |
 |---|---|---|
-| `/48` `/56` `/60` | **first /64 of the prefix** | LXD's dnsmasq rejects non-/64 networks, and every deterministic block falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
+| `/48` `/56` `/60` | **first /64 of the prefix** | Incus's dnsmasq rejects non-/64 networks, and every deterministic block falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
 | `/64` | the /64 itself | |
 | `/80` | the /80 itself | Common provider slice (e.g. AWS ENI /80). |
 
@@ -54,7 +54,7 @@ that the host can see is already taken:
 2. the upstream default gateway(s),
 3. any address in the NDP neighbor table on the external interface.
 
-The conflicting prefix route LXD auto-creates on the bridge is deleted (eth0
+The conflicting prefix route Incus auto-creates on the bridge is deleted (eth0
 keeps the authoritative route), and IPv6 forwarding is enabled.
 
 ## Per-container wiring
@@ -62,11 +62,11 @@ keeps the authoritative route), and IPv6 forwarding is enabled.
 For each container:
 
 - The `eth0` device sets `ipv6.address=<block>::1` and
-  `ipv6.routes=<block>::/112`, so LXD routes the whole block to the container.
+  `ipv6.routes=<block>::/112`, so Incus routes the whole block to the container.
   Any address inside the /112 that the container binds is delivered to it.
 - The primary `/128` is **bound statically** inside the container (a networkd
   `[Address]` section on Debian, a boot-time service on RHEL) — it does not
-  depend on DHCPv6. This matters on reinstall: LXD's dnsmasq keeps the deleted
+  depend on DHCPv6. This matters on reinstall: Incus's dnsmasq keeps the deleted
   container's DHCPv6 lease for the deterministic address for up to an hour, so
   DHCPv6 would hand the recreated container a *dynamic* address instead, which
   falls outside the routed /112 and is dropped by `ipv6_filtering`. Binding the
@@ -119,7 +119,7 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
 ## Isolation interplay
 
 Container isolation (see [architecture.md](architecture.md)) is unaffected:
-`security.ipv6_filtering` whitelists the whole routed /112 (observed on LXD
+`security.ipv6_filtering` whitelists the whole routed /112 (observed on Incus
 5.21), so a container may source packets from any address in its block, and
 nothing else. Containers cannot reach each other on the private bridge —
 v6 included — so inter-container traffic must go via public addresses; the

@@ -54,7 +54,7 @@ vps config set net.v4_forward true|false   # 共享 IPv4 入站开关：false = 
 
 用户可在面板中设置自定义**初始化脚本**——重装后在容器内以 root 自动运行（输出在容器内 /var/log/vpsmgr-init.log），用于云厂商式的首次引导自动化。
 
-管理员可设置每用户的**月度流量配额**（GiB，上传+下载）；超限后容器上下行各限速 **1Mbps**。限速由 LXD 实时应用（tc qdisc），无需重启容器。
+管理员可设置每用户的**月度流量配额**（GiB，上传+下载）；超限后容器上下行各限速 **1Mbps**。限速由 Incus 实时应用（tc qdisc），无需重启容器。
 
 域名可选用 **PROXY protocol v2**（443 TLS 直通向后端汇报访客 IP，后端需适配；HTTP/80 保持常规 X-Forwarded-For header）。管理员有**域名管理**页面：列出所有域名及其所属用户、最后修改时间（UTC，按浏览器时区显示），可修改该设置或删除域名。
 
@@ -68,7 +68,7 @@ vps config set net.v4_forward true|false   # 共享 IPv4 入站开关：false = 
 
 ```
 sudo ./uninstall.sh          # 卸载软件，保留 config/db/容器
-sudo ./uninstall.sh --purge  # 连 config/db、容器、存储池、LXD 一起删
+sudo ./uninstall.sh --purge  # 连 config/db、容器、存储池、Incus 一起删
 ```
 
 ## 文档

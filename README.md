@@ -21,7 +21,7 @@ always blocked for containers, both directions — anti-spam, no toggle.
 
 ## Install
 
-**Minimum: Ubuntu 24.04 (bare metal or KVM), 1 core, 1.5G RAM, 10G free disk, and root access**
+**Minimum: Debian 12/13 or Ubuntu 22.04/24.04/26.04 (bare metal or KVM), 1 core, 1.5G RAM, 10G free disk, and root access**
 
 Both amd64 and arm64 are supported; testing has primarily been done on amd64.
 
@@ -30,6 +30,10 @@ git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
 sudo ./install.sh                  # install the stable prebuilt binary
 #sudo ./install.sh --local-build   # force a local build from source
 ```
+
+The installer configures the Zabbly Incus LTS repository and installs Incus 7
+LTS (Debian packages — the same repo serves Ubuntu, so the panel is portable
+across both).
 
 To enable IPv6 pass-through, make sure the host has been assigned an entire
 routed prefix. Ask your provider, or use the check script in this repository
@@ -79,7 +83,7 @@ cloud-provider-style first-boot automation.
 
 Admins can set a per-user monthly **bandwidth quota** (GiB, upload + download);
 a container that exceeds it is rate-limited to **1Mbps** both directions. The
-limit is applied live via LXD (tc qdiscs) — no container restart.
+limit is applied live via Incus (tc qdiscs) — no container restart.
 
 Domains can opt into **PROXY protocol v2** (the 443 TLS passthrough reports the
 visitor IP to the backend, which must support it; HTTP/80 keeps normal
@@ -104,7 +108,7 @@ which validates every change and refuses immutable fields. Reference:
 
 ```
 sudo ./uninstall.sh          # remove software, keep config/db/containers
-sudo ./uninstall.sh --purge  # also delete config/db, containers, pool, LXD
+sudo ./uninstall.sh --purge  # also delete config/db, containers, pool, Incus
 ```
 
 ## Documentation
