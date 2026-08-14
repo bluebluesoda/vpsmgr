@@ -104,8 +104,12 @@ fi
 #     check-ipv6-support.sh probe
 #   - tar/xz-utils: traefik tarball extraction; curl: downloads; gpg: Zabbly
 #     key verification; nftables/zstd: firewall + Incus image compression
+#   - sudo: hard requirement — the panel runs unprivileged and escalates ONLY
+#     the sudoers whitelist commands via `sudo -n`. Without it every
+#     privileged operation (nft reload, traefik/systemctl, IPv6 wiring, ndppd)
+#     fails at runtime. visudo ships with the sudo package.
 KERNEL_REL=$(uname -r)
-BASE_DEPS="zfsutils-linux ca-certificates python3 tar xz-utils nftables zstd curl gpg"
+BASE_DEPS="sudo zfsutils-linux ca-certificates python3 tar xz-utils nftables zstd curl gpg"
 if [[ "$ID" == "debian" ]]; then
   BASE_DEPS="$BASE_DEPS linux-headers-amd64 build-essential"
   log "Debian detected — ZFS module will be DKMS-compiled (one-time build)"

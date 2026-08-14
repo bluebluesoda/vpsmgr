@@ -304,8 +304,12 @@ func cmdInstall() error {
 	// Unprivileged panel: create the 'vps' service user (if missing), hand it
 	// the writable dirs (/etc/vpsmgr, /etc/traefik/dynamic) and the sudoers
 	// whitelist, and add it to incus-admin so the socket API is fully usable
-	// without root. Idempotent on adoption.
-	ensureVPSUser(c)
+	// without root. Idempotent on adoption. Hard failure: a panel without its
+	// sudoers whitelist would look healthy but silently fail every privileged
+	// operation.
+	if err := ensureVPSUser(c); err != nil {
+		return fmt.Errorf("vps user setup: %w", err)
+	}
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {
 		return err
@@ -417,20 +421,28 @@ func writeUnit(name, content string) error {
 //   - installs the sudoers whitelist granting ONLY the exact privileged
 //     commands the panel needs (nft reload, traefik/self systemctl, IPv6
 //     route/neigh/addr, sysctl forwarding, ndppd control)
-func ensureVPSUser(c *cfg.Config) {
+func ensureVPSUser(c *cfg.Config) error {
 	// 1. System user.
-	if out, err := exec.Command("id", "-u", "vps").CombinedOutput(); err != nil {
-		_ = exec.Command("useradd", "--system", "--no-create-home", "--home-dir",
-			"/nonexistent", "--shell", "/usr/sbin/nologin", "vps").Run()
-		_ = out
+	if _, err := exec.Command("id", "-u", "vps").CombinedOutput(); err != nil {
+		if out, err := exec.Command("useradd", "--system", "--no-create-home", "--home-dir",
+			"/nonexistent", "--shell", "/usr/sbin/nologin", "vps").CombinedOutput(); err != nil {
+			return fmt.Errorf("create vps user: %s: %w", strings.TrimSpace(string(out)), err)
+		}
 	}
-	// 2. Writable dirs (best-effort; a fresh install created them above).
-	_ = exec.Command("chown", "-R", "vps:vps", c.DataDir()).Run()
-	_ = exec.Command("chown", "-R", "vps:vps", c.TraefikDir()).Run()
-	_ = os.MkdirAll(c.TraefikDir(), 0o755)
-	_ = exec.Command("chown", "vps:vps", c.TraefikDir()).Run()
+	// 2. Writable dirs (a fresh install created them above).
+	if err := exec.Command("chown", "-R", "vps:vps", c.DataDir()).Run(); err != nil {
+		return fmt.Errorf("chown %s: %w", c.DataDir(), err)
+	}
+	if err := os.MkdirAll(c.TraefikDir(), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", c.TraefikDir(), err)
+	}
+	if err := exec.Command("chown", "-R", "vps:vps", c.TraefikDir()).Run(); err != nil {
+		return fmt.Errorf("chown %s: %w", c.TraefikDir(), err)
+	}
 	// 3. incus-admin group membership (the Incus socket's owning group).
-	_ = exec.Command("usermod", "-aG", "incus-admin", "vps").Run()
+	if err := exec.Command("usermod", "-aG", "incus-admin", "vps").Run(); err != nil {
+		return fmt.Errorf("add vps to incus-admin: %w", err)
+	}
 	// 3b. Traefik cross-link: vps must traverse /etc/traefik (group traefik) to
 	// write the dynamic files, and the traefik service must read the dynamic
 	// dir (owned by vps). See scripts/30-traefik.sh.
@@ -444,36 +456,36 @@ func ensureVPSUser(c *cfg.Config) {
 	// 3c. ndppd.conf: the panel renders this file as the unprivileged user.
 	_ = exec.Command("touch", "/etc/ndppd.conf").Run()
 	_ = exec.Command("chown", "vps:vps", "/etc/ndppd.conf").Run()
-	// 4. sudoers whitelist.
-	ensureSudoers()
+	// 4. sudoers whitelist — a hard requirement: without it every privileged
+	// operation (nft reload, traefik/systemctl, IPv6 wiring) fails at runtime.
+	if err := ensureSudoers(); err != nil {
+		return fmt.Errorf("sudoers whitelist: %w", err)
+	}
+	return nil
 }
 
 // ensureSudoers installs the panel's sudoers whitelist. The file is embedded
 // here (rather than read from disk) so `vps install` is self-contained after
-// the binary is in place.
-func ensureSudoers() {
+// the binary is in place. A syntax error must never brick sudo for the whole
+// host, so the candidate is validated with `visudo -c` before it is renamed
+// into place; any failure is an install error, not a warning.
+func ensureSudoers() error {
 	const sudoers = `# Managed by vpsmgr — installed file, do not edit by hand.
 # Changes are overwritten on the next install.
 #
 # The vps panel runs as the unprivileged 'vps' user. These are the ONLY
 # root-privileged commands it may run, each pinned to its exact invocation.
+# Keep this list in sync with the actual su.Run calls (see P2-7 review item).
 vps ALL=(root) NOPASSWD: /usr/sbin/nft add table inet vpsmgr
 vps ALL=(root) NOPASSWD: /usr/sbin/nft -f /etc/vpsmgr/nftables.conf
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable traefik.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable traefik.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl start traefik.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl stop traefik.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now traefik.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl restart vps.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active vps.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet vps.service
 vps ALL=(root) NOPASSWD: /sbin/ip -6 route del *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 route add *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 route replace *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh del proxy *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh add proxy *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 addr replace *
 vps ALL=(root) NOPASSWD: /sbin/ip -6 addr add *
-vps ALL=(root) NOPASSWD: /sbin/ip -6 addr del *
 vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
 vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start
@@ -482,22 +494,24 @@ vps ALL=(root) NOPASSWD: /usr/bin/pkill -x ndppd
 vps ALL=(root) NOPASSWD: /usr/sbin/ndppd -d -p /var/run/ndppd.pid
 `
 	if err := os.MkdirAll("/etc/sudoers.d", 0o750); err != nil {
-		return
+		return fmt.Errorf("mkdir /etc/sudoers.d: %w", err)
 	}
 	tmp := "/etc/sudoers.d/vps.tmp"
 	if err := os.WriteFile(tmp, []byte(sudoers), 0o440); err != nil {
-		return
+		return fmt.Errorf("write sudoers candidate: %w", err)
 	}
+	defer os.Remove(tmp)
 	// Validate with visudo -c before activating; a syntax error must never
 	// brick sudo for the whole host.
 	if out, err := exec.Command("visudo", "-c", "-f", tmp).CombinedOutput(); err != nil {
-		_ = os.Remove(tmp)
-		log.Printf("warn: sudoers whitelist not installed (%s)", strings.TrimSpace(string(out)))
-		return
+		return fmt.Errorf("visudo rejected the whitelist (%s)", strings.TrimSpace(string(out)))
 	}
-	_ = os.Rename(tmp, "/etc/sudoers.d/vps")
+	if err := os.Rename(tmp, "/etc/sudoers.d/vps"); err != nil {
+		return fmt.Errorf("activate sudoers whitelist: %w", err)
+	}
 	_ = exec.Command("chown", "root:root", "/etc/sudoers.d/vps").Run()
 	_ = exec.Command("chmod", "0440", "/etc/sudoers.d/vps").Run()
+	return nil
 }
 
 func cmdServe() error {
