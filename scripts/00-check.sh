@@ -52,16 +52,15 @@ log "free disk on /: $(( FREE_KB / 1024 )) MiB"
 # --- swap (recommend a swap file when absent) ---
 # Containers can spike memory; a small box without swap OOMs the host instead
 # of throttling. If any swap exists, leave it alone. Otherwise ask (default
-# yes) to create and permanently enable a swap file of half the RAM.
+# yes) to create and permanently enable a swap file the size of RAM (1:1),
+# floored at 1 GiB — enough for `--local-build`'s go build without eating
+# disk on small boxes.
 SWAP_KB=$(awk '/SwapTotal/{print $2}' /proc/meminfo)
 if [[ ${SWAP_KB:-0} -gt 0 ]]; then
   log "swap: $(awk '/SwapTotal/{printf "%.1f GiB", $2/1024/1024}' /proc/meminfo)"
 else
-  SWAP_MB=$(( MEM_KB / 2 / 1024 ))
-  # Small boxes need a floor: `--local-build` compiles the panel (go build) and
-  # Incus+ZFS run in the same RAM, so half of 1 GiB (512M) is not enough —
-  # the build OOMs. Floor the recommended swap file at 2 GiB.
-  [[ $SWAP_MB -lt 2048 ]] && SWAP_MB=2048
+  SWAP_MB=$(( MEM_KB / 1024 ))
+  [[ $SWAP_MB -lt 1024 ]] && SWAP_MB=1024
   if [[ $SWAP_MB -ge 1024 ]]; then SIZE_HUMAN="$(( SWAP_MB / 1024 )) GiB"; else SIZE_HUMAN="${SWAP_MB} MiB"; fi
   log "no swap found (recommended: a swap file of ~${SIZE_HUMAN})"
   read -r -p "[00] create and permanently enable a ${SIZE_HUMAN} swap file now? [Y/n] " ANS
