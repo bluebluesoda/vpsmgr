@@ -328,28 +328,28 @@ func (c *Client) UsageMap() (map[string]Usage, error) {
 	return m, nil
 }
 
-// Traffic describes a container's cumulative network counters since its last
+// Bandwidth describes a container's cumulative network counters since its last
 // start. Counters are per-device and reset to zero when the container is
 // restarted or reinstalled.
-type Traffic struct {
+type Bandwidth struct {
 	Rx int64 // bytes received (download)
 	Tx int64 // bytes sent (upload)
 }
 
-// TrafficMap returns the cumulative network counters of every running
+// BandwidthMap returns the cumulative network counters of every running
 // container, keyed by container name. Stopped containers have no state and are
 // omitted.
-func (c *Client) TrafficMap() (map[string]Traffic, error) {
+func (c *Client) BandwidthMap() (map[string]Bandwidth, error) {
 	sn, err := c.snapshot()
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]Traffic, len(sn))
+	m := make(map[string]Bandwidth, len(sn))
 	for name, ci := range sn {
 		if ci.Status != "Running" {
 			continue
 		}
-		m[name] = Traffic{Rx: ci.Rx, Tx: ci.Tx}
+		m[name] = Bandwidth{Rx: ci.Rx, Tx: ci.Tx}
 	}
 	return m, nil
 }
@@ -368,7 +368,7 @@ type ContainerInfo struct {
 
 // Containers returns a live snapshot of every container: one list call plus
 // concurrent state reads, regardless of the number of containers. Stopped
-// containers yield zeroed CPU/mem/traffic values with Status reflecting the
+// containers yield zeroed CPU/mem/bandwidth values with Status reflecting the
 // real status.
 func (c *Client) Containers() (map[string]ContainerInfo, error) {
 	return c.snapshot()

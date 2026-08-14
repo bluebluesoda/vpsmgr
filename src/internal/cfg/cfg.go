@@ -58,7 +58,7 @@ const (
 	// container after a reinstall). Bounds the DB row and the panel payload.
 	MaxInitScriptBytes = 64 * 1024
 
-	// Traffic throttle: when a user exceeds their monthly quota, both
+	// Bandwidth throttle: when a user exceeds their monthly quota, both
 	// directions are limited to ThrottleRate (an Incus NIC limit value, bit/s
 	// with suffix). ThrottleDisplay is what the user panel shows.
 	ThrottleRate    = "1Mbit"

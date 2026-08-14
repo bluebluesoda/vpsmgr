@@ -11,27 +11,27 @@ import (
 	"vpsmgr/internal/lx"
 )
 
-// TrafficInterval is how often the background sampler runs.
-const TrafficInterval = 60 * time.Second
+// BandwidthInterval is how often the background sampler runs.
+const BandwidthInterval = 60 * time.Second
 
-// SampleTraffic reads the current Incus network counters of every running
+// SampleBandwidth reads the current Incus network counters of every running
 // container and advances each user's monthly transfer totals. Counter resets
 // (container restart/reinstall) and the monthly rollover (period key change)
 // are handled inside the DB update, so concurrent samplers (background
 // goroutine and CLI) can never double-count: the delta is computed against the
 // baselines stored in the database at statement time, not against values read
 // in this process.
-func (m *Manager) SampleTraffic() error {
+func (m *Manager) SampleBandwidth() error {
 	m.sampleMu.Lock()
 	defer m.sampleMu.Unlock()
-	tm, err := m.lx.TrafficMap()
+	tm, err := m.lx.BandwidthMap()
 	if err != nil {
 		return err
 	}
-	return m.sampleTraffic(tm)
+	return m.sampleBandwidth(tm)
 }
 
-func (m *Manager) sampleTraffic(tm map[string]lx.Traffic) error {
+func (m *Manager) sampleBandwidth(tm map[string]lx.Bandwidth) error {
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err
@@ -47,16 +47,16 @@ func (m *Manager) sampleTraffic(tm map[string]lx.Traffic) error {
 			// container stopped: no counters available, nothing to add
 			continue
 		}
-		if err := m.db.ApplyTraffic(u.ID, period, t.Rx, t.Tx); err != nil && firstErr == nil {
+		if err := m.db.ApplyBandwidth(u.ID, period, t.Rx, t.Tx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-// TrafficFor returns the user's monthly upload/download totals in bytes.
-func (m *Manager) TrafficFor(userID int64) (up, down uint64) {
-	tr, err := m.db.GetTraffic(userID)
+// BandwidthFor returns the user's monthly upload/download totals in bytes.
+func (m *Manager) BandwidthFor(userID int64) (up, down uint64) {
+	tr, err := m.db.GetBandwidth(userID)
 	if err != nil {
 		return 0, 0
 	}
@@ -77,9 +77,9 @@ func shouldThrottle(used uint64, quotaGB int) bool {
 	return used >= uint64(quotaGB)<<30
 }
 
-// ParseTrafficGB parses a bandwidth quota in GiB: empty or "0" = unlimited,
+// ParseBandwidthGB parses a bandwidth quota in GiB: empty or "0" = unlimited,
 // otherwise a non-negative integer.
-func ParseTrafficGB(s string) (int, error) {
+func ParseBandwidthGB(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, nil
@@ -91,7 +91,7 @@ func ParseTrafficGB(s string) (int, error) {
 	return n, nil
 }
 
-// IsThrottled reports whether the container currently carries the traffic
+// IsThrottled reports whether the container currently carries the bandwidth
 // throttle. Safe to call from panel goroutines (limitMu-guarded).
 func (m *Manager) IsThrottled(name string) bool {
 	m.limitMu.Lock()
@@ -99,12 +99,12 @@ func (m *Manager) IsThrottled(name string) bool {
 	return m.throttled[name]
 }
 
-// EnforceTrafficLimits applies or removes the NIC rate limit for every user
+// EnforceBandwidthLimits applies or removes the NIC rate limit for every user
 // based on their monthly quota. Called by the 60s sampler only (single
 // goroutine), so two containers crossing the limit in the same pass are both
 // handled without racing. Incus applies NIC limits live via tc (no container
 // restart), and the throttled map makes the call idempotent between passes.
-func (m *Manager) EnforceTrafficLimits() error {
+func (m *Manager) EnforceBandwidthLimits() error {
 	m.limitMu.Lock()
 	defer m.limitMu.Unlock()
 	users, err := m.db.ListUsers()
@@ -126,8 +126,8 @@ func (m *Manager) EnforceTrafficLimits() error {
 	}
 	var firstErr error
 	for _, u := range users {
-		up, down := m.TrafficFor(u.ID)
-		over := shouldThrottle(up+down, u.TrafficQuotaGB)
+		up, down := m.BandwidthFor(u.ID)
+		over := shouldThrottle(up+down, u.BandwidthQuotaGB)
 		if over && !m.throttled[u.Name] {
 			if err := m.lx.EnsureNicRateLimit(u.Name, cfg.ThrottleRate); err != nil {
 				if firstErr == nil {

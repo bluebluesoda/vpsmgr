@@ -117,7 +117,7 @@ func readUptime() time.Duration {
 }
 
 // UserStatus is one row of the admin user table: the DB user record plus live
-// stats (state, CPU%, memory usage, actual disk usage, monthly traffic).
+// stats (state, CPU%, memory usage, actual disk usage, monthly bandwidth).
 type UserStatus struct {
 	User     *db.User
 	State    string
@@ -132,7 +132,7 @@ type UserStatus struct {
 
 // BatchUsers returns live status for every user with a MINIMAL number of Incus
 // calls regardless of user count:
-//   - 1 x instances list (SampleTraffic, also freshens monthly totals)
+//   - 1 x instances list (SampleBandwidth, also freshens monthly totals)
 //   - 2 x instances list ~1s apart (CPU% delta, same algorithm as List)
 //   - 1 x exec `df -k /` per RUNNING container for real disk usage
 //
@@ -143,7 +143,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.SampleTraffic() // best-effort freshness for the displayed totals
+	m.SampleBandwidth() // best-effort freshness for the displayed totals
 
 	s1, err := m.lx.Containers()
 	if err != nil {
@@ -179,7 +179,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	for _, u := range users {
 		cur := s2[u.Name]
 		prev, ok := s1[u.Name]
-		up, down := m.TrafficFor(u.ID)
+		up, down := m.BandwidthFor(u.ID)
 		rs := &UserStatus{User: u, State: cur.Status, UpGB: FormatGB(up), DownGB: FormatGB(down), Procs: cur.Processes}
 		if ok && cur.Status == "Running" && prev.Status == "Running" && u.CPU > 0 {
 			delta := cur.CPUUsage - prev.CPUUsage

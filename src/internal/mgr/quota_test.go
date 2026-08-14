@@ -8,11 +8,11 @@ import (
 	"vpsmgr/internal/db"
 )
 
-// TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure verifies the
-// combined admin quota submit cannot half-apply: the traffic quota is written
+// TestUpdateQuotasAndBandwidthRollsBackBandwidthOnResourceFailure verifies the
+// combined admin quota submit cannot half-apply: the bandwidth quota is written
 // first, and when the Incus-side resource update fails it is restored. Incus is
 // pointed at a nonexistent socket so the resource update always fails.
-func TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure(t *testing.T) {
+func TestUpdateQuotasAndBandwidthRollsBackBandwidthOnResourceFailure(t *testing.T) {
 	c := cfg.Default()
 	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -25,15 +25,15 @@ func TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure(t *testing.T) {
 	}
 	m := New(c, d)
 
-	if _, err := m.UpdateQuotasAndTraffic("alice", 20, 2048, 20, 100); err == nil {
+	if _, err := m.UpdateQuotasAndBandwidth("alice", 20, 2048, 20, 100); err == nil {
 		t.Fatal("expected an error: Incus is unreachable")
 	}
 	u, err := d.GetUserByName("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.TrafficQuotaGB != 0 {
-		t.Errorf("traffic quota not rolled back: got %d, want 0 (unchanged)", u.TrafficQuotaGB)
+	if u.BandwidthQuotaGB != 0 {
+		t.Errorf("bandwidth quota not rolled back: got %d, want 0 (unchanged)", u.BandwidthQuotaGB)
 	}
 	if u.CPU != 10 || u.MemMB != 1024 || u.DiskGB != 10 {
 		t.Errorf("resource quotas changed despite failure: cpu=%d mem=%d disk=%d", u.CPU, u.MemMB, u.DiskGB)

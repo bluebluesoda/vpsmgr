@@ -39,15 +39,15 @@ type Manager struct {
 	// UNIQUE constraint plus Add's rollback.
 	opMu sync.Mutex
 
-	// throttled tracks which containers currently carry a traffic throttle
-	// (name -> on), so EnforceTrafficLimits only touches Incus on state changes.
+	// throttled tracks which containers currently carry a bandwidth throttle
+	// (name -> on), so EnforceBandwidthLimits only touches Incus on state changes.
 	// limitMu guards it: the 60s sampler writes, the panel reads via
 	// IsThrottled. Re-applying a limit after a panel restart is harmless (Incus
 	// applies NIC limits live, no container restart).
 	limitMu   sync.Mutex
 	throttled map[string]bool
 
-	// sampleMu serializes traffic sampling. Incus counters are read and the DB
+	// sampleMu serializes bandwidth sampling. Incus counters are read and the DB
 	// delta applied in one critical section so a slower, out-of-order sampler
 	// (the 60s goroutine vs a panel-triggered sample) can never write a lower
 	// counter after a higher one was recorded — the SQL reset path would then
@@ -240,8 +240,8 @@ type AddOptions struct {
 	CPU    int
 	MemMB  int
 	DiskGB int
-	// TrafficGB is the monthly traffic quota in GiB (0 = unlimited).
-	TrafficGB int
+	// BandwidthGB is the monthly bandwidth quota in GiB (0 = unlimited).
+	BandwidthGB int
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -347,7 +347,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("config container ipv6: %w", err)
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.TrafficGB)
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -479,7 +479,7 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 	for i, d := range domains {
 		ds[i] = d.Domain
 	}
-	up, down := m.TrafficFor(u.ID)
+	up, down := m.BandwidthFor(u.ID)
 	ipv6, _ := m.IPv6Addr(u.Name)
 	block := ""
 	if b, _ := m.IPv6Block(u.Name); b != nil {
@@ -645,7 +645,7 @@ func (m *Manager) List() ([]*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.SampleTraffic() // best-effort freshness for the displayed totals
+	m.SampleBandwidth() // best-effort freshness for the displayed totals
 	use, _ := m.sampleUsage()
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
@@ -661,7 +661,7 @@ func (m *Manager) Show(name string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.SampleTraffic() // best-effort freshness for the displayed totals
+	m.SampleBandwidth() // best-effort freshness for the displayed totals
 	r := m.ResultFor(u, "")
 	use, _ := m.sampleUsage()
 	m.decorateUsage(r, use)
@@ -735,26 +735,26 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 	return m.ResultFor(u, ""), nil
 }
 
-// UpdateQuotasAndTraffic adjusts CPU/mem/disk and the monthly bandwidth quota
+// UpdateQuotasAndBandwidth adjusts CPU/mem/disk and the monthly bandwidth quota
 // in one call, so the admin panel's single submit cannot succeed halfway. The
-// traffic quota is a DB-only write: it is applied first and rolled back if the
-// Incus-side resource update fails. trafficGB < 0 leaves the traffic quota
+// bandwidth quota is a DB-only write: it is applied first and rolled back if the
+// Incus-side resource update fails. bandwidthGB < 0 leaves the bandwidth quota
 // unchanged.
-func (m *Manager) UpdateQuotasAndTraffic(name string, cpu, memMB, diskGB, trafficGB int) (*Result, error) {
+func (m *Manager) UpdateQuotasAndBandwidth(name string, cpu, memMB, diskGB, bandwidthGB int) (*Result, error) {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return nil, err
 	}
-	if trafficGB >= 0 {
-		if err := m.db.UpdateTrafficQuota(u.ID, trafficGB); err != nil {
+	if bandwidthGB >= 0 {
+		if err := m.db.UpdateBandwidthQuota(u.ID, bandwidthGB); err != nil {
 			return nil, err
 		}
 	}
 	res, err := m.UpdateQuotas(name, cpu, memMB, diskGB)
 	if err != nil {
-		if trafficGB >= 0 {
-			// restore the previous traffic quota so the form is fully rolled back
-			_ = m.db.UpdateTrafficQuota(u.ID, u.TrafficQuotaGB)
+		if bandwidthGB >= 0 {
+			// restore the previous bandwidth quota so the form is fully rolled back
+			_ = m.db.UpdateBandwidthQuota(u.ID, u.BandwidthQuotaGB)
 		}
 		return nil, err
 	}

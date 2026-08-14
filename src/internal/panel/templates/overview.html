@@ -74,15 +74,15 @@ a{color:var(--accent);text-decoration:none}
 .help .tip{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:.55rem .7rem;font-size:.78rem;line-height:1.5;color:var(--text);white-space:normal;width:max-content;max-width:280px;z-index:80;text-align:left;font-weight:400}
 .help .tip b{color:var(--warn)}
 .help.open .tip{display:block}
-.traffic-line{margin:.15rem 0 .6rem;font-size:.8rem}
+.bandwidth-line{margin:.15rem 0 .6rem;font-size:.8rem}
 .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin:.15rem 0 .7rem}
 .qitem{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
 .qlabel{display:block;color:var(--muted);font-size:.72rem;letter-spacing:.02em;margin-bottom:.2rem}
 .qval{display:block;font-size:.98rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-.traffic-quota{margin:.15rem 0 .7rem}
-.traffic-quota .trow{display:flex;justify-content:space-between;align-items:center;font-size:.82rem;margin-bottom:.3rem;gap:.5rem}
-.traffic-quota .bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden}
-.traffic-quota .bar .fill{height:100%;background:var(--accent);border-radius:4px;min-width:2px}
+.bandwidth-quota{margin:.15rem 0 .7rem}
+.bandwidth-quota .trow{display:flex;justify-content:space-between;align-items:center;font-size:.82rem;margin-bottom:.3rem;gap:.5rem}
+.bandwidth-quota .bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden}
+.bandwidth-quota .bar .fill{height:100%;background:var(--accent);border-radius:4px;min-width:2px}
 footer{margin-top:1.5rem;text-align:center;color:var(--muted);font-size:.8rem}
 footer a{color:var(--muted);text-decoration:underline}
 .toast{position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:100;background:var(--ok);color:#fff;padding:.6rem 1rem;border-radius:8px;font-size:.88rem;box-shadow:var(--shadow);max-width:90vw;opacity:1;transition:opacity .3s}
@@ -136,11 +136,11 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}</span><span class="qval">{{.QuotaDisk}}</span></div>
 </div>
-<div class="muted traffic-line">{{if eq .Lang "zh"}}本月流量{{else}}Bandwidth{{end}} ↑ {{.UpGB}} / ↓ {{.DownGB}} GB{{if not .TrafficQuotaGB}} · {{if eq .Lang "zh"}}无限制{{else}}unlimited{{end}}{{end}}</div>
-{{if .TrafficQuotaGB}}
-<div class="traffic-quota">
-<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额{{else}}Bandwidth quota{{end}}</span><span>{{.TrafficUsedGB}} / {{.TrafficQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
-<div class="bar"><div class="fill" style="width:{{.TrafficPct}}%"></div></div>
+<div class="muted bandwidth-line">{{if eq .Lang "zh"}}本月流量{{else}}Bandwidth{{end}} ↑ {{.UpGB}} / ↓ {{.DownGB}} GB{{if not .BandwidthQuotaGB}} · {{if eq .Lang "zh"}}无限制{{else}}unlimited{{end}}{{end}}</div>
+{{if .BandwidthQuotaGB}}
+<div class="bandwidth-quota">
+<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额{{else}}Bandwidth quota{{end}}</span><span>{{.BandwidthUsedGB}} / {{.BandwidthQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
+<div class="bar"><div class="fill" style="width:{{.BandwidthPct}}%"></div></div>
 </div>
 {{end}}
 <div class="btnrow">

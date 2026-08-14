@@ -22,9 +22,9 @@ type User struct {
 	MemMB      int
 	DiskGB     int
 	CreatedAt  string
-	// TrafficQuotaGB is the monthly traffic quota (upload + download) in GiB.
+	// BandwidthQuotaGB is the monthly bandwidth quota (upload + download) in GiB.
 	// 0 means unlimited.
-	TrafficQuotaGB int
+	BandwidthQuotaGB int
 }
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
@@ -41,11 +41,11 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 	return u, nil
 }
 
-// CreateUserFull atomically creates a user, its initial traffic row and (when
-// trafficGB > 0) the monthly traffic quota in ONE SQLite transaction. The Add
-// flow uses this so a crash can never leave a user row without its traffic
+// CreateUserFull atomically creates a user, its initial bandwidth row and (when
+// bandwidthGB > 0) the monthly bandwidth quota in ONE SQLite transaction. The Add
+// flow uses this so a crash can never leave a user row without its bandwidth
 // state — the "half-created user" failure mode of the original design.
-func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, trafficGB int) (*User, error) {
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int) (*User, error) {
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return nil, err
@@ -63,19 +63,19 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	}
 	u.ID, _ = r.LastInsertId()
 
-	// The traffic row always exists for a new user (0 counters), so SampleTraffic
+	// The bandwidth row always exists for a new user (0 counters), so SampleBandwidth
 	// and the quota logic have a baseline from the start.
 	if _, err := tx.Exec(
-		`INSERT INTO traffic(user_id, period, upload_bytes, download_bytes, last_rx, last_tx)
+		`INSERT INTO bandwidth(user_id, period, upload_bytes, download_bytes, last_rx, last_tx)
 		 VALUES(?, ?, 0, 0, 0, 0)`,
 		u.ID, now()[:7]); err != nil {
 		return nil, err
 	}
-	if trafficGB > 0 {
-		if _, err := tx.Exec(`UPDATE users SET traffic_quota_gb=? WHERE id=?`, trafficGB, u.ID); err != nil {
+	if bandwidthGB > 0 {
+		if _, err := tx.Exec(`UPDATE users SET bandwidth_quota_gb=? WHERE id=?`, bandwidthGB, u.ID); err != nil {
 			return nil, err
 		}
-		u.TrafficQuotaGB = trafficGB
+		u.BandwidthQuotaGB = bandwidthGB
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -142,7 +142,7 @@ func (d *DB) UsedSSHPorts() (map[int]bool, error) {
 func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.TrafficQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -151,19 +151,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.TrafficQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -203,8 +203,8 @@ func (d *DB) UpdateInitScript(id int64, script string) error {
 	return err
 }
 
-// UpdateTrafficQuota sets a user's monthly traffic quota in GiB (0 = unlimited).
-func (d *DB) UpdateTrafficQuota(id int64, gb int) error {
-	_, err := d.sql.Exec(`UPDATE users SET traffic_quota_gb=? WHERE id=?`, gb, id)
+// UpdateBandwidthQuota sets a user's monthly bandwidth quota in GiB (0 = unlimited).
+func (d *DB) UpdateBandwidthQuota(id int64, gb int) error {
+	_, err := d.sql.Exec(`UPDATE users SET bandwidth_quota_gb=? WHERE id=?`, gb, id)
 	return err
 }

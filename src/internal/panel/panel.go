@@ -122,9 +122,9 @@ type pageData struct {
 	SSH            string
 	V4Forward      bool   // false = IPv6-only box: v4 ssh/ports not offered
 	InitScript     string // custom init script, run after a reinstall
-	TrafficQuotaGB int    // monthly traffic quota GiB, 0 = unlimited
-	TrafficUsedGB  string // used this month (GB, 1 decimal) — only set when limited
-	TrafficPct     int    // used/quota * 100, clamped to 100
+	BandwidthQuotaGB int    // monthly bandwidth quota GiB, 0 = unlimited
+	BandwidthUsedGB  string // used this month (GB, 1 decimal) — only set when limited
+	BandwidthPct     int    // used/quota * 100, clamped to 100
 	Throttled      bool   // over quota: NIC limited to 1Mbps
 	Domains        []domainRow
 	QuotaCPU       string
@@ -279,7 +279,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Err:        errMsg,
 	}
 	// One `incus list` call only for the container status (must be live).
-	// Traffic is read from the DB — the background sampler writes it every 60s.
+	// Bandwidth is read from the DB — the background sampler writes it every 60s.
 	st, err := s.mgr.State(u.Name)
 	if err != nil {
 		d.Err = err.Error()
@@ -295,19 +295,19 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 			d.IPv6Block = b.String()
 		}
 	}
-	up, down := s.mgr.TrafficFor(u.ID) // pure DB read
+	up, down := s.mgr.BandwidthFor(u.ID) // pure DB read
 	d.UpGB = mgr.FormatGB(up)
 	d.DownGB = mgr.FormatGB(down)
-	if q := u.TrafficQuotaGB; q > 0 {
+	if q := u.BandwidthQuotaGB; q > 0 {
 		used := up + down
 		quota := uint64(q) << 30
 		pct := int(used * 100 / quota)
 		if pct > 100 {
 			pct = 100
 		}
-		d.TrafficQuotaGB = q
-		d.TrafficUsedGB = mgr.FormatGB(used)
-		d.TrafficPct = pct
+		d.BandwidthQuotaGB = q
+		d.BandwidthUsedGB = mgr.FormatGB(used)
+		d.BandwidthPct = pct
 		d.Throttled = s.mgr.IsThrottled(u.Name)
 	}
 	domains, _ := s.db.ListDomains(u.ID)

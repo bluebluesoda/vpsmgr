@@ -42,9 +42,9 @@ func TestInitScriptRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTrafficQuotaRoundTrip verifies the traffic_quota_gb column stores and
+// TestBandwidthQuotaRoundTrip verifies the bandwidth_quota_gb column stores and
 // reads back a user's monthly quota (0 = unlimited).
-func TestTrafficQuotaRoundTrip(t *testing.T) {
+func TestBandwidthQuotaRoundTrip(t *testing.T) {
 	d, err := Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
@@ -54,24 +54,24 @@ func TestTrafficQuotaRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.TrafficQuotaGB != 0 {
-		t.Fatalf("new user traffic_quota_gb = %d, want 0", u.TrafficQuotaGB)
+	if u.BandwidthQuotaGB != 0 {
+		t.Fatalf("new user bandwidth_quota_gb = %d, want 0", u.BandwidthQuotaGB)
 	}
-	if err := d.UpdateTrafficQuota(u.ID, 100); err != nil {
+	if err := d.UpdateBandwidthQuota(u.ID, 100); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetUserByName("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.TrafficQuotaGB != 100 {
-		t.Errorf("traffic_quota_gb = %d, want 100", got.TrafficQuotaGB)
+	if got.BandwidthQuotaGB != 100 {
+		t.Errorf("bandwidth_quota_gb = %d, want 100", got.BandwidthQuotaGB)
 	}
-	if err := d.UpdateTrafficQuota(u.ID, 0); err != nil {
+	if err := d.UpdateBandwidthQuota(u.ID, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = d.GetUserByName("alice")
-	if got.TrafficQuotaGB != 0 {
-		t.Errorf("traffic_quota_gb not reset: %d", got.TrafficQuotaGB)
+	if got.BandwidthQuotaGB != 0 {
+		t.Errorf("bandwidth_quota_gb not reset: %d", got.BandwidthQuotaGB)
 	}
 }

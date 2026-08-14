@@ -54,16 +54,16 @@ func TestShouldThrottle(t *testing.T) {
 	}
 }
 
-func TestParseTrafficGB(t *testing.T) {
+func TestParseBandwidthGB(t *testing.T) {
 	for s, want := range map[string]int{"": 0, "0": 0, "100": 100, "  50 ": 50} {
-		got, err := ParseTrafficGB(s)
+		got, err := ParseBandwidthGB(s)
 		if err != nil || got != want {
-			t.Errorf("ParseTrafficGB(%q) = %d, %v; want %d", s, got, err, want)
+			t.Errorf("ParseBandwidthGB(%q) = %d, %v; want %d", s, got, err, want)
 		}
 	}
 	for _, bad := range []string{"-1", "abc", "1.5", "100GB"} {
-		if _, err := ParseTrafficGB(bad); err == nil {
-			t.Errorf("ParseTrafficGB(%q): expected error", bad)
+		if _, err := ParseBandwidthGB(bad); err == nil {
+			t.Errorf("ParseBandwidthGB(%q): expected error", bad)
 		}
 	}
 }

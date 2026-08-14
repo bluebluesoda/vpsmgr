@@ -182,7 +182,7 @@ func TestUnknownSubpathUnderPrefix(t *testing.T) {
 	}
 }
 
-func TestOverviewShowsMonthlyTraffic(t *testing.T) {
+func TestOverviewShowsMonthlyBandwidth(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
 		User:   &db.User{Name: "alice"},
@@ -282,18 +282,18 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 	}
 }
 
-// TestOverviewShowsTrafficQuota verifies a limited user gets a quota progress
+// TestOverviewShowsBandwidthQuota verifies a limited user gets a quota progress
 // bar, and an over-quota (throttled) user the "limited to 1Mbps" badge.
-func TestOverviewShowsTrafficQuota(t *testing.T) {
+func TestOverviewShowsBandwidthQuota(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
 		User:           &db.User{Name: "alice"},
 		UpGB:           "3.0",
 		DownGB:         "1.0",
 		Prefix:         "/" + testSecret,
-		TrafficQuotaGB: 100,
-		TrafficUsedGB:  "4.0",
-		TrafficPct:     4,
+		BandwidthQuotaGB: 100,
+		BandwidthUsedGB:  "4.0",
+		BandwidthPct:     4,
 	})
 	for _, want := range []string{"4.0 / 100 GB", "width:4%"} {
 		if !strings.Contains(html, want) {
@@ -309,9 +309,9 @@ func TestOverviewShowsTrafficQuota(t *testing.T) {
 		UpGB:           "60.0",
 		DownGB:         "41.0",
 		Prefix:         "/" + testSecret,
-		TrafficQuotaGB: 100,
-		TrafficUsedGB:  "101.0",
-		TrafficPct:     100,
+		BandwidthQuotaGB: 100,
+		BandwidthUsedGB:  "101.0",
+		BandwidthPct:     100,
 		Throttled:      true,
 	})
 	for _, want := range []string{"limited to 1Mbps", "width:100%"} {

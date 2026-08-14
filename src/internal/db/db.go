@@ -42,7 +42,7 @@ func (d *DB) migrate() error {
 			ssh_port INTEGER UNIQUE NOT NULL,
 			start_port INTEGER NOT NULL,
 			init_script TEXT NOT NULL DEFAULT '',
-			traffic_quota_gb INTEGER NOT NULL DEFAULT 0,
+			bandwidth_quota_gb INTEGER NOT NULL DEFAULT 0,
 			cpu INTEGER NOT NULL DEFAULT 10,
 			mem_mb INTEGER NOT NULL DEFAULT 1024,
 			disk_gb INTEGER NOT NULL DEFAULT 10,
@@ -61,7 +61,7 @@ func (d *DB) migrate() error {
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			expires_at INTEGER NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS traffic(
+		`CREATE TABLE IF NOT EXISTS bandwidth(
 			user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 			period TEXT NOT NULL,
 			upload_bytes INTEGER NOT NULL DEFAULT 0,

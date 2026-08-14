@@ -464,7 +464,7 @@ func TestAdminCSRFRejectsCrossOriginPOST(t *testing.T) {
 
 	// A POST with a mismatched Origin is rejected before any handler runs.
 	rr := doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
-		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "bandwidth": {"0"}},
 		cookie, "https://evil.example.com")
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin POST = %d, want 403", rr.Code)
@@ -472,10 +472,10 @@ func TestAdminCSRFRejectsCrossOriginPOST(t *testing.T) {
 
 	// Same thing via Sec-Fetch-Site.
 	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
-		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "bandwidth": {"0"}},
 		cookie, "https://evil.example.com")
 	req := httptest.NewRequest(http.MethodPost, prefix+"/user-quota",
-		strings.NewReader(url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}}.Encode()))
+		strings.NewReader(url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "bandwidth": {"0"}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.AddCookie(cookie)
@@ -487,7 +487,7 @@ func TestAdminCSRFRejectsCrossOriginPOST(t *testing.T) {
 
 	// A same-origin POST (matching Origin) is allowed through to the handler.
 	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
-		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "bandwidth": {"0"}},
 		cookie, "https://"+testHost)
 	if rr.Code == http.StatusForbidden {
 		t.Fatal("same-origin POST must not be blocked by CSRF")

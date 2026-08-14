@@ -542,7 +542,7 @@ func cmdServe() error {
 		}
 	})
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	go sampleTrafficLoop(m)
+	go sampleBandwidthLoop(m)
 	log.Printf("panel listening on %s (https, self-signed)", c.Panel.Listen)
 	return startTLS(c, dispatch, tlsCfg)
 }
@@ -558,26 +558,26 @@ func pathUnder(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
-// sampleTrafficLoop runs the monthly traffic collector until the process ends.
-// After every sample it enforces traffic quotas: users over their monthly
+// sampleBandwidthLoop runs the monthly bandwidth collector until the process ends.
+// After every sample it enforces bandwidth quotas: users over their monthly
 // limit get their NIC rate-limited to 1Mbps, users back under (e.g. monthly
 // rollover) get the limit removed. Incus applies the NIC limits live (tc), so no
 // container restart is involved.
-func sampleTrafficLoop(m *mgr.Manager) {
-	if err := m.SampleTraffic(); err != nil {
-		log.Printf("traffic sample: %v", err)
+func sampleBandwidthLoop(m *mgr.Manager) {
+	if err := m.SampleBandwidth(); err != nil {
+		log.Printf("bandwidth sample: %v", err)
 	}
-	if err := m.EnforceTrafficLimits(); err != nil {
-		log.Printf("traffic limits: %v", err)
+	if err := m.EnforceBandwidthLimits(); err != nil {
+		log.Printf("bandwidth limits: %v", err)
 	}
-	tick := time.NewTicker(mgr.TrafficInterval)
+	tick := time.NewTicker(mgr.BandwidthInterval)
 	defer tick.Stop()
 	for range tick.C {
-		if err := m.SampleTraffic(); err != nil {
-			log.Printf("traffic sample: %v", err)
+		if err := m.SampleBandwidth(); err != nil {
+			log.Printf("bandwidth sample: %v", err)
 		}
-		if err := m.EnforceTrafficLimits(); err != nil {
-			log.Printf("traffic limits: %v", err)
+		if err := m.EnforceBandwidthLimits(); err != nil {
+			log.Printf("bandwidth limits: %v", err)
 		}
 	}
 }
@@ -949,11 +949,11 @@ func userAdd(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
-	var memS, diskS, trafficS string
+	var memS, diskS, bandwidthS string
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
-	fs.StringVar(&trafficS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
+	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -982,9 +982,9 @@ func userAdd(args []string) error {
 		}
 	}
 
-	traffic := 0
-	if setTraffic := provided["bandwidth"]; setTraffic {
-		if traffic, err = mgr.ParseTrafficGB(trafficS); err != nil {
+	bandwidth := 0
+	if setBandwidth := provided["bandwidth"]; setBandwidth {
+		if bandwidth, err = mgr.ParseBandwidthGB(bandwidthS); err != nil {
 			return err
 		}
 	}
@@ -1012,11 +1012,11 @@ func userAdd(args []string) error {
 			disk, _ = parseDiskStrict(s)
 		}
 		if !provided["bandwidth"] {
-			s, err := inter.Ask("Bandwidth quota", "0", " GiB/month (0 = unlimited)", validateTrafficGB)
+			s, err := inter.Ask("Bandwidth quota", "0", " GiB/month (0 = unlimited)", validateBandwidthGB)
 			if err != nil {
 				return err
 			}
-			traffic, _ = mgr.ParseTrafficGB(s)
+			bandwidth, _ = mgr.ParseBandwidthGB(s)
 		}
 	}
 
@@ -1030,7 +1030,7 @@ func userAdd(args []string) error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, TrafficGB: traffic})
+	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth})
 	if err != nil {
 		return err
 	}
@@ -1064,11 +1064,11 @@ func userQuota(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
-	var memS, diskS, trafficS string
+	var memS, diskS, bandwidthS string
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
-	fs.StringVar(&trafficS, "bandwidth", "", "") // GiB/month, 0 = unlimited
+	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0 = unlimited
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1109,16 +1109,16 @@ func userQuota(args []string) error {
 			return err
 		}
 	}
-	setTraffic := provided["bandwidth"]
-	trafficGB := u.TrafficQuotaGB
-	if setTraffic {
-		if trafficGB, err = mgr.ParseTrafficGB(trafficS); err != nil {
+	setBandwidth := provided["bandwidth"]
+	bandwidthGB := u.BandwidthQuotaGB
+	if setBandwidth {
+		if bandwidthGB, err = mgr.ParseBandwidthGB(bandwidthS); err != nil {
 			return err
 		}
 	}
 
 	if inter.IsTTY() {
-		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
 		if !setCpu {
 			s, err := inter.Ask("new CPU cores", mgr.FormatCPU(cpu), "", validateCPU)
 			if err != nil {
@@ -1140,17 +1140,17 @@ func userQuota(args []string) error {
 			}
 			disk, _ = parseDiskStrict(s)
 		}
-		if !setTraffic {
-			s, err := inter.Ask("new bandwidth quota", strconv.Itoa(trafficGB), " GiB/month (0 = unlimited)", validateTrafficGB)
+		if !setBandwidth {
+			s, err := inter.Ask("new bandwidth quota", strconv.Itoa(bandwidthGB), " GiB/month (0 = unlimited)", validateBandwidthGB)
 			if err != nil {
 				return err
 			}
-			trafficGB, _ = mgr.ParseTrafficGB(s)
+			bandwidthGB, _ = mgr.ParseBandwidthGB(s)
 		}
 	}
 
-	trafficChanged := setTraffic || trafficGB != u.TrafficQuotaGB
-	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !trafficChanged {
+	bandwidthChanged := setBandwidth || bandwidthGB != u.BandwidthQuotaGB
+	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged {
 		if inter.IsTTY() {
 			fmt.Println("no changes, exiting")
 			return nil
@@ -1162,12 +1162,12 @@ func userQuota(args []string) error {
 	}
 
 	m := mgr.New(c, d)
-	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB || trafficChanged {
-		tgb := u.TrafficQuotaGB
-		if trafficChanged {
-			tgb = trafficGB
+	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB || bandwidthChanged {
+		tgb := u.BandwidthQuotaGB
+		if bandwidthChanged {
+			tgb = bandwidthGB
 		}
-		if _, err := m.UpdateQuotasAndTraffic(name, cpu, mem, disk, tgb); err != nil {
+		if _, err := m.UpdateQuotasAndBandwidth(name, cpu, mem, disk, tgb); err != nil {
 			return err
 		}
 	}
@@ -1269,7 +1269,7 @@ func userShow(name string) error {
 }
 
 // printAdded prints the essentials of a freshly created user. Live stats (CPU%,
-// memory, traffic, domains) are all empty on a brand-new container and only add
+// memory, bandwidth, domains) are all empty on a brand-new container and only add
 // noise, so they are intentionally skipped here.
 func printAdded(r *mgr.Result) {
 	u := r.User
@@ -1282,7 +1282,7 @@ func printAdded(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
@@ -1313,7 +1313,7 @@ func printResult(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)
 	fmt.Printf("bandwidth:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)
@@ -1396,7 +1396,7 @@ func validateDisk(s string) error {
 	return err
 }
 
-func validateTrafficGB(s string) error {
-	_, err := mgr.ParseTrafficGB(s)
+func validateBandwidthGB(s string) error {
+	_, err := mgr.ParseBandwidthGB(s)
 	return err
 }

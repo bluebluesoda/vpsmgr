@@ -148,7 +148,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="traffic" id="cfTraffic" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
       <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
@@ -177,7 +177,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{.Name}}</td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}</td>
           <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>ssh -p {{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
-          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .TrafficGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small></td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>
           <td>{{if eq .State "Running"}}{{.Procs}} / {{.ProcsLimit}}{{else}}-{{end}}</td>
@@ -191,7 +191,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               {{else}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.TrafficGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
             </div>
@@ -238,7 +238,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="traffic" id="quotaTraffic" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="quotaBandwidth" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>
@@ -264,13 +264,13 @@ function copyModal(){
   if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
   else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
-function quota(name, cpu, mem, disk, traffic){
+function quota(name, cpu, mem, disk, bandwidth){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
   document.getElementById('quotaCpu').value = parseFloat(cpu);
   document.getElementById('quotaMem').value = parseInt(mem);
   document.getElementById('quotaDisk').value = parseInt(disk);
-  document.getElementById('quotaTraffic').value = parseInt(traffic || 0);
+  document.getElementById('quotaBandwidth').value = parseInt(bandwidth || 0);
   syncCpuStep(document.getElementById('quotaCpu'));
   document.getElementById('quotaModal').classList.add('open');
 }
@@ -307,15 +307,15 @@ function del(name){
 // the container is being created (~30s) so the page does not look dead.
 (function(){
   var KEY = 'vpsmgr_admin_create';
-  var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), traffic = document.getElementById('cfTraffic'), btn = document.getElementById('cfBtn');
+  var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), btn = document.getElementById('cfBtn');
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.traffic !== undefined) traffic.value = saved.traffic; }
+    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; }
     syncCpuStep(cpu);
   } catch (e) {}
-  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, traffic: traffic.value})); } catch (e) {} }
+  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value})); } catch (e) {} }
   function onCpu(){ syncCpuStep(cpu); persist(); }
-  cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); traffic.addEventListener('input', persist);
+  cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); bandwidth.addEventListener('input', persist);
   document.getElementById('createForm').addEventListener('submit', function(){
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
   });

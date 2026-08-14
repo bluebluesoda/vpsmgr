@@ -54,7 +54,7 @@ repo (`10-incus.sh`) — never snap, never the `lxc` CLI.
 ## Documentation
 
 - `docs/README.md` — index
-- `docs/architecture.md` — system design (storage/network/security/traffic)
+- `docs/architecture.md` — system design (storage/network/security/bandwidth)
 - `docs/configuration.md` — `/etc/vpsmgr/config.yaml` reference
 - `docs/ipv6.md` — IPv6 pass-through design (large dev-branch feature)
 - `docs/development.md` — build/test/release/conventions

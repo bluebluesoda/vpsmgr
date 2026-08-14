@@ -17,7 +17,7 @@ are treated as scarce, which drives every choice in this document:
   consumed by what containers actually use, and clones share the image's
   blocks;
 - container tooling stays minimal (`git` / `python3` are deliberately absent);
-- live stats are batched into a handful of REST calls per refresh, and traffic
+- live stats are batched into a handful of REST calls per refresh, and bandwidth
   sampling runs every 60 s, keeping idle CPU/RAM use low.
 
 "Lightweight" refers to the panel and this storage/memory discipline, not to a
@@ -64,7 +64,7 @@ src/      Go source (single binary: CLI + panel)
   ```
 - **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
-- **SQLite** — users, domains, sessions, traffic counters. Located at
+- **SQLite** — users, domains, sessions, bandwidth counters. Located at
   `/etc/vpsmgr/vpsmgr.db`.
 
 ## Unprivileged panel
@@ -103,7 +103,7 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 - Add/Del/Reinstall are serialized by a per-process mutex, and `mgr.Add` rolls
   back the container, IPv6 route, nft rules and DB record on any post-launch
   failure. The DB write is a **single transaction** (`db.CreateUserFull`):
-  user row + initial traffic row + optional quota commit atomically, so a
+  user row + initial bandwidth row + optional quota commit atomically, so a
   crash can never leave a half-created user. `mgr.Del` refuses to drop the DB
   row when the container cannot actually be removed (it would orphan the
   container and let `NextFreeIdx` reuse its IP for a new user); a fresh add
@@ -113,8 +113,8 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.
 - **Bandwidth quota**: each user can carry a monthly bandwidth quota in GiB
-  (`users.traffic_quota_gb`, 0 = unlimited; counts upload + download of the
-  current month). The 60s traffic sampler enforces it: over-quota containers
+  (`users.bandwidth_quota_gb`, 0 = unlimited; counts upload + download of the
+  current month). The 60s bandwidth sampler enforces it: over-quota containers
   get their eth0 rate-limited to 1Mbps each direction, back-under (e.g. monthly
   rollover) is unthrottled. The NIC limits are applied LIVE by Incus via tc
   (htb qdisc on the host veth) — no container restart — and the manager keeps
@@ -270,7 +270,7 @@ into the kernel.
 ## Bandwidth accounting
 
 Per-container NIC counters come from Incus. A background goroutine in the panel
-samples every 60 s and accumulates deltas into SQLite (`traffic` table). The
+samples every 60 s and accumulates deltas into SQLite (`bandwidth` table). The
 panel reads totals from the DB — it never blocks on an exec for bandwidth.
 
 ## Install / uninstall lifecycle

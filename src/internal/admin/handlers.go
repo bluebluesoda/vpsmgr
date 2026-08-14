@@ -63,7 +63,7 @@ type userView struct {
 	QuotaCPU   string
 	QuotaMem   string
 	QuotaDisk  string
-	TrafficGB  int // monthly traffic quota GiB, 0 = unlimited
+	BandwidthGB  int // monthly bandwidth quota GiB, 0 = unlimited
 	CPUUse     string
 	MemUse     string
 	DiskUsed   string
@@ -124,7 +124,7 @@ func (s *Server) loadUsers(d *pageData) {
 			QuotaCPU:   mgr.FormatCPU(u.CPU),
 			QuotaMem:   strconv.Itoa(u.MemMB) + " MiB",
 			QuotaDisk:  strconv.Itoa(u.DiskGB) + " GiB",
-			TrafficGB:  u.TrafficQuotaGB,
+			BandwidthGB:  u.BandwidthQuotaGB,
 			CPUUse:     st.CPUUse,
 			MemUse:     st.MemUse,
 			DiskUsed:   st.DiskUsed,
@@ -301,12 +301,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
 		return
 	}
-	trafficGB, err := mgr.ParseTrafficGB(r.FormValue("traffic"))
+	bandwidthGB, err := mgr.ParseBandwidthGB(r.FormValue("bandwidth"))
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, TrafficGB: trafficGB})
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
@@ -356,12 +356,12 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
 		return
 	}
-	trafficGB, err := mgr.ParseTrafficGB(r.FormValue("traffic"))
+	bandwidthGB, err := mgr.ParseBandwidthGB(r.FormValue("bandwidth"))
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	if _, err := s.mgr.UpdateQuotasAndTraffic(name, cpu, memMB, diskGB, trafficGB); err != nil {
+	if _, err := s.mgr.UpdateQuotasAndBandwidth(name, cpu, memMB, diskGB, bandwidthGB); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
