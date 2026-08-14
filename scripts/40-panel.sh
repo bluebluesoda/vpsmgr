@@ -11,9 +11,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="bluebluesoda/lxc-hosting"
 
 ensure_go(){
-  # If a usable go is already on PATH (>= 1.21, toolchain auto-switch works),
-  # nothing to do. Otherwise install one: distro package first, and if that is
-  # too old (Debian 12 ships 1.19), fetch the official Go from go.dev.
+  # Reuse a usable go on PATH (>= 1.21, toolchain auto-switch works) when one
+  # already exists; otherwise install the official Go from go.dev directly.
+  # No distro package: Debian 12's golang-go is 1.19 (can't even parse
+  # go.mod's `toolchain` directive) and the official tarball is one curl away.
   if command -v go >/dev/null 2>&1; then
     if GO_VER=$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); then
       major=${GO_VER%%.*}; minor=${GO_VER#*.}; minor=${minor%%.*}
@@ -21,17 +22,11 @@ ensure_go(){
         log "go $GO_VER is new enough (>= 1.21, toolchain auto-switch works)"
         return 0
       fi
-      log "go $GO_VER on PATH is too old (< 1.21) — will install a newer one"
+      log "go $GO_VER on PATH is too old (< 1.21) — installing official Go"
     fi
-  else
-    log "installing golang-go (needed for local build)..."
-    apt-get update -qq || return 1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq golang-go || return 1
-    command -v go >/dev/null 2>&1 || return 1
   fi
   # go.mod requires go >= 1.21 (it pins `toolchain go1.26.5` and relies on
-  # auto toolchain download). Debian 12 ships golang-go 1.19, which cannot
-  # even parse the go.mod. Install the official Go from go.dev into
+  # auto toolchain download). Install the official Go from go.dev into
   # /usr/local/go and put it first on PATH for this installer's shell.
   log "installing official Go to /usr/local/go..."
   local arch tarball url
@@ -50,7 +45,30 @@ ensure_go(){
   rm -rf /usr/local/go && tar -C /usr/local -xzf "$tarball" || return 1
   rm -f "$tarball"
   export PATH="/usr/local/go/bin:$PATH"
+  # Remember that WE installed this toolchain so build_local can remove it
+  # (plus all build caches) right after the binary is produced.
+  export GO_FROM_OFFICIAL=1
   command -v go >/dev/null 2>&1
+}
+
+# cleanup_go removes the go toolchain and every build cache (compiler cache,
+# module cache including the auto-downloaded go1.26.5 toolchain) when the
+# installer brought the toolchain itself. go is only needed to produce the
+# binary — once bin/vps is in place it is multi-hundred-MB dead weight on a
+# small host. If go pre-existed on the host it is left untouched.
+cleanup_go(){
+  [[ "${GO_FROM_OFFICIAL:-}" == "1" ]] || return 0
+  log "removing go toolchain and build caches..."
+  if command -v go >/dev/null 2>&1; then
+    local modcache buildcache
+    modcache=$(go env GOMODCACHE 2>/dev/null || echo /root/go/pkg/mod)
+    buildcache=$(go env GOCACHE 2>/dev/null || echo /root/.cache/go-build)
+    rm -rf /usr/local/go "$modcache" "$buildcache"
+  else
+    rm -rf /usr/local/go /root/go/pkg/mod /root/.cache/go-build
+  fi
+  unset GO_FROM_OFFICIAL
+  log "go toolchain removed; host left clean"
 }
 
 build_local(){
@@ -69,6 +87,9 @@ build_local(){
   fi
   chmod 755 /usr/local/bin/vps
   log "installed /usr/local/bin/vps from source ($(/usr/local/bin/vps version))"
+  # The toolchain was only needed to produce the binary — drop it and every
+  # build cache now that bin/vps is in place (no-op when go pre-existed).
+  cleanup_go
 }
 
 install_prebuilt(){
