@@ -154,11 +154,11 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 
 ## Storage
 
-- The pool is ZFS. On first install, `10-incus.sh` either adopts an existing
-  pool, uses a spare whole-disk block device, or (no spare disk) creates a
-  **sparse loop-file pool** sized to a share of the free space on `/`:
-  80% by default, 90% when ≥ 20 GiB free. The loop file only allocates blocks
-  as the pool actually fills. On very small hosts, cap the ZFS ARC
+- The pool is ZFS. On first install, `10-incus.sh` adopts an existing pool or
+  creates a **sparse loop-file pool** sized to a share of the free space on
+  `/`: 80% by default, 90% when ≥ 20 GiB free. New installations never scan,
+  select, format, or modify secondary disks. The loop file only allocates
+  blocks as the pool actually fills. On very small hosts, cap the ZFS ARC
   (`zfs.arc_max`) so container memory keeps priority over the pool's cache.
 - Containers are ZFS clones of the image: the image's blocks are shared
   (copy-on-write), so a well-provisioned image costs one copy no matter how

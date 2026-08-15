@@ -34,7 +34,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
-| `net.ipv6_pool` | operator | next `vps install` | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
+| `net.ipv6_pool` | operator | applied immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool |
