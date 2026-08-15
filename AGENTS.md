@@ -37,7 +37,9 @@ repo (`10-incus.sh`) — never snap, never the `lxc` CLI.
 - `internal/lx` is the ONLY package that talks to Incus. Exec is done over the
   API websocket transport (`Exec`/`ExecSH`/`RunInitScript`) — there must be no
   `incus`/`lxc` CLI calls in the panel runtime path.
-- Storage pool `vpsmgr` (ZFS preferred), bridge `incusbr0`.
+- Storage pool `vpsmgr` (ZFS by default, bridge `incusbr0`). A `dir` backend
+  exists only as an explicit `VPSMGR_STORAGE=dir` opt-in for test boxes — never
+  a fallback; a failed ZFS pool must abort, not downgrade.
 - A remote-qualified fallback image (`images:debian/13`) must go through
   `lx.EnsureImage` before `lx.Launch` — the API cannot auto-fetch it inside the
   create call (unlike the old `lxc launch` CLI).

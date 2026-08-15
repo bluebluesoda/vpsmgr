@@ -14,6 +14,14 @@ if [[ "${1:-}" == "--local-build" ]]; then
 fi
 export VPSMGR_BUILD_MODE="$BUILD_MODE"
 
+# Storage backend: zfs (default) or dir. dir has no quotas/snapshots/clones —
+# only meant for throwaway test boxes. Never fall back automatically.
+export VPSMGR_STORAGE="${VPSMGR_STORAGE:-zfs}"
+case "$VPSMGR_STORAGE" in
+  zfs|dir) ;;
+  *) echo "error: VPSMGR_STORAGE must be zfs or dir (got '$VPSMGR_STORAGE')" >&2; exit 1 ;;
+esac
+
 if [[ $EUID -ne 0 ]]; then
   echo "error: must run as root (sudo ./install.sh)" >&2
   exit 1
@@ -35,7 +43,7 @@ if [[ -f /etc/vpsmgr/config.yaml ]]; then
   echo "[install] found existing /etc/vpsmgr/config.yaml — adopting previous setup"
 fi
 
-echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE)"
+echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE, storage: $VPSMGR_STORAGE)"
 echo
 echo "===== 00-ip-ask ====="
 # shellcheck disable=SC1090

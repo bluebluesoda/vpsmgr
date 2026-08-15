@@ -87,13 +87,23 @@ else
   esac
 fi
 
+# --- storage backend ---
+# zfs (default) or dir, chosen by install.sh / VPSMGR_STORAGE. dir has no
+# quotas/snapshots/clone-on-create and is meant for throwaway test boxes only.
+STORAGE="${VPSMGR_STORAGE:-zfs}"
+case "$STORAGE" in
+  zfs|dir) ;;
+  *) die "VPSMGR_STORAGE must be zfs or dir (got '$STORAGE')" ;;
+esac
+log "storage backend: $STORAGE"
+
 # --- packages ---
 # Debian minimal images are notoriously bare (sometimes even curl is missing),
 # so every tool the installer needs is ensured here, before any later step
 # depends on it:
 #   - zfsutils-linux: Incus does NOT bundle the ZFS userspace tools; the
-#     storage pool is ZFS-only (dir backend is not supported), so zpool/zfs
-#     must be present or pool creation fails
+#     storage pool is ZFS-only by default, so zpool/zfs must be present or
+#     pool creation fails (skipped in dir mode — no kernel module needed)
 #   - linux-headers-amd64 (meta, no version) + build-essential: Debian only.
 #     On Debian the ZFS kernel modules are compiled with DKMS against the
 #     running kernel; the meta package tracks the installed kernel so the
@@ -111,22 +121,27 @@ fi
 #     privileged operation (nft reload, traefik/systemctl, IPv6 wiring, ndppd)
 #     fails at runtime. visudo ships with the sudo package.
 KERNEL_REL=$(uname -r)
-BASE_DEPS="sudo zfsutils-linux ca-certificates python3 tar xz-utils nftables zstd curl gpg"
-if [[ "$ID" == "debian" ]]; then
-  BASE_DEPS="$BASE_DEPS linux-headers-amd64 build-essential"
-  log "Debian detected — ZFS module will be DKMS-compiled (one-time build)"
-else
-  log "Ubuntu detected — ZFS module is prebuilt in the kernel, no compilation"
-  # Ubuntu minimal/cloud images often ship with only the 'main' component; the
-  # installer needs packages from universe (ndppd for IPv6 pass-through, among
-  # others). Enable it idempotently.
-  if ! grep -rhE "^[^#].*universe" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
-    log "enabling the Ubuntu universe repository (needed for ndppd etc.)"
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
-    add-apt-repository -y universe >/dev/null 2>&1 || die "could not enable the universe repository"
-    apt-get update -qq
+BASE_DEPS="sudo ca-certificates python3 tar xz-utils nftables zstd curl gpg"
+if [[ "$STORAGE" == "zfs" ]]; then
+  BASE_DEPS="$BASE_DEPS zfsutils-linux"
+  if [[ "$ID" == "debian" ]]; then
+    BASE_DEPS="$BASE_DEPS linux-headers-amd64 build-essential"
+    log "Debian detected — ZFS module will be DKMS-compiled (one-time build)"
+  else
+    log "Ubuntu detected — ZFS module is prebuilt in the kernel, no compilation"
+    # Ubuntu minimal/cloud images often ship with only the 'main' component; the
+    # installer needs packages from universe (ndppd for IPv6 pass-through, among
+    # others). Enable it idempotently.
+    if ! grep -rhE "^[^#].*universe" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
+      log "enabling the Ubuntu universe repository (needed for ndppd etc.)"
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
+      add-apt-repository -y universe >/dev/null 2>&1 || die "could not enable the universe repository"
+      apt-get update -qq
+    fi
   fi
+else
+  log "dir backend — no ZFS tools/module needed; WARNING: disk quotas, snapshots and clone-on-create are NOT available"
 fi
 for p in $BASE_DEPS; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
@@ -140,26 +155,28 @@ done
 # upgrade can leave the DKMS module missing (headers were unavailable at
 # postinst time); rebuild it for the running kernel rather than failing later
 # at pool creation. On Ubuntu the module ships with the kernel, so this is a
-# no-op.
-if ! modprobe zfs 2>/dev/null; then
-  log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
-  for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
-    dkms build "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
-    dkms install "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
-  done
-  modprobe zfs || die "ZFS kernel module failed to load — check 'dkms status' and 'dmesg | grep zfs'"
-fi
-log "zfs: $(zpool version 2>/dev/null | head -1)"
+# no-op. Skipped entirely in dir mode.
+if [[ "$STORAGE" == "zfs" ]]; then
+  if ! modprobe zfs 2>/dev/null; then
+    log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
+    for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
+      dkms build "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
+      dkms install "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
+    done
+    modprobe zfs || die "ZFS kernel module failed to load — check 'dkms status' and 'dmesg | grep zfs'"
+  fi
+  log "zfs: $(zpool version 2>/dev/null | head -1)"
 
-# Make ZFS boot-safe: the module must be loaded and the pool imported on every
-# boot, or Incus's storage pool is unavailable after a reboot. zfsutils-linux
-# normally enables these in its postinst; ensure them explicitly so a kernel
-# update + manual reboot "just works": module loads, pool imports, datasets
-# mount, then Incus and the panel come up on top.
-for unit in zfs-import-cache.service zfs-mount.service zfs-zed.service zfs.target; do
-  systemctl enable "$unit" >/dev/null 2>&1 || log "  warn: could not enable $unit"
-done
-log "zfs boot units enabled (import + mount on every boot)"
+  # Make ZFS boot-safe: the module must be loaded and the pool imported on every
+  # boot, or Incus's storage pool is unavailable after a reboot. zfsutils-linux
+  # normally enables these in its postinst; ensure them explicitly so a kernel
+  # update + manual reboot "just works": module loads, pool imports, datasets
+  # mount, then Incus and the panel come up on top.
+  for unit in zfs-import-cache.service zfs-mount.service zfs-zed.service zfs.target; do
+    systemctl enable "$unit" >/dev/null 2>&1 || log "  warn: could not enable $unit"
+  done
+  log "zfs boot units enabled (import + mount on every boot)"
+fi
 
 # --- Go toolchain (only needed for local build; installed lazily by 40-panel.sh) ---
 if command -v go >/dev/null 2>&1; then

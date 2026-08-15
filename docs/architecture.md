@@ -154,16 +154,26 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 
 ## Storage
 
-- The pool is ZFS. On first install, `10-incus.sh` adopts an existing pool or
-  creates a **sparse loop-file pool** sized to a share of the free space on
-  `/`: 80% by default, 90% when ≥ 20 GiB free. New installations never scan,
+- The pool is ZFS by default. On first install, `10-incus.sh` adopts an existing
+  pool or creates a **sparse loop-file pool** sized to a share of the free space
+  on `/`: 80% by default, 90% when ≥ 20 GiB free. New installations never scan,
   select, format, or modify secondary disks. The loop file only allocates
   blocks as the pool actually fills. On very small hosts, cap the ZFS ARC
   (`zfs.arc_max`) so container memory keeps priority over the pool's cache.
+- A **dir backend** is available for throwaway test boxes only: set
+  `VPSMGR_STORAGE=dir` when running `install.sh` (default is `zfs`). It is a
+  deliberate switch, never an automatic fallback — a failed ZFS pool aborts the
+  install. `dir` has **no quotas, snapshots or clone-on-create**: the admin's
+  disk-limit setting is accepted but not enforced, every container costs a full
+  image copy, and `--purge` still removes the pool via `incus storage delete`.
+  In dir mode `00-check.sh` skips `zfsutils-linux` and the DKMS module build
+  entirely (no kernel module needed).
 - Containers are ZFS clones of the image: the image's blocks are shared
   (copy-on-write), so a well-provisioned image costs one copy no matter how
   many containers. Because Incus's `refquota` counts inherited blocks, image
   bloat also eats into every container's disk quota — images must stay slim.
+  (Clone-on-create only exists on ZFS; dir mode copies the full image per
+  container.)
 
 ## Image (`vpsmgr/debian-sshd`)
 

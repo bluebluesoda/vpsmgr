@@ -59,19 +59,28 @@ done
 [[ -S /var/lib/incus/unix.socket ]] || die "incus daemon socket not ready"
 
 # --- storage pool ---
-# ZFS only: Incus quotas, snapshots and clone-on-create depend on it. New
-# installations use a sparse loop-file pool on /. Incus does NOT bundle the
-# ZFS userspace tools, so zfsutils-linux must be installed (00-check.sh ensures
-# it). The dir backend is deliberately not offered — it has no quotas, which
-# silently breaks the disk limits every container is supposed to have.
-command -v zpool >/dev/null 2>&1 || die "zfsutils-linux is not installed (zpool missing) — 00-check.sh should have installed it; run it or: apt-get install -y zfsutils-linux"
+# zfs (default) or dir, chosen by install.sh / VPSMGR_STORAGE. ZFS gives Incus
+# quotas, snapshots and clone-on-create — the whole disk model. The dir backend
+# has none of those and is only offered for throwaway test boxes; it is NEVER a
+# fallback (a failed zfs pool is a hard error, not a silent downgrade).
+# New installations use a sparse loop-file ZFS pool on /. Incus does NOT bundle
+# the ZFS userspace tools, so zfsutils-linux must be installed (00-check.sh
+# ensures it).
+STORAGE="${VPSMGR_STORAGE:-zfs}"
+case "$STORAGE" in
+  zfs|dir) ;;
+  *) die "VPSMGR_STORAGE must be zfs or dir (got '$STORAGE')" ;;
+esac
+if [[ "$STORAGE" == "zfs" ]]; then
+  command -v zpool >/dev/null 2>&1 || die "zfsutils-linux is not installed (zpool missing) — 00-check.sh should have installed it; run it or: apt-get install -y zfsutils-linux"
+fi
 POOL=vpsmgr
 POOL_EXISTS=0
 if incus storage show "$POOL" >/dev/null 2>&1; then
   POOL_EXISTS=1
   DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
-  if [[ "$DRIVER" != "zfs" ]]; then
-    die "existing storage pool '$POOL' uses driver '$DRIVER' — this installer requires ZFS (dir has no quotas)"
+  if [[ "$STORAGE" == "zfs" && "$DRIVER" != "zfs" ]]; then
+    die "existing storage pool '$POOL' uses driver '$DRIVER' — zfs mode requires ZFS (dir has no quotas)"
   fi
   log "storage pool '$POOL' exists ($DRIVER)"
 fi
@@ -81,14 +90,14 @@ fi
 # deliberately never scans, selects, formats, or modifies secondary block
 # devices: virtual CD/ISO devices and provider-specific disk layouts are left
 # completely untouched. Existing vpsmgr pools are adopted unchanged.
-DRIVER=zfs
+DRIVER=$STORAGE
 POOL_SIZE_MB=""
 if [[ $POOL_EXISTS -eq 1 ]]; then
   # Adopt existing pool.
   DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
   SRC_LINE="    source: \"$POOL\""
   SIZE_LINE=""
-else
+elif [[ "$STORAGE" == "zfs" ]]; then
   # Loop-file pool: the pool is sparse and grows on demand inside /. Before
   # sizing it, reclaim caches and build artifacts when free space is tight so
   # the pool, Incus image store, and host remain usable.
@@ -141,6 +150,10 @@ else
   log "loop-file zfs pool '$POOL' on / (~${POOL_SIZE_MB} MiB = ${PCT}% of free)"
   SRC_LINE=""
   SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
+else
+  log "dir pool '$POOL' (no quotas, snapshots or clone-on-create)"
+  SRC_LINE="    {}"
+  SIZE_LINE=""
 fi
 
 # --- incus admin init (preseed) ---
@@ -209,8 +222,12 @@ EOF
       incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none dns.mode=none
     fi
     if ! incus storage show "$POOL" >/dev/null 2>&1; then
-      [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool"
-      incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
+      if [[ "$STORAGE" == "zfs" ]]; then
+        [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool"
+        incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
+      else
+        incus storage create "$POOL" dir || die "dir pool creation failed"
+      fi
     fi
   fi
 else
@@ -236,8 +253,12 @@ incus network set incusbr0 dns.mode=none 2>/dev/null || true
 
 DRIVER_NOW=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"
-if [[ "$DRIVER_NOW" != "zfs" ]]; then
-  die "storage pool '$POOL' is not ZFS ('$DRIVER_NOW') — this installer requires ZFS (quotas, snapshots, clones)"
+if [[ "$STORAGE" == "zfs" ]]; then
+  if [[ "$DRIVER_NOW" != "zfs" ]]; then
+    die "storage pool '$POOL' is not ZFS ('$DRIVER_NOW') — zfs mode requires ZFS (quotas, snapshots, clones)"
+  fi
+else
+  log "  warn: dir backend — disk quotas, snapshots and clone-on-create are NOT enforced"
 fi
 
 echo "[10] incus ready"
