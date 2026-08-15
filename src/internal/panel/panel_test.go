@@ -248,8 +248,8 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		PublicIP:   "203.0.113.5",
 		PortsShort: "103xx",
 		Ports:      "10300-10399",
-		IPv6:       "2a05:f480:1800:378d:0:8fa1:dddd:1",
-		IPv6Block:  "2a05:f480:1800:378d:0:8fa1:dddd:0/112",
+		IPv6:       "2001:db8:1::dddd:1",
+		IPv6Block:  "2001:db8:1::dddd:0/112",
 		V4Forward:  true,
 		Prefix:     "/" + testSecret,
 	})
@@ -265,7 +265,7 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 	off := srv.renderToString(t, "overview.html", pageData{
 		User:      &db.User{Name: "alice"},
 		SSHPort:   30351,
-		IPv6:      "2a05:f480:1800:378d:0:8fa1:dddd:1",
+		IPv6:      "2001:db8:1::dddd:1",
 		V4Forward: false,
 		Prefix:    "/" + testSecret,
 	})
