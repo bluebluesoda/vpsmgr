@@ -75,20 +75,6 @@ if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified:
 PY
 }
 
-# is_global_v6: exit 0 if arg is a bare GLOBAL (non-ULA, non-link-local,
-# non-loopback, non-unspecified) IPv6 address without a prefix length.
-is_global_v6(){
-  python3 - "$1" <<'PY'
-import ipaddress, sys
-try:
-    a = ipaddress.IPv6Address(sys.argv[1])
-except Exception:
-    sys.exit(1)
-if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified or a.is_multicast:
-    sys.exit(1)
-PY
-}
-
 # run_detector — run the (unchanged) check-ipv6-support.sh and capture its
 # verdict. Prints "prefix" when the whole prefix was verified reachable from
 # outside, "noverify" when no external verification was possible (offline /
@@ -196,35 +182,80 @@ ask_ipv6(){
   log "detector verdict: $DET"
 
   if [[ "$DET" == "prefix" ]]; then
-    # Whole prefix routed -> classic mode. Default candidate from the host's
-    # own global address, same as before.
-    local EXT_IF GLOBAL CAND
-    EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-    GLOBAL=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4; exit}')
-    CAND=""
-    if [[ -n "$GLOBAL" ]]; then
-      local GADDR GLEN
-      GADDR="${GLOBAL%%/*}"
-      GLEN="${GLOBAL##*/}"
-      GLEN="${GLEN:-64}"
-      CAND=$(python3 -c 'import ipaddress,sys
+    # Whole prefix verified routed -> classic prefix mode. Default candidate
+    # from the host's own global address, same as before.
+    ask_prefix_mode
+    return 0
+  fi
+
+  # The whole prefix was NOT verified from outside. Two ways forward:
+  #   - pool mode: the provider hands out discrete /128 addresses (a
+  #     whitelist); the user adds them later in the admin UI (the NIC only
+  #     shows the one address the provider assigned at boot, so there is
+  #     nothing to auto-collect at install).
+  #   - manual prefix: the user knows their provider routes a prefix and
+  #     types it in; we trust their choice (the external probe may have
+  #     failed for transient reasons, or the user has a routed subnet).
+  echo
+  echo "The provider's whole prefix was NOT verified as routable from"
+  echo "outside (this is typical for whitelist-style IPv6 providers)."
+  echo "  [p] Pool mode  — each container gets one address you add later"
+  echo "                  in the admin panel's IPv6 pool page"
+  echo "  [m] Manual     — you type the prefix you know is routed"
+  echo "  [n] none       — disable IPv6, proceed with IPv4 only"
+  read -r -p "Choose IPv6 mode? 选择 IPv6 模式? [p/m/N] " ans3
+  case "${ans3,,}" in
+    p|pool)
+      export VPSMGR_IPV6_MODE=pool VPSMGR_IPV6_POOL=""
+      log "IPv6 mode: pool (empty — add addresses later in the admin panel)"
+      return 0
+      ;;
+    m|manual)
+      ask_prefix_mode
+      return 0
+      ;;
+    *)
+      log "IPv6 disabled / 未启用 — proceeding with pure IPv4"
+      export VPSMGR_IPV6_MODE=none
+      return 0
+      ;;
+  esac
+}
+
+# ask_prefix_mode — classic prefix mode: propose the host's own global
+# address prefix (or let the user type one) and validate it. On success sets
+# VPSMGR_IPV6_MODE=prefix + VPSMGR_IPV6_SUBNET.
+ask_prefix_mode(){
+  local EXT_IF GLOBAL CAND
+  EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+  GLOBAL=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4; exit}')
+  CAND=""
+  if [[ -n "$GLOBAL" ]]; then
+    local GADDR GLEN
+    GADDR="${GLOBAL%%/*}"
+    GLEN="${GLOBAL##*/}"
+    GLEN="${GLEN:-64}"
+    CAND=$(python3 -c 'import ipaddress,sys
 a=ipaddress.IPv6Address(sys.argv[1])
 plen=int(sys.argv[2])
 n=ipaddress.IPv6Network((int(a), plen), strict=False)
 print(n.network_address)' "$GADDR" "$GLEN")
-      CAND="$CAND/$GLEN"
-    fi
-    local PREFIX
-    if [[ -n "$CAND" ]]; then
-      log "detected host global address: $GLOBAL"
-      read -r -p "Global prefix for containers — include the length (e.g. /64, /80) [default: $CAND]: " PREFIX
-      PREFIX="${PREFIX:-$CAND}"
-    else
-      read -r -p "Global prefix for containers — include the length (e.g. 2001:db8::/64; up to /80): " PREFIX
-    fi
-    PREFIX="${PREFIX%$'\r'}"
-    local PREFIX_NORM
-    PREFIX_NORM=$(python3 - "$PREFIX" <<'PY'
+    CAND="$CAND/$GLEN"
+  fi
+  local PREFIX
+  if [[ -n "$CAND" ]]; then
+    log "detected host global address: $GLOBAL"
+    read -r -p "Global prefix for containers — include the length (e.g. /64, /80) [default: $CAND]: " PREFIX
+    PREFIX="${PREFIX:-$CAND}"
+  else
+    read -r -p "Global prefix for containers — include the length (e.g. 2001:db8::/64; up to /80): " PREFIX
+  fi
+
+  PREFIX="${PREFIX%$'\r'}"
+  # Normalize to the canonical CIDR form (the length is mandatory — a bare
+  # address is rejected, never silently assumed to be /64).
+  local PREFIX_NORM
+  PREFIX_NORM=$(python3 - "$PREFIX" <<'PY'
 import ipaddress, sys
 p = sys.argv[1]
 if "/" not in p:
@@ -235,78 +266,13 @@ except Exception:
     sys.exit(1)
 PY
 )
-    if validate_prefix "$PREFIX" && [[ -n "$PREFIX_NORM" ]]; then
-      export VPSMGR_IPV6_MODE=prefix VPSMGR_IPV6_SUBNET="$PREFIX_NORM"
-      log "IPv6 mode: prefix $PREFIX_NORM"
-    else
-      die "invalid prefix '$PREFIX' — must be a global IPv6 CIDR with an explicit length (e.g. 2602:fada:6::/64, or a /80 like 2406:da14:1dd2:a807:753a::/80)"
-      return 1
-    fi
-    return 0
-  fi
-
-  # No verified whole prefix. Count the host's GLOBAL addresses: more than one
-  # means pool mode is possible (one stays with the host, the rest go in the
-  # pool). Private/ULA/link-local addresses are excluded.
-  local EXT_IF GLOBALS COUNT
-  EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-  GLOBALS=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4}')
-  COUNT=0
-  local line
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local a
-    a="${line%%/*}"
-    if is_global_v6 "$a"; then COUNT=$((COUNT+1)); fi
-  done <<< "$GLOBALS"
-
-  if [[ "$COUNT" -le 1 ]]; then
-    warn "no routable whole prefix AND only $COUNT global IPv6 address(es) — IPv6 pass-through not possible"
-    log "proceeding with pure IPv4"
-    export VPSMGR_IPV6_MODE=none
-    return 0
-  fi
-
-  # Pool mode offer: show the global addresses, keep the first for the host,
-  # ask the user to confirm the rest as the pool.
-  log "$COUNT global IPv6 addresses found on $EXT_IF (whole-prefix routing NOT verified):"
-  local first=""
-  local pool=""
-  local n=0
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local a
-    a="${line%%/*}"
-    if ! is_global_v6 "$a"; then continue; fi
-    n=$((n+1))
-    if [[ $n -eq 1 ]]; then
-      first="$a"
-      log "  [host] $a  (kept for the host itself)"
-    else
-      log "  [pool] $a"
-      if [[ -z "$pool" ]]; then pool="$a"; else pool="$pool,$a"; fi
-    fi
-  done <<< "$GLOBALS"
-
-  echo
-  read -r -p "Add the $((COUNT-1)) addresses above to the container pool? 将以上 $((COUNT-1)) 个地址加入小鸡地址池? [y/N] " ans2
-  case "${ans2,,}" in
-    y|yes) ;;
-    *) log "address pool declined — proceeding with pure IPv4"; export VPSMGR_IPV6_MODE=none; return 0 ;;
-  esac
-
-  # Validate every pool address once more before exporting.
-  local ok=1
-  IFS=',' read -r -a pool_arr <<< "$pool"
-  for a in "${pool_arr[@]}"; do
-    if ! is_global_v6 "$a"; then ok=0; break; fi
-  done
-  if [[ "$ok" -ne 1 || -z "$pool" ]]; then
-    die "invalid pool addresses gathered ($pool)"
+  if validate_prefix "$PREFIX" && [[ -n "$PREFIX_NORM" ]]; then
+    export VPSMGR_IPV6_MODE=prefix VPSMGR_IPV6_SUBNET="$PREFIX_NORM"
+    log "IPv6 mode: prefix $PREFIX_NORM"
+  else
+    die "invalid prefix '$PREFIX' — must be a global IPv6 CIDR with an explicit length (e.g. 2602:fada:6::/64, or a /80 like 2406:da14:1dd2:a807:753a::/80)"
     return 1
   fi
-  export VPSMGR_IPV6_MODE=pool VPSMGR_IPV6_POOL="$pool"
-  log "IPv6 mode: pool ($((COUNT-1)) addresses)"
   return 0
 }
 
