@@ -115,11 +115,11 @@ ask_ipv6(){
         fi
         log "IPv6 mode: prefix $VPSMGR_IPV6_SUBNET (from env)"; return 0 ;;
       pool)
-        if [[ -z "${VPSMGR_IPV6_POOL:-}" ]]; then
-          die "VPSMGR_IPV6_MODE=pool requires VPSMGR_IPV6_POOL (comma-separated global addresses)"
-          return 1
-        fi
-        log "IPv6 mode: pool (from env)"; return 0 ;;
+        # Pool mode starts EMPTY by design (addresses are added later in the
+        # admin panel); an env-provided pool list is optional.
+        log "IPv6 mode: pool (from env)"
+        export VPSMGR_IPV6_MODE=pool
+        return 0 ;;
       *) die "VPSMGR_IPV6_MODE must be none|prefix|pool (got '$VPSMGR_IPV6_MODE')"; return 1 ;;
     esac
   fi
