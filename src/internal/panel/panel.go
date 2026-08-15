@@ -288,11 +288,19 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.IP = u.IP
 	}
 	if s.cfg.IPv6Enabled() {
-		if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no incus call
-			d.IPv6 = ipv6
-		}
-		if b, _ := s.mgr.IPv6Block(u.Name); b != nil {
-			d.IPv6Block = b.String()
+		if s.mgr.IPv6Mode() == cfg.IPv6ModePool {
+			// Pool mode: the address comes from the DB (the assignment), not
+			// derived — and there is no /112 block to show.
+			if u.IPv6Address != "" {
+				d.IPv6 = u.IPv6Address
+			}
+		} else {
+			if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no incus call
+				d.IPv6 = ipv6
+			}
+			if b, _ := s.mgr.IPv6Block(u.Name); b != nil {
+				d.IPv6Block = b.String()
+			}
 		}
 	}
 	up, down := s.mgr.BandwidthFor(u.ID) // pure DB read
