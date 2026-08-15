@@ -177,10 +177,9 @@ ask_ipv6(){
   esac
 
   # Run the detector (unchanged script) to learn the host's capability. The
-  # external probe is powered by Globalping — a great public service for IPv6
-  # reachability checks, thanks to their free API!
+  # external reachability probe is powered by Globalping.
   echo
-  echo "  (Powered by Globalping — thanks for the great free service!)"
+  echo "  (Powered by Globalping)"
   log "running check-ipv6-support.sh to probe this host..."
   DET=$(run_detector)
   log "detector verdict: $DET"

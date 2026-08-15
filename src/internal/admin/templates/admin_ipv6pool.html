@@ -73,7 +73,10 @@ form.inline { display: inline; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}添加地址{{else}}Add addresses{{end}}</h2>
     <p class="muted">{{if eq .Lang "zh"}}每行一个地址，可接受裸地址或 /128 形式（如 <code>2001:db8:1::9c4</code> 或 <code>2001:db8:1::9c5/128</code>）。已分配给小鸡的地址不可删除。{{else}}One address per line, bare or with /128 (e.g. <code>2001:db8:1::9c4</code> or <code>2001:db8:1::9c5/128</code>). Addresses assigned to a container cannot be removed.{{end}}</p>
-    <form action="{{.Prefix}}/ipv6pool-add" method="post">
+    <div class="err" style="margin-bottom:12px;">
+       {{if eq .Lang "zh"}}⚠️ 不要将宿主机本身正在使用的公网 IPv6 添加进池，否则会断掉宿主机的 v6 出网。{{else}}⚠️ Do not add the host's own currently-used public IPv6 address to the pool, or it will break the host's IPv6 connectivity.{{end}}
+     </div>
+     <form action="{{.Prefix}}/ipv6pool-add" method="post">
       <div class="field"><label>{{if eq .Lang "zh"}}地址列表{{else}}Addresses{{end}}</label><textarea name="addresses" placeholder="2001:db8:1::9c4&#10;2001:db8:1::9c5/128"></textarea></div>
       <div class="savebar" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
         <button type="submit" class="primary">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button>
