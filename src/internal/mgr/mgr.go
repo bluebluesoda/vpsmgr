@@ -315,7 +315,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	//             pool is exhausted / the caller opted out with "none"
 	//   - none:   no IPv6 at all
 	poolAddr := ""
-	var ipv6 string
+	ipv6 := "" // eth0 ipv6.address handed to Incus (prefix mode only)
+	blockStr := ""
 	switch m.cfg.IPv6ModeEffective() {
 	case cfg.IPv6ModePool:
 		if opt.IPv6Addr == "none" {
@@ -326,14 +327,20 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 				return nil, err
 			}
 			poolAddr = a
-			ipv6 = a
 		}
+		// Pool mode: the address is NOT set on the Incus eth0 device — Incus
+		// rejects a static ipv6.address outside the bridge's subnet. The
+		// container binds its /128 itself (ConfigureContainerIPv6) and the host
+		// routes it (WireIPv6Pool).
 	default:
 		ipv6, _ = m.IPv6Addr(name)
-	}
-	block, _ := m.IPv6Block(name)
-	if err := m.checkIPv6BlockCollision(name, block); err != nil {
-		return nil, err
+		block, _ := m.IPv6Block(name)
+		if block != nil {
+			blockStr = block.String()
+		}
+		if err := m.checkIPv6BlockCollision(name, block); err != nil {
+			return nil, err
+		}
 	}
 	// Defend against orphan containers: a crashed create (or an out-of-band
 	// `incus` instance) could already hold this name or the IP NextFreeIdx just
@@ -341,17 +348,13 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.checkIncusConflict(name, ip); err != nil {
 		return nil, err
 	}
-	blockStr := ""
-	if block != nil {
-		blockStr = block.String()
-	}
 	// Make sure the image is present locally (a remote-qualified fallback like
 	// "images:debian/13" is pulled first; the API cannot auto-fetch it inside
 	// the create call the way the old `incus launch` CLI did).
 	if err := m.lx.EnsureImage(image); err != nil {
 		return nil, fmt.Errorf("ensure image %s: %w", image, err)
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	// From here on any failure must roll the container and its host-side
@@ -385,12 +388,17 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
 	}
-	// IPv6 pass-through. Pool mode: attach the /128 route + proxy_ndp entry
-	// for the assigned address. Prefix mode: the /112 NDP proxy rule, then the
+	// IPv6 pass-through. Pool mode: the container binds its /128 itself
+	// (ConfigureContainerIPv6) and the host routes + proxy_ndp it
+	// (WireIPv6Pool). Prefix mode: the /112 NDP proxy rule, then the
 	// host-routed peer IPv6 container script. No-op when IPv6 is disabled.
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
-		if ipv6 != "" {
-			if err := m.WireIPv6Pool(name, ipv6); err != nil {
+		if poolAddr != "" {
+			if err := m.ConfigureContainerIPv6(name, poolAddr); err != nil {
+				cleanup()
+				return nil, fmt.Errorf("config container ipv6: %w", err)
+			}
+			if err := m.WireIPv6Pool(name, poolAddr); err != nil {
 				cleanup()
 				return nil, fmt.Errorf("wire ipv6 pool: %w", err)
 			}
@@ -401,7 +409,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 		// Host-routed peer IPv6 (no L2 discovery / MITM between containers).
-		if err := m.ConfigureContainerIPv6(name); err != nil {
+		if err := m.ConfigureContainerIPv6(name, ""); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("config container ipv6: %w", err)
 		}
@@ -995,11 +1003,12 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
 	// IPv6: pool mode reuses the DB-stored assignment (the address belongs to
-	// the user for life); prefix mode re-derives the deterministic address.
+	// the user for life), bound inside the container; prefix mode re-derives
+	// the deterministic address on the eth0 device.
 	ipv6 := ""
 	blockStr := ""
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
-		ipv6 = u.IPv6Address
+		// NOT set on the Incus eth0 device (rejected: outside bridge subnet).
 	} else {
 		ipv6, _ = m.IPv6Addr(u.Name)
 		block, _ := m.IPv6Block(u.Name)
@@ -1007,7 +1016,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			blockStr = block.String()
 		}
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
@@ -1017,8 +1026,12 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		return "", fmt.Errorf("provision container: %w", err)
 	}
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
-		if ipv6 != "" {
-			if err := m.WireIPv6Pool(u.Name, ipv6); err != nil {
+		if u.IPv6Address != "" {
+			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
+				rollback()
+				return "", fmt.Errorf("config container ipv6: %w", err)
+			}
+			if err := m.WireIPv6Pool(u.Name, u.IPv6Address); err != nil {
 				rollback()
 				return "", fmt.Errorf("wire ipv6 pool: %w", err)
 			}
@@ -1028,7 +1041,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			rollback()
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}
-		if err := m.ConfigureContainerIPv6(u.Name); err != nil {
+		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
 		}

@@ -268,6 +268,23 @@ func (m *Manager) enableForwarding() error {
 	return err
 }
 
+// enableProxyNDP turns on kernel proxy_ndp on the external interface: pool
+// mode answers upstream neighbor solicitations for container /128s, so the
+// upstream router resolves the container address to the host's MAC. Without
+// it, inbound ICMP works by luck (the router already has the neighbor) but
+// sustained traffic fails, and outbound from the container never gets a return
+// path. Goes through the `vps ip6 proxy-ndp-on` root helper (validated
+// interface name, pinned sudoers entry) — net.ipv6.conf.all does NOT
+// propagate to existing interfaces.
+func (m *Manager) enableProxyNDP() error {
+	ext := m.cfg.Net.ExtIF
+	if ext == "" {
+		return fmt.Errorf("no external interface for proxy_ndp")
+	}
+	_, err := su.IP6("proxy-ndp-on", ext, ext)
+	return err
+}
+
 // ndppdConfPath is where vpsmgr renders the ndppd rules. It lives inside
 // /etc/vpsmgr (the panel's own writable dir) instead of /etc/ndppd.conf in the
 // root-owned area of the filesystem — the panel daemon generates this file, so
@@ -452,9 +469,9 @@ func (m *Manager) cleanLegacyKernelProxy() {
 // RewireAllIPv6 rebuilds the whole IPv6 pass-through: bridge config, the
 // ndppd rules for every container, and a sweep of the old kernel per-address
 // plumbing. Called at boot (after Incus is up) and by `vps install` so that
-// pass-through survives reboots. Idempotent. In pool mode the bridge setup is
-// skipped (no global prefix to anchor it) and the per-address /128 routes +
-// proxy_ndp entries are rebuilt instead.
+// pass-through survives reboots. Idempotent. In pool mode the host plumbing
+// is just "pool addresses are not bound on the external interface + proxy_ndp
+// / forwarding on" (the routed NICs program their own per-address routes).
 func (m *Manager) RewireAllIPv6() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil

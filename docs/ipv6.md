@@ -193,23 +193,36 @@ keeps one address for itself (not in the pool).
 
 ### Routing (empirically verified)
 
-Each container gets `eth0.ipv6.address=<addr>` (a single /128, **no**
-`ipv6.routes`). The host adds, per assigned address:
+Each pool container gets **two NICs**:
 
-```
-ip -6 route add <addr>/128 dev incusbr0
-ip -6 neigh add proxy <addr> dev eth0     # kernel proxy_ndp
-```
+- **eth0** — `nictype: routed`, `parent: <ext_if>`, `ipv6.address=<pool /128>`.
+  Incus creates a veth pair, sets the host side to `fe80::1` (the container's
+  default gateway), adds a `/128` route to the veth for the address, and
+  installs a `proxy_ndp` entry on the external interface. This is the same
+  mechanism `ipvlan`/`routed` NICs use to join an external network without a
+  bridge.
+- **eth1** — `nictype: bridged` on `incusbr0`, `ipv4.address=<private v4>`.
+  Carries the shared IPv4 (SSH DNAT, user ports, NAT4 outbound) exactly like
+  prefix mode.
 
-Verified on a whitelist provider host (address NOT bound to eth0): with IPv6
-forwarding on and `net.ipv6.conf.eth0.proxy_ndp=1`, external Globalping probes
-reach the address inside a container namespace with **0% loss** (5/5 probes).
-Kernel proxy_ndp handles single addresses (prefix queries are ignored), which
-is exactly the pool-mode granularity — no ndppd is installed in pool mode.
+The container's systemd-networkd binds the `/128` statically on eth0 with
+`fe80::1` as the default route (no RA, no DHCPv6), and runs DHCPv4 on eth1.
 
-The bridge keeps only its fixed link-local `fe80::1` (no global address, so
-it never competes with pool addresses). `ipv6.reapply` / the boot unit rebuild
-all per-address routes + proxy entries from the DB (`RewireAllIPv6Pool`).
+**Critical prerequisite — the pool address must NOT be bound on the host's
+external interface.** The whitelist provider assigns every address to the host
+at boot; while the host holds an address, the kernel treats it as a LOCAL
+address and drops the container's packets that use it as a source
+(source-address validation) — outbound routing fails while inbound may work
+by luck. Pool mode therefore removes each pool address from the external
+interface (`vps ip6 addr-del`), on add/reinstall and on every
+`ipv6-reapply`/boot (self-healing: a reboot that re-binds the addresses on
+eth0 is corrected on the next reapply). The host keeps its own first address.
+
+Verified on a whitelist provider host (address NOT bound on eth0, container
+on a routed NIC): external Globalping probes reach the container's /128 with
+**0% loss** (5/5 probes), and the container reaches out over IPv6 (curl -6)
+and IPv4 (eth1 NAT) simultaneously. No ndppd, no manual per-address routes —
+Incus programs everything.
 
 ### Interaction with IPv4
 

@@ -140,62 +140,58 @@ func ModeFor(c *cfg.Config) string {
 	return c.IPv6ModeEffective()
 }
 
-// WireIPv6Pool registers a single pool-mode /128 with the host: a /128 route
-// through the Incus bridge (Incus routes the address to the container) and a
-// kernel proxy_ndp entry on the external interface (upstream neighbor
-// solicitations for the address are answered by the host, which forwards to
-// the container). This is the old pre-/112 single-address mechanism, now
-// driven by DB-stored pool assignments. Idempotent (EEXIST is fine).
+// WireIPv6Pool prepares a pool-mode /128 for a container. The container's
+// routed NIC (Incus nictype=routed, parent=ext_if) programs the host route
+// + proxy_ndp itself, so the ONLY host-side requirement is that the address
+// is NOT bound on the external interface: a whitelist provider assigns the
+// address to the host at boot, and while the host holds it the kernel treats
+// it as a LOCAL address — the container's packets with that source are then
+// dropped as spoofed (source-address validation) and outbound routing fails.
+// Removing it from the external interface (idempotent, EADDRNOTAVAIL is
+// fine) hands the address exclusively to the container. Called at
+// add/reinstall and by RewireAllIPv6Pool (so a reboot that re-binds the
+// address on eth0 self-heals on the next reapply).
 func (m *Manager) WireIPv6Pool(name, addr string) error {
 	if addr == "" {
 		return nil
 	}
-	bridge := m.cfg.Incus.Bridge
 	ext := m.cfg.Net.ExtIF
 	if ext == "" {
-		return fmt.Errorf("no external interface for proxy_ndp")
+		return fmt.Errorf("no external interface for pool mode")
 	}
-	if _, err := su.IP6("route-add", addr+"/128", bridge); err != nil && !isExistsErr(err) {
-		return fmt.Errorf("add /128 route %s dev %s: %w", addr, bridge, err)
-	}
-	if _, err := su.IP6("neigh-add-proxy", addr, ext); err != nil && !isExistsErr(err) {
-		return fmt.Errorf("add proxy_ndp %s dev %s: %w", addr, ext, err)
-	}
+	// Best-effort removal: the address may not be on eth0 (already removed).
+	_, _ = su.IP6("addr-del", addr, ext)
 	return nil
 }
 
-// UnwireIPv6Pool removes a pool-mode /128 from the host plumbing. Best-effort:
-// a leftover proxy entry is harmless and cleaned by RewireAllIPv6Pool.
+// UnwireIPv6Pool is a no-op for pool mode: the address stays free in the DB
+// (released on user delete); the host-side routed-NIC plumbing dies with the
+// container. Kept for symmetry with prefix mode.
 func (m *Manager) UnwireIPv6Pool(name, addr string) error {
-	if addr == "" {
-		return nil
-	}
-	bridge := m.cfg.Incus.Bridge
-	ext := m.cfg.Net.ExtIF
-	if ext != "" {
-		_, _ = su.IP6("neigh-del-proxy", addr, ext)
-	}
-	_, _ = su.IP6("route-del", addr, bridge)
 	return nil
 }
 
-// RewireAllIPv6Pool rebuilds the whole pool-mode plumbing: for every user with
-// a stored pool address, re-add the /128 route + proxy_ndp entry. Called at
-// boot (vps-ipv6.service) and by `vps install` / `vps ipv6-reapply` so
-// pass-through survives reboots. Idempotent.
+// RewireAllIPv6Pool rebuilds the whole pool-mode host plumbing: ensure every
+// pool address is NOT bound on the external interface (see WireIPv6Pool) and
+// the external interface has proxy_ndp + forwarding enabled (required by the
+// routed NIC). Called at boot (vps-ipv6.service) and by `vps install` /
+// `vps ipv6-reapply` so pass-through survives reboots. Idempotent.
 func (m *Manager) RewireAllIPv6Pool() error {
-	users, err := m.db.ListUsers()
+	pool, err := m.cfg.IPv6PoolValidated()
 	if err != nil {
 		return err
 	}
 	var firstErr error
-	for _, u := range users {
-		if u.IPv6Address == "" {
-			continue
-		}
-		if err := m.WireIPv6Pool(u.Name, u.IPv6Address); err != nil && firstErr == nil {
+	for _, a := range pool {
+		if err := m.WireIPv6Pool("", a); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	if err := m.enableProxyNDP(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := m.enableForwarding(); err != nil && firstErr == nil {
+		firstErr = err
 	}
 	return firstErr
 }

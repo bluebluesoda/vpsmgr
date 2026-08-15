@@ -42,6 +42,27 @@ func (m *Manager) ipv6ContainerScript(name string) (string, error) {
 	// Bare prefix (without the trailing ::) used to match routes that belong
 	// to the parent prefix, e.g. 2406:da14:1dd2:a807:753a for a /80.
 	prefix := strings.TrimSuffix(n.IP.String(), "::")
+	return m.ipv6ContainerScriptFor(ipv6, prefix)
+}
+
+// ipv6ContainerScriptFor renders the same script for an explicit address and
+// parent prefix. Pool mode has no configured prefix (the address comes from
+// the DB), so prefix is "" — the script then configures the routed-NIC layout:
+// eth0 statically binds the public /128 with fe80::1 as gateway (Incus's
+// routed NIC gateway), and eth1 runs DHCPv4 on the private bridge.
+func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix string) (string, error) {
+	if ipv6 == "" {
+		return "", nil
+	}
+	if prefix == "" {
+		return m.poolContainerScript(ipv6)
+	}
+	flush := fmt.Sprintf(`for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
+  case "$r" in
+    %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
+  esac
+done
+ip -6 route flush cache 2>/dev/null || true`, prefix)
 	script := fmt.Sprintf(`set -e
 # Wait for systemd to be ready before touching it: right after boot the
 # /run/systemd/private bus socket may not exist yet, and systemctl then fails
@@ -51,12 +72,12 @@ for i in $(seq 1 40); do
   sleep 0.5
 done
 if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
-  # RHEL-family (NetworkManager): declare the deterministic /128 and the
-  # gateway as a STATIC IPv6 connection. ipv6.method=manual makes NetworkManager
-  # own the whole IPv6 stack: it sets accept_ra=0 itself (no kernel RA
-  # interference, no SLAAC/dynamic addresses), applies the address and the
-  # default route atomically, and re-applies on every boot. No waiting, no
-  # retries, no sysctl poking — the connection profile IS the final state.
+  # RHEL-family (NetworkManager): declare the /128 and the gateway as a STATIC
+  # IPv6 connection. ipv6.method=manual makes NetworkManager own the whole IPv6
+  # stack: it sets accept_ra=0 itself (no kernel RA interference, no
+  # SLAAC/dynamic addresses), applies the address and the default route
+  # atomically, and re-applies on every boot. No waiting, no retries, no sysctl
+  # poking — the connection profile IS the final state.
   CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
   [ -n "$CONN" ] && nmcli con mod "$CONN" \
     ipv6.method manual \
@@ -71,21 +92,29 @@ else
   # missing any option. Canonical contents: the parent prefix is never on-link
   # and never a route, no SLAAC address is generated, and the RA's Managed flag
   # must not start a DHCPv6 client (a dynamic address would fall outside the
-  # routed /112, which ipv6_filtering drops).
+  # routed block, which ipv6_filtering drops).
   if ! grep -qs '^DHCPv6Client=no$' "$CFG" 2>/dev/null; then
     awk 'BEGIN{s=0} /^n\[IPv6AcceptRA\]/{next} /^\[IPv6AcceptRA\]$/{s=1;next} s&&/^\[/{s=0} !s' "$CFG" > "$CFG.new" && mv "$CFG.new" "$CFG"
     printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n' >> "$CFG"
     changed=1
   fi
-  # Statically bind the deterministic primary /128. A reinstall deletes the
-  # container but Incus's dnsmasq keeps its DHCPv6 lease for up to an hour, so
-  # DHCPv6 would hand the recreated container a dynamic address instead —
-  # binding the /128 directly makes IPv6 independent of that.
+  # Statically bind the /128. A reinstall deletes the container but Incus's
+  # dnsmasq keeps its DHCPv6 lease for up to an hour, so DHCPv6 would hand the
+  # recreated container a dynamic address instead — binding the /128 directly
+  # makes IPv6 independent of that.
   if ! grep -qs '^Address=%s/128$' "$CFG" 2>/dev/null; then
     printf '\n[Address]\nAddress=%s/128\n' %q >> "$CFG"
     changed=1
   fi
-  # Drop DHCPv6: the dynamic address it would assign is outside the /112.
+  # Static default route via the bridge's fixed link-local gateway: with RA
+  # off-link/route-prefix off there is no RA-provided default, so without this
+  # the container cannot reach out (only inbound works via the host's proxy).
+  if ! grep -qs '^Gateway=fe80::1$' "$CFG" 2>/dev/null; then
+    printf '\n[Route]\nDestination=::/0\nGateway=fe80::1\n' >> "$CFG"
+    changed=1
+  fi
+  # Drop DHCPv6: the dynamic address it would assign is outside the routed
+  # block.
   if grep -qs '^DHCP=true$' "$CFG" 2>/dev/null; then
     sed -i 's/^DHCP=true$/DHCP=ipv4/' "$CFG"
     changed=1
@@ -94,24 +123,74 @@ else
     systemctl restart systemd-networkd || true
   fi
 fi
-for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
-  case "$r" in
-    %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
-  esac
-done
-ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, ipv6, ipv6, prefix)
+%s`, ipv6, ipv6, ipv6, ipv6, flush)
 	return script, nil
+}
+
+// poolContainerScript renders the Debian systemd-networkd config for a pool
+// container: eth0 (routed NIC) statically binds the public /128 with the
+// fe80::1 gateway, eth1 (bridged NIC) runs DHCPv4 on the private bridge.
+// Idempotent and self-healing.
+func (m *Manager) poolContainerScript(ipv6 string) (string, error) {
+	return fmt.Sprintf(`set -e
+for i in $(seq 1 40); do
+  [ -S /run/systemd/private ] && break
+  sleep 0.5
+done
+mkdir -p /etc/systemd/network
+# eth0: public routed /128, static, no DHCP (v4 lives on eth1).
+cat > /etc/systemd/network/eth0.network <<'EOF'
+[Match]
+Name=eth0
+
+[Network]
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+
+[Address]
+Address=%s/128
+
+[Route]
+Destination=::/0
+Gateway=fe80::1
+EOF
+# eth1: private bridge, DHCPv4.
+cat > /etc/systemd/network/eth1.network <<'EOF'
+[Match]
+Name=eth1
+
+[Network]
+DHCP=ipv4
+EOF
+systemctl restart systemd-networkd || true
+`, ipv6), nil
 }
 
 // ConfigureContainerIPv6 applies the host-routed IPv6 setup to one container
 // (its stack decides the mechanism). Called on add/reinstall for new
 // containers and by EnsureRoutedIPv6 for existing ones. No-op when IPv6 is
-// disabled or the container has no address.
-func (m *Manager) ConfigureContainerIPv6(name string) error {
+// disabled or the container has no address. In pool mode the address comes
+// from the DB (the container binds its single /128 itself; the host routes it
+// via WireIPv6Pool); poolAddr passes the just-assigned address when the DB
+// row does not exist yet (Add creates the row after the container).
+func (m *Manager) ConfigureContainerIPv6(name, poolAddr string) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
-	script, err := m.ipv6ContainerScript(name)
+	var script string
+	var err error
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		if poolAddr == "" {
+			u, uerr := m.db.GetUserByName(name)
+			if uerr != nil {
+				return uerr
+			}
+			poolAddr = u.IPv6Address
+		}
+		script, err = m.ipv6ContainerScriptFor(poolAddr, "")
+	} else {
+		script, err = m.ipv6ContainerScript(name)
+	}
 	if err != nil || script == "" {
 		return err
 	}
@@ -126,11 +205,10 @@ func (m *Manager) ConfigureContainerIPv6(name string) error {
 // containers staying isolated (no broadcast/NDP plane, no MITM, only
 // address-addressed routed traffic). Runs on `vps install` and
 // `vps ipv6-reapply`; idempotent. Stopped or not-yet-created containers
-// are skipped, not errors. Pool mode is handled by RewireAllIPv6Pool (the
-// container gets its single /128 via the eth0 static address; no host-routed
-// peer script is needed).
+// are skipped, not errors. Pool mode: the container binds its single /128
+// + default route itself (ConfigureContainerIPv6 with the DB-stored address).
 func (m *Manager) EnsureRoutedIPv6() error {
-	if !m.cfg.IPv6Enabled() || m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
 	users, err := m.db.ListUsers()
@@ -142,7 +220,7 @@ func (m *Manager) EnsureRoutedIPv6() error {
 		if st, err := m.lx.State(u.Name); err != nil || st != "Running" {
 			continue // stopped or not created yet
 		}
-		if err := m.ConfigureContainerIPv6(u.Name); err != nil && firstErr == nil {
+		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

@@ -779,33 +779,67 @@ var (
 // cpu is a quota in tenths of a core (see cpuLimitConfig).
 // Everything is submitted in ONE create request — the config, the eth0 static
 // addresses and the root size — so no follow-up device overrides are needed.
-func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, memMB, diskGB int) error {
+//
+// poolIPv6 ("" in prefix mode) switches the NIC layout: the container gets
+// TWO NICs — eth0 as a `routed` NIC on the EXTERNAL interface carrying the
+// pool /128 (Incus programs the host route + proxy_ndp + fe80::1 gateway),
+// and eth1 as a `bridged` NIC on the Incus bridge carrying the private IPv4.
+// This is the layout that makes "one discrete public /128 per container" work
+// (the address is NOT bound on the host's eth0 — see docs/ipv6.md).
+func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, extIF string, cpu, memMB, diskGB int) error {
 	// The create source takes a plain local alias; strip a "remote:" prefix
 	// (the image is ensured to be cached locally before Launch is called).
 	if _, local, found := strings.Cut(image, ":"); found {
 		image = local
 	}
-	eth0 := device{
-		"type":         "nic",
-		"nictype":      "bridged",
-		"parent":       bridge,
-		"name":         "eth0",
-		"ipv4.address": ip,
+	devices := map[string]device{
+		"root": {"type": "disk", "path": "/", "pool": pool, "size": strconv.Itoa(diskGB) + "GiB"},
 	}
-	if ipv6 != "" {
-		eth0["ipv6.address"] = ipv6
-	}
-	if block != "" {
-		eth0["ipv6.routes"] = block
-	}
-	// security.ipv6_filtering needs an IPv6 address/route on the device (Incus
-	// 7.0 validation); skip it when the container has no IPv6 at all.
-	iso := nicIsolation
-	if ipv6 == "" && block == "" {
-		iso = nicIsolationNoV6
-	}
-	for k, v := range iso {
-		eth0[k] = v
+	if poolIPv6 != "" {
+		// Pool mode: eth0 = routed public /128, eth1 = bridged private v4.
+		// routed NIC accepts only actual addresses for ipv4.address (no
+		// "none"), so v4 is simply not set on it.
+		devices["eth0"] = device{
+			"type":         "nic",
+			"nictype":      "routed",
+			"parent":       extIF,
+			"name":         "eth0",
+			"ipv6.address": poolIPv6,
+		}
+		devices["eth1"] = device{
+			"type":         "nic",
+			"nictype":      "bridged",
+			"parent":       bridge,
+			"name":         "eth1",
+			"ipv4.address": ip,
+		}
+		for k, v := range nicIsolationNoV6 {
+			devices["eth1"][k] = v
+		}
+	} else {
+		eth0 := device{
+			"type":         "nic",
+			"nictype":      "bridged",
+			"parent":       bridge,
+			"name":         "eth0",
+			"ipv4.address": ip,
+		}
+		if ipv6 != "" {
+			eth0["ipv6.address"] = ipv6
+		}
+		if block != "" {
+			eth0["ipv6.routes"] = block
+		}
+		// security.ipv6_filtering needs an IPv6 address/route on the device
+		// (Incus 7.0 validation); skip it when the container has no IPv6.
+		iso := nicIsolation
+		if ipv6 == "" && block == "" {
+			iso = nicIsolationNoV6
+		}
+		for k, v := range iso {
+			eth0[k] = v
+		}
+		devices["eth0"] = eth0
 	}
 	config := cpuLimitConfig(cpu)
 	config["limits.memory"] = strconv.Itoa(memMB) + "MiB"
@@ -816,10 +850,7 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, 
 		Name:   name,
 		Source: map[string]string{"type": "image", "alias": image},
 		Config: config,
-		Devices: map[string]device{
-			"eth0": eth0,
-			"root": {"type": "disk", "path": "/", "pool": pool, "size": strconv.Itoa(diskGB) + "GiB"},
-		},
+		Devices: devices,
 		Profiles: []string{"default"},
 	}
 	if err := c.sendOp(http.MethodPost, "/1.0/instances", req, 5*time.Minute); err != nil {
