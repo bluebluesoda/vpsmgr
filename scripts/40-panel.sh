@@ -35,13 +35,45 @@ ensure_go(){
     aarch64) arch=arm64 ;;
     *) die "no official Go for arch $(uname -m)" ;;
   esac
-  # resolve the latest 1.26.x patch version from go.dev (returns e.g. go1.26.6)
-  local latest
-  latest=$(curl -fsSL --max-time 20 https://go.dev/VERSION?m=text 2>/dev/null | head -1) || latest="go1.26.5"
-  tarball="/tmp/${latest}.linux-${arch}.tar.gz"
-  url="https://go.dev/dl/${latest}.linux-${arch}.tar.gz"
-  log "  downloading $url"
-  curl -fsSL --max-time 300 -o "$tarball" "$url" || return 1
+  # Read the official stable-download manifest instead of trusting the
+  # VERSION endpoint alone. During a new release, VERSION can briefly name a
+  # version whose architecture tarball is not available through every CDN
+  # edge yet, which otherwise turns a transient 404 into a failed install.
+  local candidates candidate latest filename
+  mapfile -t candidates < <(curl -fsSL --max-time 30 https://go.dev/dl/?mode=json 2>/dev/null | \
+    python3 -c 'import json,sys
+try:
+    releases=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for release in releases:
+    for f in release.get("files", []):
+        if f.get("os") == "linux" and f.get("arch") == sys.argv[1] and f.get("kind") == "archive":
+            print(release["version"] + " " + f["filename"])
+            break' "$arch")
+  # Keep a known previous toolchain as a last-resort candidate if the manifest
+  # endpoint is temporarily unavailable. The download loop below still retries
+  # every candidate before failing.
+  if [[ ${#candidates[@]} -eq 0 ]]; then
+    candidates=("go1.26.5 go1.26.5.linux-${arch}.tar.gz")
+  fi
+  local downloaded=0
+  for candidate in "${candidates[@]}"; do
+    latest="${candidate%% *}"
+    filename="${candidate#* }"
+    tarball="/tmp/${filename}"
+    url="https://go.dev/dl/${filename}"
+    for attempt in 1 2 3; do
+      log "  downloading $url (attempt $attempt/3)"
+      if curl -fsSL --max-time 300 -o "$tarball" "$url"; then
+        downloaded=1
+        break 2
+      fi
+      rm -f "$tarball"
+    done
+    log "  warn: $filename was unavailable; trying the previous stable release"
+  done
+  [[ "$downloaded" -eq 1 ]] || return 1
   rm -rf /usr/local/go && tar -C /usr/local -xzf "$tarball" || return 1
   rm -f "$tarball"
   export PATH="/usr/local/go/bin:$PATH"
