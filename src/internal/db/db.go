@@ -54,7 +54,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 3
+const schemaVersion = 4
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -127,6 +127,15 @@ var migrations = []struct {
 	// a restart and double-counted (review P2-3).
 	{3, []string{
 		`ALTER TABLE bandwidth ADD COLUMN last_pid INTEGER NOT NULL DEFAULT 0`,
+	}},
+	// v4: per-user pool-mode IPv6 address. NULL = no IPv6 assigned (prefix
+	// mode derives addresses on the fly; pool mode stores the assignment).
+	// The UNIQUE index is the concurrency backstop: one address can never be
+	// handed to two users. The address is released simply by deleting the
+	// user row (the column dies with it).
+	{4, []string{
+		`ALTER TABLE users ADD COLUMN ipv6_address TEXT`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6 ON users(ipv6_address)`,
 	}},
 }
 

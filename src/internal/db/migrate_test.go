@@ -127,7 +127,7 @@ func TestUserStatusRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating)
+	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating, "")
 	if err != nil {
 		t.Fatal(err)
 	}
