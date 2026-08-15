@@ -61,7 +61,7 @@ if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   fi
   chown -R root:traefik /etc/traefik
   chmod 755 /etc/traefik
-  chown root:traefik /etc/traefik/dynamic
+  chown -R vps:vps /etc/traefik/dynamic
   chmod 755 /etc/traefik/dynamic
   chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service

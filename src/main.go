@@ -430,7 +430,9 @@ func writeUnit(name, content string) error {
 // as. Idempotent, called by `vps install`:
 //   - creates the system user if missing
 //   - chowns /etc/vpsmgr and /etc/traefik/dynamic so the panel can write its
-//     config, db, certs and domain files without root
+//     config, db, certs and domain files without root. /etc/traefik and the
+//     dynamic dir are 0755 (world-readable), so the traefik service reads the
+//     dynamic YAMLs as its own unprivileged user — no group cross-link needed.
 //   - adds vps to the incus-admin group so the Incus Unix-socket API is fully
 //     usable (the socket is group-rw by incus-admin)
 //   - installs the sudoers whitelist granting ONLY the exact privileged
@@ -465,17 +467,7 @@ func ensureVPSUser(c *cfg.Config) error {
 	if err := exec.Command("usermod", "-aG", "incus-admin", "vps").Run(); err != nil {
 		return fmt.Errorf("add vps to incus-admin: %w", err)
 	}
-	// 3b. Traefik cross-link: vps must traverse /etc/traefik (group traefik) to
-	// write the dynamic files, and the traefik service must read the dynamic
-	// dir (owned by vps). See scripts/30-traefik.sh.
-	if _, err := exec.Command("id", "-u", "traefik").CombinedOutput(); err == nil {
-		_ = exec.Command("usermod", "-aG", "traefik", "vps").Run()
-		_ = exec.Command("usermod", "-aG", "vps", "traefik").Run()
-		_ = exec.Command("chown", "vps:vps", c.TraefikDir()).Run()
-		_ = exec.Command("chmod", "0750", "/etc/traefik").Run()
-		_ = exec.Command("chmod", "0750", c.TraefikDir()).Run()
-	}
-	// 3c. ndppd.conf: the panel renders this file itself inside /etc/vpsmgr
+	// 3b. ndppd.conf: the panel renders this file itself inside /etc/vpsmgr
 	// (its own writable dir) — no root-zone file to create or chown here.
 	// 4. sudoers whitelist — a hard requirement: without it every privileged
 	// operation (nft reload, traefik/systemctl, IPv6 wiring) fails at runtime.
