@@ -42,12 +42,14 @@ echo "===== 00-ip-ask ====="
 source "$ROOT/scripts/00-ip-ask.sh" || { echo "error: install-time network asks failed — aborting" >&2; exit 1; }
 export VPSMGR_IPV6_SUBNET="${VPSMGR_IPV6_SUBNET:-}"
 export VPSMGR_IPV4_SUBNET="${VPSMGR_IPV4_SUBNET:-}"
+export VPSMGR_IPV6_MODE="${VPSMGR_IPV6_MODE:-}"
+export VPSMGR_IPV6_POOL="${VPSMGR_IPV6_POOL:-}"
 
-# NDP proxy for IPv6 pass-through: each container owns a /112 block and ndppd
-# relays neighbor discovery on the upstream interface for it, so every address
-# a container binds is reachable from the internet. Only needed when IPv6 is
-# enabled; small, no data-plane involvement.
-if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
+# NDP proxy for IPv6 pass-through. Prefix mode: each container owns a /112
+# block and ndppd relays neighbor discovery on the upstream interface for it.
+# Pool mode: kernel proxy_ndp handles each /128 (no ndppd needed). Only
+# needed in prefix mode; small, no data-plane involvement.
+if [[ "${VPSMGR_IPV6_MODE:-}" == "prefix" && -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   echo
   echo "===== installing ndppd (IPv6 NDP proxy) ====="
   apt-get update -qq 2>/dev/null || true

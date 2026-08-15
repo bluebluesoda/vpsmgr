@@ -26,12 +26,13 @@ import (
 //	addr-add       <ipv6-addr/prefix> <iface>  ip -6 addr add <addr> dev <iface>
 //	route-del      <ipv6-addr> <iface>     ip -6 route del <addr>/128 dev <iface>
 //	neigh-del-proxy <ipv6-addr> <iface>    ip -6 neigh del proxy <addr> dev <iface>
+//	neigh-add-proxy <ipv6-addr> <iface>    ip -6 neigh add proxy <addr> dev <iface>
 //
 // Every non-op argument must be a valid IPv6 address/CIDR and a valid Linux
 // interface name — nothing else can reach `ip`.
 func cmdIP6(args []string) error {
 	if len(args) != 3 {
-		return fmt.Errorf("usage: vps ip6 <route-add|addr-add|route-del|neigh-del-proxy> <addr-or-cidr> <iface>")
+		return fmt.Errorf("usage: vps ip6 <route-add|addr-add|route-del|neigh-del-proxy|neigh-add-proxy> <addr-or-cidr> <iface>")
 	}
 	op, val, dev := args[0], args[1], args[2]
 
@@ -77,6 +78,12 @@ func cmdIP6(args []string) error {
 			return fmt.Errorf("neigh-del-proxy: %q is not an IPv6 address", val)
 		}
 		return runIP("-6", "neigh", "del", "proxy", val, "dev", dev)
+	case "neigh-add-proxy":
+		ip := net.ParseIP(val)
+		if ip == nil || ip.To4() != nil {
+			return fmt.Errorf("neigh-add-proxy: %q is not an IPv6 address", val)
+		}
+		return runIP("-6", "neigh", "add", "proxy", val, "dev", dev)
 	default:
 		return fmt.Errorf("unknown ip6 operation %q", op)
 	}

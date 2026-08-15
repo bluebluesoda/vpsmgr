@@ -39,7 +39,21 @@ if ! command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
-# --- IPv6 prefix -------------------------------------------------------------
+# --- IPv6 pass-through -------------------------------------------------------
+#
+# The installer offers THREE IPv6 outcomes, decided by probing the host with
+# the (unchanged) check-ipv6-support.sh script:
+#
+#   1. prefix  — the provider routes a whole prefix (verified from outside):
+#                containers get deterministic /112 blocks (classic mode).
+#   2. pool    — no routable whole prefix, but the host has multiple global
+#                addresses on its NIC (the "discrete whitelist" providers):
+#                containers each get one address from the pool the user
+#                confirms (the host keeps the first address for itself).
+#   3. none    — pure IPv4 (user cancels, or no global IPv6 at all).
+#
+# The chosen mode is exported as VPSMGR_IPV6_MODE (none|prefix|pool) and the
+# pool (if any) as VPSMGR_IPV6_POOL; the config's FillAuto reads both.
 
 # validate_prefix: exit 0 if arg is a global IPv6 CIDR (/80 or shorter) with
 # an explicit prefix length.
@@ -59,6 +73,241 @@ a = n.network_address
 if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified:
     sys.exit(1)
 PY
+}
+
+# is_global_v6: exit 0 if arg is a bare GLOBAL (non-ULA, non-link-local,
+# non-loopback, non-unspecified) IPv6 address without a prefix length.
+is_global_v6(){
+  python3 - "$1" <<'PY'
+import ipaddress, sys
+try:
+    a = ipaddress.IPv6Address(sys.argv[1])
+except Exception:
+    sys.exit(1)
+if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified or a.is_multicast:
+    sys.exit(1)
+PY
+}
+
+# run_detector — run the (unchanged) check-ipv6-support.sh and capture its
+# verdict. Prints "prefix" when the whole prefix was verified reachable from
+# outside, "noverify" when no external verification was possible (offline /
+# rate-limited), "unverified" when the random test address got no reply (the
+# prefix is NOT routed as a whole). The script's own output is streamed to the
+# user so the installer keeps the same look; only the verdict line is parsed.
+run_detector(){
+  local det
+  det="${ROOT:-$(dirname "$(readlink -f "$0")")}/check-ipv6-support.sh"
+  if [[ ! -x "$det" ]]; then
+    log "check-ipv6-support.sh not found at $det — skipping automatic detection"
+    echo "unverified"
+    return 0
+  fi
+  local out
+  out=$("$det" 2>&1 || true)
+  printf '%s\n' "$out" >&2
+  if grep -q "Pass-through:[[:space:]]*VERIFIED" <<< "$out"; then
+    echo "prefix"
+  elif grep -q "UNKNOWN (run again" <<< "$out"; then
+    echo "noverify"
+  else
+    echo "unverified"
+  fi
+}
+
+# ask_ipv6 — the mode-selection interview. Sets VPSMGR_IPV6_MODE and (for
+# pool) VPSMGR_IPV6_POOL; leaves them empty for pure IPv4.
+ask_ipv6(){
+  # --- env override: VPSMGR_IPV6_MODE=none|prefix|pool (with pool list) ---
+  if [[ -n "${VPSMGR_IPV6_MODE:-}" ]]; then
+    case "$VPSMGR_IPV6_MODE" in
+      none) log "IPv6 mode: none (from env)"; export VPSMGR_IPV6_MODE=none; return 0 ;;
+      prefix)
+        if [[ -z "${VPSMGR_IPV6_SUBNET:-}" ]]; then
+          die "VPSMGR_IPV6_MODE=prefix requires VPSMGR_IPV6_SUBNET (e.g. 2602:fada:6::/64)"
+          return 1
+        fi
+        log "IPv6 mode: prefix $VPSMGR_IPV6_SUBNET (from env)"; return 0 ;;
+      pool)
+        if [[ -z "${VPSMGR_IPV6_POOL:-}" ]]; then
+          die "VPSMGR_IPV6_MODE=pool requires VPSMGR_IPV6_POOL (comma-separated global addresses)"
+          return 1
+        fi
+        log "IPv6 mode: pool (from env)"; return 0 ;;
+      *) die "VPSMGR_IPV6_MODE must be none|prefix|pool (got '$VPSMGR_IPV6_MODE')"; return 1 ;;
+    esac
+  fi
+
+  # --- reinstall adoption: keep the previous mode ---
+  if [[ -f /etc/vpsmgr/config.yaml ]]; then
+    local EXISTING
+    EXISTING=$(grep -E '^\s+ipv6_mode:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+    if [[ -n "$EXISTING" ]]; then
+      log "existing config has ipv6_mode=$EXISTING — keeping it"
+      export VPSMGR_IPV6_MODE="$EXISTING"
+      if [[ "$EXISTING" == "pool" ]]; then
+        local POOL
+        POOL=$(grep -A200 '^\s+ipv6_pool:' /etc/vpsmgr/config.yaml 2>/dev/null | sed -n 's/^\s*-\s*//p' | tr '\n' ',' | sed 's/,$//')
+        [[ -n "$POOL" ]] && export VPSMGR_IPV6_POOL="$POOL"
+      fi
+      return 0
+    fi
+    # Older config without ipv6_mode: fall back to ipv6_subnet presence.
+    if grep -Eq '^\s+ipv6_subnet:' /etc/vpsmgr/config.yaml 2>/dev/null; then
+      local OLDSUB
+      OLDSUB=$(grep -E '^\s+ipv6_subnet:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+      if [[ -n "$OLDSUB" ]]; then
+        log "existing config has ipv6_subnet=$OLDSUB — keeping prefix mode"
+        export VPSMGR_IPV6_MODE=prefix VPSMGR_IPV6_SUBNET="$OLDSUB"
+        return 0
+      fi
+    fi
+  fi
+
+  # --- non-interactive with no env var: IPv6 stays disabled ---
+  if [[ ! -t 0 ]] && [[ -z "${FORCE_ASK:-}" ]]; then
+    log "non-interactive install, no VPSMGR_IPV6_MODE set — IPv6 disabled"
+    export VPSMGR_IPV6_MODE=none
+    return 0
+  fi
+
+  echo
+  echo "============================================================"
+  echo " IPv6 pass-through  —  BETA / 实验性功能"
+  echo "------------------------------------------------------------"
+  echo " Each container gets its own public IPv6 address (no NAT)."
+  echo " Requires either a routable prefix OR multiple global"
+  echo " addresses on this host's NIC."
+  echo " 每台小鸡将获得独立的公网 IPv6 地址（无 NAT）。"
+  echo " 需要可路由前缀，或本机网卡上的多个公网地址。"
+  echo " Default: DISABLED. Only enable if you understand the risks."
+  echo " 默认不启用，请确认理解后再开启。"
+  echo "============================================================"
+  echo
+  read -r -p "Enable IPv6 pass-through? 启用 IPv6 直通? [y/N] " ans
+  case "${ans,,}" in
+    y|yes) ;;
+    *) log "IPv6 pass-through disabled / 未启用"; export VPSMGR_IPV6_MODE=none; return 0 ;;
+  esac
+
+  # Run the detector (unchanged script) to learn the host's capability.
+  log "running check-ipv6-support.sh to probe this host..."
+  DET=$(run_detector)
+  log "detector verdict: $DET"
+
+  if [[ "$DET" == "prefix" ]]; then
+    # Whole prefix routed -> classic mode. Default candidate from the host's
+    # own global address, same as before.
+    local EXT_IF GLOBAL CAND
+    EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+    GLOBAL=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4; exit}')
+    CAND=""
+    if [[ -n "$GLOBAL" ]]; then
+      local GADDR GLEN
+      GADDR="${GLOBAL%%/*}"
+      GLEN="${GLOBAL##*/}"
+      GLEN="${GLEN:-64}"
+      CAND=$(python3 -c 'import ipaddress,sys
+a=ipaddress.IPv6Address(sys.argv[1])
+plen=int(sys.argv[2])
+n=ipaddress.IPv6Network((int(a), plen), strict=False)
+print(n.network_address)' "$GADDR" "$GLEN")
+      CAND="$CAND/$GLEN"
+    fi
+    local PREFIX
+    if [[ -n "$CAND" ]]; then
+      log "detected host global address: $GLOBAL"
+      read -r -p "Global prefix for containers — include the length (e.g. /64, /80) [default: $CAND]: " PREFIX
+      PREFIX="${PREFIX:-$CAND}"
+    else
+      read -r -p "Global prefix for containers — include the length (e.g. 2001:db8::/64; up to /80): " PREFIX
+    fi
+    PREFIX="${PREFIX%$'\r'}"
+    local PREFIX_NORM
+    PREFIX_NORM=$(python3 - "$PREFIX" <<'PY'
+import ipaddress, sys
+p = sys.argv[1]
+if "/" not in p:
+    sys.exit(1)
+try:
+    print(ipaddress.IPv6Network(p, strict=False))
+except Exception:
+    sys.exit(1)
+PY
+)
+    if validate_prefix "$PREFIX" && [[ -n "$PREFIX_NORM" ]]; then
+      export VPSMGR_IPV6_MODE=prefix VPSMGR_IPV6_SUBNET="$PREFIX_NORM"
+      log "IPv6 mode: prefix $PREFIX_NORM"
+    else
+      die "invalid prefix '$PREFIX' — must be a global IPv6 CIDR with an explicit length (e.g. 2602:fada:6::/64, or a /80 like 2406:da14:1dd2:a807:753a::/80)"
+      return 1
+    fi
+    return 0
+  fi
+
+  # No verified whole prefix. Count the host's GLOBAL addresses: more than one
+  # means pool mode is possible (one stays with the host, the rest go in the
+  # pool). Private/ULA/link-local addresses are excluded.
+  local EXT_IF GLOBALS COUNT
+  EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+  GLOBALS=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4}')
+  COUNT=0
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local a
+    a="${line%%/*}"
+    if is_global_v6 "$a"; then COUNT=$((COUNT+1)); fi
+  done <<< "$GLOBALS"
+
+  if [[ "$COUNT" -le 1 ]]; then
+    warn "no routable whole prefix AND only $COUNT global IPv6 address(es) — IPv6 pass-through not possible"
+    log "proceeding with pure IPv4"
+    export VPSMGR_IPV6_MODE=none
+    return 0
+  fi
+
+  # Pool mode offer: show the global addresses, keep the first for the host,
+  # ask the user to confirm the rest as the pool.
+  log "$COUNT global IPv6 addresses found on $EXT_IF (whole-prefix routing NOT verified):"
+  local first=""
+  local pool=""
+  local n=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local a
+    a="${line%%/*}"
+    if ! is_global_v6 "$a"; then continue; fi
+    n=$((n+1))
+    if [[ $n -eq 1 ]]; then
+      first="$a"
+      log "  [host] $a  (kept for the host itself)"
+    else
+      log "  [pool] $a"
+      if [[ -z "$pool" ]]; then pool="$a"; else pool="$pool,$a"; fi
+    fi
+  done <<< "$GLOBALS"
+
+  echo
+  read -r -p "Add the $((COUNT-1)) addresses above to the container pool? 将以上 $((COUNT-1)) 个地址加入小鸡地址池? [y/N] " ans2
+  case "${ans2,,}" in
+    y|yes) ;;
+    *) log "address pool declined — proceeding with pure IPv4"; export VPSMGR_IPV6_MODE=none; return 0 ;;
+  esac
+
+  # Validate every pool address once more before exporting.
+  local ok=1
+  IFS=',' read -r -a pool_arr <<< "$pool"
+  for a in "${pool_arr[@]}"; do
+    if ! is_global_v6 "$a"; then ok=0; break; fi
+  done
+  if [[ "$ok" -ne 1 || -z "$pool" ]]; then
+    die "invalid pool addresses gathered ($pool)"
+    return 1
+  fi
+  export VPSMGR_IPV6_MODE=pool VPSMGR_IPV6_POOL="$pool"
+  log "IPv6 mode: pool ($((COUNT-1)) addresses)"
+  return 0
 }
 
 # --- container subnet --------------------------------------------------------
