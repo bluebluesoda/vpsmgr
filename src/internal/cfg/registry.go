@@ -273,6 +273,20 @@ var Fields = []Field{
 			}
 			return nil
 		}},
+	{"net.ipv6_mode", KindImmutable, ApplyNone,
+		"IPv6 allocation mode: none / prefix (/112 blocks) / pool (per-container address) — fixed at install",
+		"",
+		func(c *Config) string { return c.IPv6ModeEffective() },
+		func(c *Config, v string) error {
+			return fmt.Errorf("net.ipv6_mode is fixed at install; switching modes would renumber every container")
+		}},
+	{"net.ipv6_pool", KindImmutable, ApplyNone,
+		"IPv6 address pool (pool mode) — the /128 addresses containers are assigned from; fixed at install",
+		"",
+		func(c *Config) string { return strings.Join(c.Net.IPv6Pool, ", ") },
+		func(c *Config, v string) error {
+			return fmt.Errorf("net.ipv6_pool is fixed at install; editing it would break assigned addresses")
+		}},
 	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",
 		getStr(func(c *Config) string { return c.Incus.Image }),

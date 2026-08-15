@@ -19,6 +19,7 @@ var ImmutableFields = []string{
 	"incus.pool",
 	"incus.bridge",
 	"panel.url_path",
+	"net.ipv6_mode",
 }
 
 // ImmutableSnapshot renders the immutable fields as JSON for storage in the DB

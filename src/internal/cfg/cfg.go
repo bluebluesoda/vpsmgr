@@ -117,6 +117,48 @@ type NetCfg struct {
 	// their neighbor discovery. No NAT, no DB schema change: a container's
 	// IPv6 is whatever Incus/SLAAC assigned, read live from `incus list`.
 	IPv6Subnet string `yaml:"ipv6_subnet,omitempty"`
+	// IPv6Mode is how containers get their global IPv6: "none" (disabled),
+	// "prefix" (deterministic /112 blocks derived from the configured prefix)
+	// or "pool" (one address picked from IPv6Pool per container, stored in the
+	// DB). Fixed at install — switching modes would renumber every container.
+	IPv6Mode string `yaml:"ipv6_mode,omitempty"`
+	// IPv6Pool is the list of global /128 addresses a container can be
+	// assigned in pool mode (typically the addresses the provider lets the
+	// host bind individually). A user keeps its address until deleted.
+	IPv6Pool []string `yaml:"ipv6_pool,omitempty"`
+}
+
+// IPv6 mode values.
+const (
+	IPv6ModeNone   = "none"
+	IPv6ModePrefix = "prefix"
+	IPv6ModePool   = "pool"
+)
+
+// IPv6ModeEffective returns the effective IPv6 mode, normalizing an empty
+// mode string to a value consistent with the configured fields:
+//   - ipv6_pool set -> pool
+//   - ipv6_subnet set -> prefix
+//   - otherwise -> none
+//
+// The installer writes the explicit mode, but an older config (or a hand edit)
+// may leave it empty — normalize rather than refuse to run.
+func (c *Config) IPv6ModeEffective() string {
+	switch c.Net.IPv6Mode {
+	case IPv6ModePool:
+		return IPv6ModePool
+	case IPv6ModePrefix:
+		return IPv6ModePrefix
+	case IPv6ModeNone:
+		return IPv6ModeNone
+	}
+	if len(c.Net.IPv6Pool) > 0 {
+		return IPv6ModePool
+	}
+	if c.Net.IPv6Subnet != "" {
+		return IPv6ModePrefix
+	}
+	return IPv6ModeNone
 }
 
 type IncusCfg struct {
@@ -220,6 +262,25 @@ func (c *Config) FillAuto() error {
 	// install (it overrides whatever is in the config file).
 	if v := os.Getenv("VPSMGR_IPV6_SUBNET"); v != "" {
 		c.Net.IPv6Subnet = v
+	}
+	// VPSMGR_IPV6_MODE carries the IPv6 mode chosen at install (none/prefix/pool).
+	if v := os.Getenv("VPSMGR_IPV6_MODE"); v != "" {
+		c.Net.IPv6Mode = v
+	}
+	// VPSMGR_IPV6_POOL carries the address pool chosen at install (pool mode):
+	// comma- or newline-separated global IPv6 addresses. Validated below via
+	// IPv6PoolValidated so a bad list fails the install loudly.
+	if v := os.Getenv("VPSMGR_IPV6_POOL"); v != "" {
+		var addrs []string
+		for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == '\n' || r == ' ' }) {
+			if part != "" {
+				addrs = append(addrs, part)
+			}
+		}
+		if _, err := (&Config{Net: NetCfg{IPv6Pool: addrs}}).IPv6PoolValidated(); err != nil {
+			return err
+		}
+		c.Net.IPv6Pool = addrs
 	}
 	// VPSMGR_IPV4_SUBNET carries the container subnet chosen at install time
 	// (e.g. 10.115.0.0/24); the gateway is derived from it.
@@ -363,8 +424,8 @@ func isPrivateIPv4(s string) bool {
 	return v4[0] == 100 && v4[1]&0xc0 == 64
 }
 
-// IPv6Enabled reports whether IPv6 pass-through is configured.
-func (c *Config) IPv6Enabled() bool { return c.Net.IPv6Subnet != "" }
+// IPv6Enabled reports whether IPv6 pass-through is configured (either mode).
+func (c *Config) IPv6Enabled() bool { return c.IPv6ModeEffective() != IPv6ModeNone }
 
 // IPv6Network parses and validates the configured IPv6 prefix. It must be a
 // global (non-ULA, non-link-local) CIDR — /64 or shorter (e.g. /56), or longer
@@ -397,6 +458,39 @@ func (c *Config) IPv6Network() (*net.IPNet, error) {
 		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /80 or shorter (got /%d)", s, ones)
 	}
 	return n, nil
+}
+
+// IPv6PoolValidated validates and normalizes the configured address pool.
+// Every entry must be a single global (non-ULA, non-link-local) IPv6 address
+// without a prefix length; duplicates are rejected. Returns the canonical
+// (compressed) form of each address. An empty pool is valid (the mode is
+// "none" then); nil is returned only when there is nothing to validate.
+func (c *Config) IPv6PoolValidated() ([]string, error) {
+	if len(c.Net.IPv6Pool) == 0 {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.Net.IPv6Pool))
+	for _, s := range c.Net.IPv6Pool {
+		s = strings.TrimSpace(s)
+		if strings.Contains(s, "/") {
+			return nil, fmt.Errorf("invalid ipv6_pool entry %q: a bare address is required (no prefix length)", s)
+		}
+		ip := net.ParseIP(s)
+		if ip == nil || ip.To4() != nil {
+			return nil, fmt.Errorf("invalid ipv6_pool entry %q: not an IPv6 address", s)
+		}
+		if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback() || ip.IsUnspecified() {
+			return nil, fmt.Errorf("invalid ipv6_pool entry %q: must be a global (public) address", s)
+		}
+		canon := ip.String()
+		if seen[canon] {
+			return nil, fmt.Errorf("invalid ipv6_pool entry %q: duplicate address", s)
+		}
+		seen[canon] = true
+		out = append(out, canon)
+	}
+	return out, nil
 }
 
 func shCmd(name string, args ...string) string {
