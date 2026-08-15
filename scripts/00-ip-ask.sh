@@ -176,7 +176,11 @@ ask_ipv6(){
     *) log "IPv6 pass-through disabled / 未启用"; export VPSMGR_IPV6_MODE=none; return 0 ;;
   esac
 
-  # Run the detector (unchanged script) to learn the host's capability.
+  # Run the detector (unchanged script) to learn the host's capability. The
+  # external probe is powered by Globalping — a great public service for IPv6
+  # reachability checks, thanks to their free API!
+  echo
+  echo "  (Powered by Globalping — thanks for the great free service!)"
   log "running check-ipv6-support.sh to probe this host..."
   DET=$(run_detector)
   log "detector verdict: $DET"
@@ -203,9 +207,9 @@ ask_ipv6(){
   echo "                  in the admin panel's IPv6 pool page"
   echo "  [m] Manual     — you type the prefix you know is routed"
   echo "  [n] none       — disable IPv6, proceed with IPv4 only"
-  read -r -p "Choose IPv6 mode? 选择 IPv6 模式? [p/m/N] " ans3
+  read -r -p "Choose IPv6 mode? 选择 IPv6 模式? [P/m/n] " ans3
   case "${ans3,,}" in
-    p|pool)
+    p|pool|"")
       export VPSMGR_IPV6_MODE=pool VPSMGR_IPV6_POOL=""
       log "IPv6 mode: pool (empty — add addresses later in the admin panel)"
       return 0
