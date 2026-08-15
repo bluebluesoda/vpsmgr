@@ -52,16 +52,14 @@ fi
 if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   # Fresh install: run Traefik as a dedicated unprivileged user that can only
   # read /etc/traefik (config + dynamic rules) and bind ports 80/443. The
-  # dynamic dir is world-readable (traefik reads it as any other user) and
-  # owned by 'vps' once that user exists; until then root owns it, and
-  # ensureVPSUser (40-panel.sh -> vps install) chowns it to vps:vps 0755.
+  # dynamic dir is world-readable (traefik reads it as any other user); the
+  # panel installer assigns its ownership after creating the vps user.
   if ! id -u traefik >/dev/null 2>&1; then
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin traefik
     log "created unprivileged user 'traefik'"
   fi
   chown -R root:traefik /etc/traefik
   chmod 755 /etc/traefik
-  chown -R vps:vps /etc/traefik/dynamic
   chmod 755 /etc/traefik/dynamic
   chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service
@@ -73,18 +71,24 @@ fi
 # install traefik but keep it DISABLED — the domain proxy is not offered.
 # Config is kept so a later `vps config set net.v4_forward true` re-enables it.
 V4_FWD="${VPSMGR_V4_FORWARD:-1}"
-if [[ "$V4_FWD" == "1" ]]; then
-  systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
-  sleep 1
-  if systemctl is-active traefik >/dev/null 2>&1; then
-    log "traefik running"
-  else
-    systemctl status traefik --no-pager | tail -5
-    die "traefik failed to start"
-  fi
-else
-  systemctl disable --now traefik >/dev/null 2>&1 || true
-  log "v4 forwarding off — traefik installed but disabled (domains kept)"
-fi
+case "$V4_FWD" in
+  1|true)
+    systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
+    sleep 1
+    if systemctl is-active traefik >/dev/null 2>&1; then
+      log "traefik running"
+    else
+      systemctl status traefik --no-pager | tail -5
+      die "traefik failed to start"
+    fi
+    ;;
+  0|false)
+    systemctl disable --now traefik >/dev/null 2>&1 || true
+    log "v4 forwarding off — traefik installed but disabled (domains kept)"
+    ;;
+  *)
+    die "VPSMGR_V4_FORWARD must be 1/0/true/false (got '$V4_FWD')"
+    ;;
+esac
 
 echo "[30] traefik ready"

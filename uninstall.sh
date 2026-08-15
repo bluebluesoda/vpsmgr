@@ -90,20 +90,43 @@ fi
 if [[ $PURGE -eq 1 ]]; then
   log "purging vpsmgr config/db/certs and traefik config..."
   rm -rf /etc/vpsmgr /etc/traefik
-  log "purging Incus instances..."
-  for c in $(incus list --format=csv -c n 2>/dev/null); do
-    log "  deleting container $c"
-    incus delete --force "$c" >/dev/null 2>&1 || true
-  done
-  log "removing storage pool..."
-  incus storage delete vpsmgr >/dev/null 2>&1 || true
+  if command -v incus >/dev/null 2>&1; then
+    log "purging Incus instances..."
+    for c in $(incus list --format=csv -c n 2>/dev/null); do
+      log "  deleting container $c"
+      incus delete --force "$c" >/dev/null 2>&1 || true
+    done
+
+    log "purging vpsmgr images..."
+    while IFS=, read -r alias fingerprint; do
+      [[ "$alias" == vpsmgr/* || "$alias" == vpsmgr-* ]] || continue
+      incus image alias delete "$alias" >/dev/null 2>&1 || true
+      incus image delete "$fingerprint" >/dev/null 2>&1 || true
+    done < <(incus image alias list --format=csv -c af 2>/dev/null)
+
+    log "removing vpsmgr profile devices and network..."
+    incus profile device remove default root eth0 >/dev/null 2>&1 || true
+    incus network delete incusbr0 >/dev/null 2>&1 || true
+
+    log "removing storage pool..."
+    incus storage delete vpsmgr >/dev/null 2>&1 || true
+  fi
   if command -v zpool >/dev/null 2>&1 && zpool list vpsmgr >/dev/null 2>&1; then
     zpool destroy -f vpsmgr >/dev/null 2>&1 || true
   fi
   rm -rf /var/lib/vpsmgr
-  log "removing Incus (Zabbly package) and its repo..."
-  DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq incus >/dev/null 2>&1 || true
-  apt-get autoremove -y -qq >/dev/null 2>&1 || true
+
+  log "stopping and removing Incus (Zabbly package) and its state..."
+  for svc in incus-user.socket incus.socket incus-startup.service incus-lxcfs.service incus.service; do
+    systemctl disable --now "$svc" >/dev/null 2>&1 || true
+  done
+  mapfile -t INCUS_PACKAGES < <(dpkg-query -W -f='${binary:Package}\n' 'incus*' 2>/dev/null)
+  if (( ${#INCUS_PACKAGES[@]} > 0 )); then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${INCUS_PACKAGES[@]}" >/dev/null 2>&1 || true
+  fi
+  rm -rf /etc/incus /var/lib/incus /var/cache/incus /var/log/incus /var/lib/incus-lxcfs
+  nft delete table inet incus 2>/dev/null || true
+  nft delete table bridge incus 2>/dev/null || true
   rm -f /etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources /etc/apt/keyrings/zabbly.asc
   apt-get update -qq >/dev/null 2>&1 || true
 fi
