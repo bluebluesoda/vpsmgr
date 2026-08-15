@@ -93,6 +93,8 @@ func tr(l, key string, args ...any) string {
 		"err_invalid_disk":   {"磁盘必须是整数 GiB", "disk must be an integer (GiB)"},
 		"domain_deleted":     {"域名 %[1]v 已删除", "domain %[1]v deleted"},
 		"domains_updated":    {"域名设置已保存", "domain settings saved"},
+		"pool_added":         {"已添加 %[1]v 个 IPv6 地址到池", "added %[1]v IPv6 address(es) to the pool"},
+		"pool_removed":       {"已从池中移除 %[1]v", "removed %[1]v from the pool"},
 	}
 	pair, ok := m[key]
 	if !ok {

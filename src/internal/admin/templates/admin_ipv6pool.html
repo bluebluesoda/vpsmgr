@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Lang "zh"}}IPv6 地址池 — VPS Manager{{else}}IPv6 Pool — VPS Manager{{end}}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #1c1e21; }
+@media (prefers-color-scheme: dark) { body { background: #14161a; color: #e6e8eb; } }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+@media (prefers-color-scheme: dark) { header { background: #1e2126; border-bottom-color: #2c3036; } }
+header h1 { font-size: 17px; margin: 0; }
+header .actions { display: flex; gap: 8px; align-items: center; }
+main { padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3036; } }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin: 0 0 12px; }
+@media (prefers-color-scheme: dark) { .card h2 { color: #9aa0a8; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
+th { color: #6b7280; font-weight: 600; }
+@media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+button:hover, .btn:hover { background: #f3f4f6; }
+@media (prefers-color-scheme: dark) { button:hover, .btn:hover { background: #343a41; } }
+button.danger { border-color: #fca5a5; color: #b91c1c; }
+@media (prefers-color-scheme: dark) { button.danger { color: #f87171; } }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover { background: #1d4ed8; }
+button:disabled { opacity: .5; cursor: default; }
+textarea { width: 100%; min-height: 120px; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #fff; color: inherit; resize: vertical; }
+@media (prefers-color-scheme: dark) { textarea { background: #15171b; border-color: #3a3f47; } }
+.field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+@media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
+.empty { color: #9ca3af; text-align: center; padding: 20px; }
+.msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
+.err { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .err { background: #3b1414; color: #fca5a5; border-color: #7f1d1d; } }
+.lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+@media (prefers-color-scheme: dark) { code { background: #14161a; } }
+.used { color: #b91c1c; }
+@media (prefers-color-scheme: dark) { .used { color: #f87171; } }
+.free { color: #16a34a; }
+form.inline { display: inline; }
+.muted { color: #6b7280; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{if eq .Lang "zh"}}IPv6 地址池{{else}}IPv6 address pool{{end}}</h1>
+  <div class="actions">
+    <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}总览{{else}}Overview{{end}}</a>
+    <a href="{{.Prefix}}/domains" class="btn">{{if eq .Lang "zh"}}域名管理{{else}}Domains{{end}}</a>
+    <span class="lang"><a href="{{.Prefix}}/ipv6pool?lang=zh">中文</a><a href="{{.Prefix}}/ipv6pool?lang=en">EN</a></span>
+    <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
+  </div>
+</header>
+<main>
+  {{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+
+  {{if eq .Mode "prefix"}}
+  <div class="card">
+    <p class="muted">{{if eq .Lang "zh"}}当前为「前缀模式」：容器地址由前缀自动派生，不需要地址池。{{else}}This host is in prefix mode: container addresses are derived from the prefix, no pool is needed.{{end}}</p>
+  </div>
+  {{else if eq .Mode "pool"}}
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}添加地址{{else}}Add addresses{{end}}</h2>
+    <p class="muted">{{if eq .Lang "zh"}}每行一个地址，可接受裸地址或 /128 形式（如 <code>2001:db8:1::9c4</code> 或 <code>…:1001/128</code>）。已分配给小鸡的地址不可删除。{{else}}One address per line, bare or with /128 (e.g. <code>2001:db8:1::9c4</code> or <code>…:1001/128</code>). Addresses assigned to a container cannot be removed.{{end}}</p>
+    <form action="{{.Prefix}}/ipv6pool-add" method="post">
+      <div class="field"><label>{{if eq .Lang "zh"}}地址列表{{else}}Addresses{{end}}</label><textarea name="addresses" placeholder="2001:db8:1::9c4&#10;2001:db8:1::9c5/128"></textarea></div>
+      <div class="savebar" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+        <button type="submit" class="primary">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button>
+        <span class="muted">{{if eq .Lang "zh"}}池：{{.Used}}/{{.Total}} 已用，{{.Free}} 空闲{{else}}{{.Used}}/{{.Total}} used, {{.Free}} free{{end}}</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}池列表{{else}}Pool list{{end}}</h2>
+    {{if .Addrs}}
+    <table>
+      <thead>
+        <tr>
+          <th>{{if eq .Lang "zh"}}地址{{else}}Address{{end}}</th>
+          <th>{{if eq .Lang "zh"}}状态{{else}}Status{{end}}</th>
+          <th>{{if eq .Lang "zh"}}所属用户{{else}}Owner{{end}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Addrs}}
+        <tr>
+          <td><code>{{.Address}}</code></td>
+          <td>{{if .Used}}<span class="used">{{if eq $.Lang "zh"}}已分配{{else}}used{{end}}</span>{{else}}<span class="free">{{if eq $.Lang "zh"}}空闲{{else}}free{{end}}</span>{{end}}</td>
+          <td>{{if .User}}{{.User}}{{else}}-{{end}}</td>
+          <td>{{if not .Used}}<form action="{{$.Prefix}}/ipv6pool-del" method="post" class="inline" onsubmit="return confirm('{{if eq $.Lang "zh"}}从池中移除 {{.Address}}？{{else}}Remove {{.Address}} from the pool?{{end}}')"><input type="hidden" name="addr" value="{{.Address}}"><button class="danger">{{if eq $.Lang "zh"}}移除{{else}}Remove{{end}}</button></form>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">{{if eq .Lang "zh"}}池为空 — 在上方添加服务商给你的地址。创建容器时如不指定地址，将自动分配第一个空闲地址；池耗尽后创建的小鸡为纯 IPv4。{{else}}Pool is empty — add the addresses your provider gave you above. When creating a container without a specific address, the first free one is auto-assigned; once the pool is exhausted, new containers are IPv4-only.{{end}}</div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="card">
+    <p class="muted">{{if eq .Lang "zh"}}本机未启用 IPv6 地址池（当前模式：未启用）。{{else}}IPv6 pool is not in use on this host (IPv6 disabled).{{end}}</p>
+  </div>
+  {{end}}
+</main>
+</body>
+</html>

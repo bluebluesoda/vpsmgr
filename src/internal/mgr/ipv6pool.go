@@ -2,6 +2,7 @@ package mgr
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"sort"
 	"strings"
@@ -127,6 +128,114 @@ func (m *Manager) IPv6PoolUsage() (total, used int, err error) {
 		}
 	}
 	return total, used, nil
+}
+
+// PoolEntries describes one pool address for the admin UI: the address and
+// whether a user currently holds it.
+type PoolEntries struct {
+	Address string
+	Used    bool
+	User    string // username holding it, when used
+}
+
+// PoolList returns every configured pool address with its assignment state,
+// for the admin panel's pool management page.
+func (m *Manager) PoolList() ([]PoolEntries, error) {
+	pool, err := m.cfg.IPv6PoolValidated()
+	if err != nil {
+		return nil, err
+	}
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+	byAddr := map[string]string{}
+	for _, u := range users {
+		if u.IPv6Address != "" {
+			byAddr[u.IPv6Address] = u.Name
+		}
+	}
+	out := make([]PoolEntries, 0, len(pool))
+	for _, a := range pool {
+		owner, used := byAddr[a]
+		out = append(out, PoolEntries{Address: a, Used: used, User: owner})
+	}
+	return out, nil
+}
+
+// AddPoolIPv6s appends addresses to the pool (the admin UI's batch-add box).
+// Each entry may be a bare global address or an explicit /128 (anything else
+// is rejected). The config is validated, saved, and the host plumbing is
+// re-applied so any newly-added address that happens to be bound on the
+// external interface is detached (routed-NIC prerequisite). Returns the
+// canonical addresses actually added.
+func (m *Manager) AddPoolIPv6s(entries []string) ([]string, error) {
+	pool, err := m.cfg.IPv6PoolValidated()
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, a := range pool {
+		have[a] = true
+	}
+	var added []string
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		// Validate a single candidate (bare or /128).
+		if _, err := (&cfg.Config{Net: cfg.NetCfg{IPv6Pool: []string{e}}}).IPv6PoolValidated(); err != nil {
+			return nil, fmt.Errorf("%v", err)
+		}
+		canon := net.ParseIP(strings.TrimSuffix(e, "/128")).String()
+		if !have[canon] {
+			have[canon] = true
+			added = append(added, canon)
+		}
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	m.cfg.Net.IPv6Pool = append(pool, added...)
+	if err := cfg.Save(m.cfg); err != nil {
+		return nil, fmt.Errorf("save config: %w", err)
+	}
+	// Best-effort: detach the newly added addresses from the host if the
+	// provider bound them on the external interface. A failure here is not
+	// fatal — creating a container re-detaches its own address anyway.
+	_ = m.RewireAllIPv6Pool()
+	return added, nil
+}
+
+// RemovePoolIPv6 drops one address from the pool. Addresses currently
+// assigned to a user are refused (the user keeps its address for life).
+func (m *Manager) RemovePoolIPv6(addr string) error {
+	pool, err := m.cfg.IPv6PoolValidated()
+	if err != nil {
+		return err
+	}
+	used, err := m.db.UsedIPv6Addresses()
+	if err != nil {
+		return err
+	}
+	if used[addr] {
+		return fmt.Errorf("ipv6 %s is assigned to a user — delete the user first", addr)
+	}
+	found := false
+	out := make([]string, 0, len(pool))
+	for _, a := range pool {
+		if a == addr {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	if !found {
+		return fmt.Errorf("ipv6 %s is not in the pool", addr)
+	}
+	m.cfg.Net.IPv6Pool = out
+	return cfg.Save(m.cfg)
 }
 
 // IPv6Mode returns the effective IPv6 mode (none|prefix|pool) for the panel /

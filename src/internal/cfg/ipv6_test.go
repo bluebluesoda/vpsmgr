@@ -18,10 +18,19 @@ func TestIPv6PoolValidated(t *testing.T) {
 		t.Errorf("validated pool = %v", got)
 	}
 
-	// Prefix length rejected.
+	// Prefix length other than /128 rejected.
 	bad := []string{"2001:db8:1::9c4/64"}
-	if _, err := (&Config{Net: NetCfg{IPv6Pool: bad}}).IPv6PoolValidated(); err == nil || !strings.Contains(err.Error(), "prefix") {
-		t.Errorf("expected prefix-length rejection, got %v", err)
+	if _, err := (&Config{Net: NetCfg{IPv6Pool: bad}}).IPv6PoolValidated(); err == nil || !strings.Contains(err.Error(), "/128") {
+		t.Errorf("expected /128-only rejection, got %v", err)
+	}
+	// Explicit /128 accepted and normalized to the bare address.
+	c128 := &Config{Net: NetCfg{IPv6Pool: []string{"2001:db8:1::9c4/128"}}}
+	got128, err := c128.IPv6PoolValidated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got128) != 1 || got128[0] != "2001:db8:1::9c4" {
+		t.Errorf("normalized /128 pool = %v, want [2001:db8:1::9c4]", got128)
 	}
 	// ULA rejected.
 	bad = []string{"fc00::1"}

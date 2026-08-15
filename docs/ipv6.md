@@ -155,13 +155,16 @@ address inside the /64 gets no reply, while every whitelisted address does).
 `00-ip-ask.sh` runs the unchanged `check-ipv6-support.sh`:
 
 1. Whole prefix **VERIFIED** → classic prefix mode (as before).
-2. Not verified, but the host has **>1 global address** on its NIC → the
-   addresses are listed, the first is kept for the host, and the user is asked
-   to confirm the rest as the pool. Confirmed → **pool mode**; declined →
-   pure IPv4.
-3. Not verified and ≤1 global address → pure IPv4.
+2. Not verified → the installer asks: **pool mode** (empty pool; addresses are
+   added later in the admin panel), **manual prefix** (user types a prefix
+   they know is routed — trusted as-is), or **disable** (pure IPv4).
+   Whitelist providers typically only bind one address on the NIC at boot, so
+   there is nothing to auto-collect at install time — the pool starts empty by
+   design and the admin fills it from the provider's control-panel list.
 
-The mode is fixed at install (`net.ipv6_mode`, immutable like `net.subnet`).
+The mode is fixed at install (`net.ipv6_mode`, immutable like `net.subnet`);
+the **pool itself is editable** (`net.ipv6_pool`, via the admin panel's IPv6
+Pool page or `vps config set`).
 
 ### Configuration
 
@@ -174,8 +177,25 @@ net:
     ...
 ```
 
-`ipv6_pool` entries are bare global addresses (no prefix length). The host
-keeps one address for itself (not in the pool).
+`ipv6_pool` entries are global addresses, bare or with an explicit `/128`
+(any other prefix length is rejected). The host keeps its own address for
+itself (not in the pool).
+
+### Admin panel pool management
+
+The admin panel's **IPv6 Pool** page (visible in pool mode) lets the operator:
+
+- **Batch-add** addresses from a multi-line textarea (one per line, bare or
+  `/128`). Invalid entries (bad prefix, ULA, private, duplicates) reject the
+  whole batch.
+- **List** the pool with per-address state: **free** or **used** (by which
+  user).
+- **Remove** a free address (an address assigned to a user is refused — the
+  user keeps it for life).
+
+Adding addresses re-applies the host plumbing (any address the provider
+bound on the external interface is detached), so newly added addresses are
+immediately usable.
 
 ### Assignment
 

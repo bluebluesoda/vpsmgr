@@ -461,10 +461,11 @@ func (c *Config) IPv6Network() (*net.IPNet, error) {
 }
 
 // IPv6PoolValidated validates and normalizes the configured address pool.
-// Every entry must be a single global (non-ULA, non-link-local) IPv6 address
-// without a prefix length; duplicates are rejected. Returns the canonical
-// (compressed) form of each address. An empty pool is valid (the mode is
-// "none" then); nil is returned only when there is nothing to validate.
+// Every entry must be a single global (non-ULA, non-link-local) IPv6 address;
+// an explicit /128 suffix is accepted and normalized away, any other prefix
+// length is rejected. Duplicates are rejected. Returns the canonical
+// (compressed, bare) form of each address. An empty pool is valid; nil is
+// returned only when there is nothing to validate.
 func (c *Config) IPv6PoolValidated() ([]string, error) {
 	if len(c.Net.IPv6Pool) == 0 {
 		return nil, nil
@@ -474,7 +475,14 @@ func (c *Config) IPv6PoolValidated() ([]string, error) {
 	for _, s := range c.Net.IPv6Pool {
 		s = strings.TrimSpace(s)
 		if strings.Contains(s, "/") {
-			return nil, fmt.Errorf("invalid ipv6_pool entry %q: a bare address is required (no prefix length)", s)
+			ip, n, err := net.ParseCIDR(s)
+			if err != nil || ip.To4() != nil {
+				return nil, fmt.Errorf("invalid ipv6_pool entry %q: not an IPv6 address", s)
+			}
+			if ones, _ := n.Mask.Size(); ones != 128 {
+				return nil, fmt.Errorf("invalid ipv6_pool entry %q: only a bare address or /128 is allowed (got /%d)", s, ones)
+			}
+			s = ip.String()
 		}
 		ip := net.ParseIP(s)
 		if ip == nil || ip.To4() != nil {

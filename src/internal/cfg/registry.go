@@ -280,12 +280,30 @@ var Fields = []Field{
 		func(c *Config, v string) error {
 			return fmt.Errorf("net.ipv6_mode is fixed at install; switching modes would renumber every container")
 		}},
-	{"net.ipv6_pool", KindImmutable, ApplyNone,
-		"IPv6 address pool (pool mode) — the /128 addresses containers are assigned from; fixed at install",
-		"",
+	{"net.ipv6_pool", KindOperator, ApplyInstall,
+		"IPv6 address pool (pool mode) — comma-separated /128 addresses containers are assigned from; editable, e.g. via the admin panel",
+		"2001:db8:1::9c4,2001:db8:1::9c5",
 		func(c *Config) string { return strings.Join(c.Net.IPv6Pool, ", ") },
 		func(c *Config, v string) error {
-			return fmt.Errorf("net.ipv6_pool is fixed at install; editing it would break assigned addresses")
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.Net.IPv6Pool = nil
+				return nil
+			}
+			pool := []string{}
+			for _, part := range strings.Split(v, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					pool = append(pool, part)
+				}
+			}
+			old := c.Net.IPv6Pool
+			c.Net.IPv6Pool = pool
+			if _, err := c.IPv6PoolValidated(); err != nil {
+				c.Net.IPv6Pool = old
+				return err
+			}
+			return nil
 		}},
 	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",

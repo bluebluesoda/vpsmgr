@@ -597,6 +597,104 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domains_updated"))
 }
 
+// ---- IPv6 pool management ----
+
+type ipv6PoolPageData struct {
+	Title  string
+	Prefix string
+	Msg    string
+	Err    string
+	Lang   string
+	Mode   string // "pool" when pool mode is active, else ""
+	Total  int
+	Used   int
+	Free   int
+	Addrs  []mgr.PoolEntries
+}
+
+func (s *Server) renderIPv6Pool(w http.ResponseWriter, r *http.Request, d ipv6PoolPageData) {
+	t, err := s.templates()
+	if err != nil {
+		http.Error(w, "template error: "+err.Error(), 500)
+		return
+	}
+	if d.Lang == "" {
+		d.Lang = langEn
+		if l, ok := r.Context().Value(langCtxKey).(string); ok && l != "" {
+			d.Lang = l
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := t.ExecuteTemplate(w, "admin_ipv6pool.html", d); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// handleIPv6Pool renders the pool management page (list + add box).
+func (s *Server) handleIPv6Pool(w http.ResponseWriter, r *http.Request) {
+	d := ipv6PoolPageData{Title: "VPS Manager Admin — IPv6 Pool", Prefix: s.prefix()}
+	if s.mgr.IPv6Mode() == cfg.IPv6ModePool {
+		d.Mode = cfg.IPv6ModePool
+	} else if s.mgr.IPv6Mode() == cfg.IPv6ModePrefix {
+		d.Mode = cfg.IPv6ModePrefix
+	}
+	total, used, err := s.mgr.IPv6PoolUsage()
+	if err != nil {
+		d.Err = err.Error()
+	} else {
+		d.Total, d.Used = total, used
+		d.Free = total - used
+	}
+	addrs, err := s.mgr.PoolList()
+	if err != nil {
+		d.Err = d.Err + " " + err.Error()
+	} else {
+		d.Addrs = addrs
+	}
+	s.renderIPv6Pool(w, r, d)
+}
+
+// handleIPv6PoolAdd batch-adds addresses from the multi-line textarea.
+func (s *Server) handleIPv6PoolAdd(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	raw := r.FormValue("addresses")
+	var entries []string
+	for _, line := range strings.FieldsFunc(raw, func(c rune) bool { return c == '\n' || c == ',' }) {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			entries = append(entries, line)
+		}
+	}
+	added, err := s.mgr.AddPoolIPv6s(entries)
+	if err != nil {
+		s.redirect(w, r, s.p("/ipv6pool"), "error: "+err.Error())
+		return
+	}
+	if len(added) == 0 {
+		s.redirect(w, r, s.p("/ipv6pool"), "ok: no new addresses")
+		return
+	}
+	s.redirect(w, r, s.p("/ipv6pool"), s.t(r, "pool_added", len(added)))
+}
+
+// handleIPv6PoolDel removes one address from the pool.
+func (s *Server) handleIPv6PoolDel(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	addr := strings.TrimSpace(r.FormValue("addr"))
+	if err := s.mgr.RemovePoolIPv6(addr); err != nil {
+		s.redirect(w, r, s.p("/ipv6pool"), "error: "+err.Error())
+		return
+	}
+	s.redirect(w, r, s.p("/ipv6pool"), s.t(r, "pool_removed", addr))
+}
+
 // ---- audit log ----
 
 type auditPageData struct {
