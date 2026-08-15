@@ -251,6 +251,11 @@ type AddOptions struct {
 	DiskGB int
 	// BandwidthGB is the monthly bandwidth quota in GiB (0 = unlimited).
 	BandwidthGB int
+	// IPv6Addr is the pool-mode address to assign ("" = auto-pick the first
+	// free pool address; "none" = create a V4-only container without IPv6).
+	// Ignored unless the config is in pool mode (prefix mode always assigns
+	// the deterministic derived address).
+	IPv6Addr string
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -304,7 +309,28 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, err
 	}
 	startPort := cfg.UserPortBase + (idx-1)*cfg.PortsPerUser
-	ipv6, _ := m.IPv6Addr(name)
+	// IPv6 assignment depends on the mode:
+	//   - prefix: deterministic /112-derived address (existing behavior)
+	//   - pool:   explicit choice, first free pool address, or "" when the
+	//             pool is exhausted / the caller opted out with "none"
+	//   - none:   no IPv6 at all
+	poolAddr := ""
+	var ipv6 string
+	switch m.cfg.IPv6ModeEffective() {
+	case cfg.IPv6ModePool:
+		if opt.IPv6Addr == "none" {
+			ipv6 = ""
+		} else {
+			a, err := m.pickPoolIPv6(opt.IPv6Addr)
+			if err != nil {
+				return nil, err
+			}
+			poolAddr = a
+			ipv6 = a
+		}
+	default:
+		ipv6, _ = m.IPv6Addr(name)
+	}
 	block, _ := m.IPv6Block(name)
 	if err := m.checkIPv6BlockCollision(name, block); err != nil {
 		return nil, err
@@ -359,18 +385,28 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
 	}
-	// IPv6 pass-through: attach the /128 route + proxy_ndp entry for the
-	// container's SLAAC global address (no-op when IPv6 is disabled).
-	if err := m.WireIPv6(name); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("wire ipv6: %w", err)
+	// IPv6 pass-through. Pool mode: attach the /128 route + proxy_ndp entry
+	// for the assigned address. Prefix mode: the /112 NDP proxy rule, then the
+	// host-routed peer IPv6 container script. No-op when IPv6 is disabled.
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		if ipv6 != "" {
+			if err := m.WireIPv6Pool(name, ipv6); err != nil {
+				cleanup()
+				return nil, fmt.Errorf("wire ipv6 pool: %w", err)
+			}
+		}
+	} else {
+		if err := m.WireIPv6(name); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("wire ipv6: %w", err)
+		}
+		// Host-routed peer IPv6 (no L2 discovery / MITM between containers).
+		if err := m.ConfigureContainerIPv6(name); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("config container ipv6: %w", err)
+		}
 	}
-	// Host-routed peer IPv6 (no L2 discovery / MITM between containers).
-	if err := m.ConfigureContainerIPv6(name); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("config container ipv6: %w", err)
-	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating)
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -511,10 +547,17 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		ds[i] = d.Domain
 	}
 	up, down := m.BandwidthFor(u.ID)
-	ipv6, _ := m.IPv6Addr(u.Name)
+	// IPv6 address: pool mode shows the DB-stored assignment; prefix mode
+	// derives the deterministic address on the fly.
+	ipv6 := ""
 	block := ""
-	if b, _ := m.IPv6Block(u.Name); b != nil {
-		block = b.String()
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		ipv6 = u.IPv6Address
+	} else {
+		ipv6, _ = m.IPv6Addr(u.Name)
+		if b, _ := m.IPv6Block(u.Name); b != nil {
+			block = b.String()
+		}
 	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: st, Domains: ds, PortsPerUser: cfg.PortsPerUser,
@@ -558,8 +601,14 @@ func (m *Manager) Del(name string) error {
 	if err := m.fw.Reload(); err != nil {
 		fmt.Printf("  ! warn: reload nft: %v\n", err)
 	}
-	if err := m.UnwireIPv6(name); err != nil {
-		fmt.Printf("  ! warn: unwire ipv6: %v\n", err)
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		if err := m.UnwireIPv6Pool(u.Name, u.IPv6Address); err != nil {
+			fmt.Printf("  ! warn: unwire ipv6: %v\n", err)
+		}
+	} else {
+		if err := m.UnwireIPv6(u.Name); err != nil {
+			fmt.Printf("  ! warn: unwire ipv6: %v\n", err)
+		}
 	}
 	if err := m.db.DeleteUser(u.ID); err != nil {
 		return err
@@ -945,11 +994,18 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		rollback()
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
-	ipv6, _ := m.IPv6Addr(u.Name)
-	block, _ := m.IPv6Block(u.Name)
+	// IPv6: pool mode reuses the DB-stored assignment (the address belongs to
+	// the user for life); prefix mode re-derives the deterministic address.
+	ipv6 := ""
 	blockStr := ""
-	if block != nil {
-		blockStr = block.String()
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		ipv6 = u.IPv6Address
+	} else {
+		ipv6, _ = m.IPv6Addr(u.Name)
+		block, _ := m.IPv6Block(u.Name)
+		if block != nil {
+			blockStr = block.String()
+		}
 	}
 	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
@@ -960,13 +1016,22 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		rollback()
 		return "", fmt.Errorf("provision container: %w", err)
 	}
-	if err := m.WireIPv6(u.Name); err != nil {
-		rollback()
-		return "", fmt.Errorf("wire ipv6: %w", err)
-	}
-	if err := m.ConfigureContainerIPv6(u.Name); err != nil {
-		rollback()
-		return "", fmt.Errorf("config container ipv6: %w", err)
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		if ipv6 != "" {
+			if err := m.WireIPv6Pool(u.Name, ipv6); err != nil {
+				rollback()
+				return "", fmt.Errorf("wire ipv6 pool: %w", err)
+			}
+		}
+	} else {
+		if err := m.WireIPv6(u.Name); err != nil {
+			rollback()
+			return "", fmt.Errorf("wire ipv6: %w", err)
+		}
+		if err := m.ConfigureContainerIPv6(u.Name); err != nil {
+			rollback()
+			return "", fmt.Errorf("config container ipv6: %w", err)
+		}
 	}
 	// User-defined init script (if any): run it detached inside the container,
 	// last of all, so it sees the full network. Best-effort — the container is
@@ -1138,9 +1203,10 @@ func (m *Manager) HardenAll() error {
 // EnsureBlockRoutes adds the deterministic /112 block (ipv6.routes) to every
 // existing container's eth0, so an upgrade to the /112 scheme routes each
 // container's whole block. Idempotent; a container without IPv6 (or not in
-// Incus) is skipped. Restarts containers that needed the change.
+// Incus) is skipped. Restarts containers that needed the change. Pool mode
+// has no /112 blocks — skipped entirely.
 func (m *Manager) EnsureBlockRoutes() error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() || m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		return nil
 	}
 	users, err := m.db.ListUsers()

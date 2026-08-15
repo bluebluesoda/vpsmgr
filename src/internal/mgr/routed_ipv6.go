@@ -3,6 +3,8 @@ package mgr
 import (
 	"fmt"
 	"strings"
+
+	"vpsmgr/internal/cfg"
 )
 
 // ipv6ContainerScript returns a shell script that configures a container's
@@ -124,9 +126,11 @@ func (m *Manager) ConfigureContainerIPv6(name string) error {
 // containers staying isolated (no broadcast/NDP plane, no MITM, only
 // address-addressed routed traffic). Runs on `vps install` and
 // `vps ipv6-reapply`; idempotent. Stopped or not-yet-created containers
-// are skipped, not errors.
+// are skipped, not errors. Pool mode is handled by RewireAllIPv6Pool (the
+// container gets its single /128 via the eth0 static address; no host-routed
+// peer script is needed).
 func (m *Manager) EnsureRoutedIPv6() error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() || m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		return nil
 	}
 	users, err := m.db.ListUsers()

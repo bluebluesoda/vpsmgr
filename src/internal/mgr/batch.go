@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 )
 
@@ -198,8 +199,12 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 		} else {
 			rs.DiskUsed = "-"
 		}
-		if ipv6, err := m.IPv6Addr(u.Name); err == nil {
-			rs.IPv6 = ipv6
+		if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+			rs.IPv6 = u.IPv6Address
+		} else {
+			if ipv6, err := m.IPv6Addr(u.Name); err == nil {
+				rs.IPv6 = ipv6
+			}
 		}
 		out = append(out, rs)
 	}

@@ -452,10 +452,15 @@ func (m *Manager) cleanLegacyKernelProxy() {
 // RewireAllIPv6 rebuilds the whole IPv6 pass-through: bridge config, the
 // ndppd rules for every container, and a sweep of the old kernel per-address
 // plumbing. Called at boot (after Incus is up) and by `vps install` so that
-// pass-through survives reboots. Idempotent.
+// pass-through survives reboots. Idempotent. In pool mode the bridge setup is
+// skipped (no global prefix to anchor it) and the per-address /128 routes +
+// proxy_ndp entries are rebuilt instead.
 func (m *Manager) RewireAllIPv6() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
+	}
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		return m.RewireAllIPv6Pool()
 	}
 	if err := m.SetupIPv6Bridge(); err != nil {
 		return err
