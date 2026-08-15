@@ -130,7 +130,9 @@ fi
 // poolContainerScript renders the Debian systemd-networkd config for a pool
 // container: eth0 (routed NIC) statically binds the public /128 with the
 // fe80::1 gateway, eth1 (bridged NIC) runs DHCPv4 on the private bridge.
-// Idempotent and self-healing.
+// eth0 also gets public IPv6 nameservers: the routed NIC has no DHCPv6/RA DNS
+// source, and systemd-resolved's stub (127.0.0.53) cannot resolve v6-only
+// names without an upstream v6 DNS. Idempotent and self-healing.
 func (m *Manager) poolContainerScript(ipv6 string) (string, error) {
 	return fmt.Sprintf(`set -e
 for i in $(seq 1 40); do
@@ -146,6 +148,8 @@ Name=eth0
 [Network]
 LinkLocalAddressing=no
 IPv6AcceptRA=no
+DNS=2001:4860:4860::8888
+DNS=2001:4860:4860::8844
 
 [Address]
 Address=%s/128

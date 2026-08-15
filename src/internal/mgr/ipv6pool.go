@@ -2,7 +2,9 @@ package mgr
 
 import (
 	"fmt"
+	"os/exec"
 	"sort"
+	"strings"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -159,8 +161,19 @@ func (m *Manager) WireIPv6Pool(name, addr string) error {
 	if ext == "" {
 		return fmt.Errorf("no external interface for pool mode")
 	}
-	// Best-effort removal: the address may not be on eth0 (already removed).
-	_, _ = su.IP6("addr-del", addr, ext)
+	// The provider binds the address as <addr>/64 (or another length); the
+	// delete must carry the SAME prefix or the kernel reports "Cannot assign
+	// requested address". Probe the live prefix and strip only what is there.
+	plen := ""
+	if out, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ext).Output(); err == nil {
+		for _, f := range strings.Fields(string(out)) {
+			if a := strings.SplitN(f, "/", 2); len(a) == 2 && strings.EqualFold(a[0], addr) {
+				plen = "/" + a[1]
+				break
+			}
+		}
+	}
+	_, _ = su.IP6("addr-del", addr+plen, ext)
 	return nil
 }
 
