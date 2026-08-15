@@ -44,10 +44,15 @@ func cmdIP6(args []string) error {
 	}
 	if op == "proxy-ndp-on" {
 		// Both args are interface names (val doubles as a second iface); the
-		// first enables proxy_ndp on the external interface, which kernel
-		// net.ipv6.conf.all does NOT propagate to. Fixed value, validated name.
+		// first enables proxy_ndp on the external interface AND globally.
+		// net.ipv6.conf.all does NOT propagate to existing interfaces, so both
+		// are set — Incus's routed NIC refuses to start unless
+		// net.ipv6.conf.all.proxy_ndp=1 is set. Fixed values, validated names.
 		if !cfg.ValidIfaceName(val) {
 			return fmt.Errorf("invalid interface name %q", val)
+		}
+		if err := runSysctl("net.ipv6.conf.all.proxy_ndp=1"); err != nil {
+			return err
 		}
 		return runSysctl("net.ipv6.conf." + val + ".proxy_ndp=1")
 	}
