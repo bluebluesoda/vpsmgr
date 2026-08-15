@@ -437,10 +437,17 @@ func writeUnit(name, content string) error {
 //     commands the panel needs (nft reload, traefik/self systemctl, IPv6
 //     route/neigh/addr, sysctl forwarding, ndppd control)
 func ensureVPSUser(c *cfg.Config) error {
-	// 1. System user.
+	// 1. System user. A reinstall can leave the 'vps' group behind after
+	// uninstall (uninstall.sh userdels the user but not the group), so when the
+	// group exists point useradd at it instead of letting it fail to create the
+	// same-named primary group (useradd exit 9).
 	if _, err := exec.Command("id", "-u", "vps").CombinedOutput(); err != nil {
-		if out, err := exec.Command("useradd", "--system", "--no-create-home", "--home-dir",
-			"/nonexistent", "--shell", "/usr/sbin/nologin", "vps").CombinedOutput(); err != nil {
+		args := []string{"--system", "--no-create-home", "--home-dir",
+			"/nonexistent", "--shell", "/usr/sbin/nologin"}
+		if _, gerr := exec.Command("getent", "group", "vps").CombinedOutput(); gerr == nil {
+			args = append(args, "--gid", "vps")
+		}
+		if out, err := exec.Command("useradd", append(args, "vps")...).CombinedOutput(); err != nil {
 			return fmt.Errorf("create vps user: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 	}

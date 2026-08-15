@@ -74,8 +74,17 @@ rm -f /etc/sudoers.d/vps
 if id -u vps >/dev/null 2>&1; then
   userdel vps >/dev/null 2>&1 || true
 fi
+# userdel leaves the same-named primary group behind; a stale group makes a
+# reinstall's `useradd vps` fail (exit 9: it cannot create the group again),
+# so remove it together with the user.
+if getent group vps >/dev/null 2>&1; then
+  groupdel vps >/dev/null 2>&1 || true
+fi
 if id -u traefik >/dev/null 2>&1; then
   userdel traefik >/dev/null 2>&1 || true
+fi
+if getent group traefik >/dev/null 2>&1; then
+  groupdel traefik >/dev/null 2>&1 || true
 fi
 
 if [[ $PURGE -eq 1 ]]; then
