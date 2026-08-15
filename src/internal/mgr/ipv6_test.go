@@ -233,3 +233,39 @@ func TestCheckIPv6BlockCollision(t *testing.T) {
 		t.Errorf("nil block should be a no-op: %v", err)
 	}
 }
+
+// The pool container script must configure BOTH guest stacks: Debian gets the
+// systemd-networkd files binding the public /128 + fe80::1 route on eth0 and
+// DHCPv4 on eth1; RHEL-family images (NetworkManager) get the same layout as a
+// static nmcli connection — the networkd files alone would be ignored there,
+// leaving the routed NIC without its /128 and the container with no public IPv6.
+func TestPoolContainerScript(t *testing.T) {
+	c := cfg.Default()
+	m := &Manager{cfg: c}
+	addr := "2a03:b0c0:2:f0:0:1:dbc2:1006"
+	script, err := m.poolContainerScript(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both stacks: the branch selection and the address/gateway/DHCP markers.
+	for _, want := range []string{
+		"nmcli",                    // RHEL path present
+		"ipv6.method manual",       // RHEL: NM owns the IPv6 stack
+		"ipv6.addresses " + addr + "/128", // public /128 bound on eth0
+		"ipv6.gateway fe80::1",     // routed-NIC gateway
+		"ipv4.method disabled",     // v4 lives on eth1 only
+		"systemd-networkd",         // Debian path present
+		"Address=" + addr + "/128", // Debian: static bind
+		"Gateway=fe80::1",          // Debian: default route
+		"DHCP=ipv4",                // eth1 DHCPv4 on both stacks
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q:\n%s", want, script)
+		}
+	}
+	// An empty address is a no-op (V4-only container) — the empty check lives in
+	// ipv6ContainerScriptFor, the pool script's only caller.
+	if s, _ := m.ipv6ContainerScriptFor("", ""); s != "" {
+		t.Errorf("expected empty script for empty address, got %q", s)
+	}
+}

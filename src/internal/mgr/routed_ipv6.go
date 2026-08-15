@@ -127,21 +127,45 @@ fi
 	return script, nil
 }
 
-// poolContainerScript renders the Debian systemd-networkd config for a pool
-// container: eth0 (routed NIC) statically binds the public /128 with the
-// fe80::1 gateway, eth1 (bridged NIC) runs DHCPv4 on the private bridge.
-// eth0 also gets public IPv6 nameservers: the routed NIC has no DHCPv6/RA DNS
-// source, and systemd-resolved's stub (127.0.0.53) cannot resolve v6-only
-// names without an upstream v6 DNS. Idempotent and self-healing.
+// poolContainerScript renders the guest-side network config for a pool
+// container, on whichever stack the image ships:
+//
+//   - eth0 — routed NIC: the public /128 bound statically with fe80::1 (Incus's
+//     routed-NIC gateway) as the default route, no DHCPv6/RA.
+//   - eth1 — bridged NIC on the private bridge: DHCPv4 for the shared IPv4.
+//
+// RHEL-family images use NetworkManager, which ignores the systemd-networkd
+// files Debian relies on — so there the eth0 connection is declared a STATIC
+// IPv6 profile via nmcli (manual method + /128 + gateway fe80::1 + no IPv4)
+// and eth1 keeps DHCPv4. Debian gets the networkd files, which also carry the
+// public IPv6 nameservers (the routed NIC has no DHCPv6/RA DNS source, and
+// systemd-resolved's 127.0.0.53 stub cannot resolve v6-only names without an
+// upstream v6 DNS). Both paths are idempotent and self-healing on reapply; the
+// nmcli profile survives reboots, so the /128 comes back on every boot.
 func (m *Manager) poolContainerScript(ipv6 string) (string, error) {
 	return fmt.Sprintf(`set -e
 for i in $(seq 1 40); do
   [ -S /run/systemd/private ] && break
   sleep 0.5
 done
-mkdir -p /etc/systemd/network
-# eth0: public routed /128, static, no DHCP (v4 lives on eth1).
-cat > /etc/systemd/network/eth0.network <<'EOF'
+if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
+  # RHEL-family (NetworkManager): the routed eth0 carries only the public /128
+  # (v4 lives on eth1), so its connection is manual IPv6 + disabled IPv4 with
+  # the fe80::1 gateway. eth1 keeps DHCPv4. Match the connection by DEVICE
+  # (names vary between distros) and fall back to a name grep.
+  CONN0=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth0" {print $1; exit}')
+  [ -z "$CONN0" ] && CONN0=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
+  [ -n "$CONN0" ] && nmcli con mod "$CONN0" ipv6.method manual ipv6.addresses %s/128 ipv6.gateway fe80::1 ipv4.method disabled 2>/dev/null || true
+  [ -n "$CONN0" ] && nmcli con up "$CONN0" >/dev/null 2>&1 || true
+  CONN1=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth1" {print $1; exit}')
+  [ -z "$CONN1" ] && CONN1=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth1 | head -1)
+  [ -n "$CONN1" ] && nmcli con mod "$CONN1" ipv4.method auto 2>/dev/null || true
+  [ -n "$CONN1" ] && nmcli con up "$CONN1" >/dev/null 2>&1 || true
+else
+  # Debian (systemd-networkd): eth0 binds the public /128 statically with the
+  # public IPv6 nameservers; eth1 runs DHCPv4 on the private bridge.
+  mkdir -p /etc/systemd/network
+  cat > /etc/systemd/network/eth0.network <<'EOF'
 [Match]
 Name=eth0
 
@@ -158,16 +182,16 @@ Address=%s/128
 Destination=::/0
 Gateway=fe80::1
 EOF
-# eth1: private bridge, DHCPv4.
-cat > /etc/systemd/network/eth1.network <<'EOF'
+  cat > /etc/systemd/network/eth1.network <<'EOF'
 [Match]
 Name=eth1
 
 [Network]
 DHCP=ipv4
 EOF
-systemctl restart systemd-networkd || true
-`, ipv6), nil
+  systemctl restart systemd-networkd || true
+fi
+`, ipv6, ipv6), nil
 }
 
 // ConfigureContainerIPv6 applies the host-routed IPv6 setup to one container
