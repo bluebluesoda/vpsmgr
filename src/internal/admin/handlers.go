@@ -36,6 +36,13 @@ type pageData struct {
 	CapacityPct int
 	V4Forward   bool
 	Lang        string
+	// IPv6 pool mode: the free addresses offered in the create-user dropdown
+	// (empty = not pool mode / pool exhausted). PoolUsed/PoolTotal are the
+	// pool fill for display.
+	IPv6PoolMode bool
+	PoolFree     []string
+	PoolUsed     int
+	PoolTotal    int
 }
 
 // hostView carries host memory/swap/pool/uptime numbers for the overview cards.
@@ -106,6 +113,14 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 	}
 	if hs.PoolTotal > 0 {
 		d.Host.PoolPct = strconv.Itoa(int(hs.PoolUsed*100/hs.PoolTotal)) + "%"
+	}
+	// IPv6 pool mode: offer the free addresses in the create dropdown.
+	if s.mgr.IPv6Mode() == cfg.IPv6ModePool {
+		d.IPv6PoolMode = true
+		d.PoolFree = s.mgr.FreePoolIPv6List()
+		if total, used, err := s.mgr.IPv6PoolUsage(); err == nil {
+			d.PoolUsed, d.PoolTotal = used, total
+		}
 	}
 	return d
 }
@@ -312,7 +327,13 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB})
+	// IPv6 dropdown (pool mode only): "auto" (or empty) = first free pool
+	// address, "none" = V4-only container, otherwise the picked address.
+	ipv6 := strings.TrimSpace(r.FormValue("ipv6"))
+	if ipv6 == "auto" {
+		ipv6 = ""
+	}
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return

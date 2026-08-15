@@ -149,6 +149,16 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      {{if .IPv6PoolMode}}
+      <div class="field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
+        <select name="ipv6" id="cfIpv6" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;color:inherit;">
+          <option value="auto" selected>{{if eq .Lang "zh"}}自动分配（第一个空闲）{{else}}Auto (first free){{end}}</option>
+          {{range .PoolFree}}<option value="{{.}}">{{.}}</option>{{end}}
+          <option value="none">{{if eq .Lang "zh"}}不分配 V6{{else}}No IPv6{{end}}</option>
+        </select>
+        {{if .PoolTotal}}<small style="color:#6b7280">{{if eq .Lang "zh"}}池 {{.PoolUsed}}/{{.PoolTotal}} 已用{{else}}{{.PoolUsed}}/{{.PoolTotal}} used{{end}}</small>{{end}}
+      </div>
+      {{end}}
       <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
@@ -168,6 +178,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}</th>
           <th>{{if eq .Lang "zh"}}磁盘用量{{else}}Disk used{{end}}</th>
           <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}</th>
+          {{if .IPv6PoolMode}}<th>IPv6</th>{{end}}
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
         </tr>
       </thead>
@@ -183,6 +194,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
           <td>{{.DiskUsed}}</td>
           <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
+          {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{.IPv6}}{{else}}<span class="down">-</span>{{end}}</td>{{end}}
           <td>
             <div class="ops">
               {{if eq .State "Running"}}

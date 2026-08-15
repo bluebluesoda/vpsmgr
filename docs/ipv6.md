@@ -1,5 +1,16 @@
 # IPv6 pass-through
 
+Two modes, chosen at install:
+
+- **Prefix mode** (classic): no NAT, each container owns a global /112 block
+  derived deterministically from its username inside a provider-routed prefix.
+- **Pool mode**: no routable whole prefix, but the host has multiple global
+  addresses on its NIC (the "discrete whitelist" providers). Each container is
+  assigned one address from a confirmed pool; the host keeps the first address
+  for itself.
+
+## Prefix mode (classic)
+
 Optional, **no NAT**: each container owns a global /112 block and the outside
 can reach any address it binds directly. Enabled by setting
 `net.ipv6_subnet` (asked at install; see [configuration.md](configuration.md)).
@@ -131,3 +142,77 @@ host does not proxy the private subnet.
 and disables `ndppd` and removes `/etc/ndppd.conf`, removes any leftover
 kernel `proxy_ndp` entries and `/128` routes matching the prefix, resets
 `incusbr0` IPv6 to disabled, and restores forwarding sysctls.
+
+## Pool mode (per-address pool)
+
+For providers that hand out **discrete global addresses** (a whitelist in the
+control panel) instead of a routable whole prefix — e.g. 15 addresses in one
+/64 that is itself NOT routed as a whole (verified externally: a random
+address inside the /64 gets no reply, while every whitelisted address does).
+
+### Installer flow
+
+`00-ip-ask.sh` runs the unchanged `check-ipv6-support.sh`:
+
+1. Whole prefix **VERIFIED** → classic prefix mode (as before).
+2. Not verified, but the host has **>1 global address** on its NIC → the
+   addresses are listed, the first is kept for the host, and the user is asked
+   to confirm the rest as the pool. Confirmed → **pool mode**; declined →
+   pure IPv4.
+3. Not verified and ≤1 global address → pure IPv4.
+
+The mode is fixed at install (`net.ipv6_mode`, immutable like `net.subnet`).
+
+### Configuration
+
+```yaml
+net:
+  ipv6_mode: pool
+  ipv6_pool:
+    - "2001:db8:1::9c4"
+    - "2001:db8:1::9c5"
+    ...
+```
+
+`ipv6_pool` entries are bare global addresses (no prefix length). The host
+keeps one address for itself (not in the pool).
+
+### Assignment
+
+- Each container is assigned **one address from the pool**, stored in the
+  `users.ipv6_address` column (UNIQUE index = one address can never be given
+  to two users; the reservation and the user row are written in one
+  transaction).
+- The address **belongs to the user for life** (reinstalls keep it); it is
+  released only when the user is deleted (the row dies, the address is free
+  again).
+- The admin panel's create form has a dropdown: auto (first free), a specific
+  free address, or **no IPv6** (a V4-only container). `vps add` without extra
+  flags always auto-assigns the first free address; when the pool is
+  exhausted, further creates simply have no IPv6 (never an error).
+
+### Routing (empirically verified)
+
+Each container gets `eth0.ipv6.address=<addr>` (a single /128, **no**
+`ipv6.routes`). The host adds, per assigned address:
+
+```
+ip -6 route add <addr>/128 dev incusbr0
+ip -6 neigh add proxy <addr> dev eth0     # kernel proxy_ndp
+```
+
+Verified on a whitelist provider host (address NOT bound to eth0): with IPv6
+forwarding on and `net.ipv6.conf.eth0.proxy_ndp=1`, external Globalping probes
+reach the address inside a container namespace with **0% loss** (5/5 probes).
+Kernel proxy_ndp handles single addresses (prefix queries are ignored), which
+is exactly the pool-mode granularity — no ndppd is installed in pool mode.
+
+The bridge keeps only its fixed link-local `fe80::1` (no global address, so
+it never competes with pool addresses). `ipv6.reapply` / the boot unit rebuild
+all per-address routes + proxy entries from the DB (`RewireAllIPv6Pool`).
+
+### Interaction with IPv4
+
+Pool mode works with either `v4_forward` setting. When the pool is exhausted
+(or the admin picks "no IPv6"), containers are plain V4-only boxes — same as
+the pre-IPv6 behavior.

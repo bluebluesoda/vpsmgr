@@ -33,6 +33,8 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
+| `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
+| `net.ipv6_pool` | operator | re-run `vps install` | pool-mode address list (bare global addresses; the first NIC address is kept for the host) |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool |
@@ -85,10 +87,14 @@ net:
   gateway: "10.115.0.1"
   v4_forward: true             # IPv4 inbound policy (false = IPv6-only containers)
   ext_if: AUTO                 # external NIC, auto-detected from the default route
+  ipv6_mode: ""                # IPv6 allocation mode: none / prefix / pool (fixed at install)
   ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
                                # (/64 or shorter, incl. provider /80 slices like
                                # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default),
                                # but does not remove IPv6 state already applied
+  ipv6_pool: []                # optional (pool mode): the /128 addresses containers are
+                               # assigned from, e.g. "2001:db8:1::9c4" (bare global
+                               # addresses, no prefix length)
 
 incus:
   image: "vpsmgr/debian-sshd"
@@ -148,6 +154,9 @@ goes away when the panel is uninstalled.
 - `net.ipv6_subnet` must be a **global** (non-ULA) IPv6 CIDR with an explicit
   prefix length — a bare address is rejected, never silently assumed `/64`.
   Valid range is `/48`..`/80` (see [ipv6.md](ipv6.md)).
+- `net.ipv6_mode` is fixed at install and immutable (like `net.subnet`):
+  `none` (pure IPv4), `prefix` (classic /112 blocks), `pool` (per-container
+  address from `net.ipv6_pool`). Switching modes would renumber containers.
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
   address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.
