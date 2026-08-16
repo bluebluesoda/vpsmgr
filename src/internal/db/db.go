@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -54,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 4
+const schemaVersion = 5
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -137,7 +138,18 @@ var migrations = []struct {
 		`ALTER TABLE users ADD COLUMN ipv6_address TEXT`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6 ON users(ipv6_address)`,
 	}},
+	// v5: seed the default admin blocked-domains list. The INSERT...SELECT
+	// only fires when the settings key was never written, so an admin's later
+	// edits (or a full clear) are never re-seeded on restart.
+	{5, []string{
+		`INSERT INTO settings(key, value)
+		 SELECT '` + SettingBlockedDomains + `', '` + sqliteStr(strings.Join(DefaultBlockedDomains, "\n")) + `'
+		 WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = '` + SettingBlockedDomains + `')`,
+	}},
 }
+
+// sqliteStr quotes a string literal for SQLite by doubling any single quote.
+func sqliteStr(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // userStatus values (kept as plain strings in the DB).
 const (

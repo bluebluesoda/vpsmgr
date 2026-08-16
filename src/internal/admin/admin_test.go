@@ -530,3 +530,74 @@ func TestAdminPassChangeInvalidatesOtherSessions(t *testing.T) {
 		t.Fatalf("changer session overview = %d, want 200", rr.Code)
 	}
 }
+
+func TestBlockedDomainsSavePartial(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// A mixed list: line 1 and 4 are invalid, the rest are saved.
+	rr := doReqOrigin(t, h, http.MethodPost, prefix+"/blocked-domains",
+		url.Values{"blocked": {"example.co.uk\nbad_domain\nok.example.com\nbad.com-"}},
+		cookie, "https://"+testHost)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("blocked-domains save = %d, want 302", rr.Code)
+	}
+	got, err := srv.db.GetBlockedDomains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"example.co.uk", "ok.example.com"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("saved list = %v, want %v", got, want)
+	}
+
+	// The flash banner names the skipped line numbers (2, 4).
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("flash = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "2, 4") {
+		t.Errorf("flash does not name the bad lines: %s", rr.Body.String())
+	}
+
+	// The domains page pre-fills the textarea with the saved list.
+	rr = doReq(t, h, http.MethodGet, prefix+"/domains", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /domains = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "example.co.uk") || !strings.Contains(rr.Body.String(), "Blocked domains") {
+		t.Errorf("domains page missing blocked list textarea: %s", rr.Body.String())
+	}
+}
+
+func TestBlockedDomainsSaveAllValid(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	rr := doReqOrigin(t, h, http.MethodPost, prefix+"/blocked-domains",
+		url.Values{"blocked": {"a.com\nb.com"}}, cookie, "https://"+testHost)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save = %d, want 302", rr.Code)
+	}
+	got, err := srv.db.GetBlockedDomains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("saved list = %v", got)
+	}
+	// No skip-banner when every line is valid.
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("flash = %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "skipped") {
+		t.Errorf("unexpected skip banner: %s", rr.Body.String())
+	}
+}

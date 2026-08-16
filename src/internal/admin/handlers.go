@@ -505,6 +505,7 @@ type domainsPageData struct {
 	Msg     string
 	Err     string
 	Domains []domainView
+	Blocked string // blocked-domains list, one domain per line (textarea)
 	Lang    string
 }
 
@@ -528,7 +529,7 @@ func (s *Server) renderDomains(w http.ResponseWriter, r *http.Request, d domains
 }
 
 // handleDomains renders the admin domain panel: every domain with its owner
-// and last-modified time, newest first.
+// and last-modified time, newest first, plus the blocked-domains list.
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	d := domainsPageData{Title: "VPS Manager Admin — Domains", Prefix: s.prefix()}
 	all, err := s.mgr.AllDomains()
@@ -538,6 +539,14 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		for _, x := range all {
 			d.Domains = append(d.Domains, domainView{Domain: x.Domain, Username: x.Username, UpdatedAt: x.UpdatedAt, ProxyProtocol: x.ProxyProtocol})
 		}
+	}
+	if blocked, err := s.db.GetBlockedDomains(); err != nil {
+		if d.Err != "" {
+			d.Err += " "
+		}
+		d.Err += err.Error()
+	} else {
+		d.Blocked = strings.Join(blocked, "\n")
 	}
 	s.renderDomains(w, r, d)
 }
@@ -595,6 +604,31 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domains_updated"))
+}
+
+// handleBlockedDomains saves the admin blocked-domains list from the textarea.
+// Every line is validated individually: invalid lines are skipped (and
+// reported by their 1-based line numbers in a flash banner), the valid lines
+// are saved. The check lives in mgr.AddDomain, so all add paths are covered.
+func (s *Server) handleBlockedDomains(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	valid, bad := mgr.ParseBlockedList(r.FormValue("blocked"))
+	if err := s.db.SetBlockedDomains(valid); err != nil {
+		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
+		return
+	}
+	if len(bad) > 0 {
+		lines := make([]string, 0, len(bad))
+		for _, n := range bad {
+			lines = append(lines, strconv.Itoa(n))
+		}
+		s.redirect(w, r, s.p("/domains"), s.t(r, "blocked_skipped_lines", strings.Join(lines, ", ")))
+		return
+	}
+	s.redirect(w, r, s.p("/domains"), s.t(r, "blocked_saved"))
 }
 
 // ---- IPv6 pool management ----
