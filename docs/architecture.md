@@ -309,6 +309,10 @@ panel reads totals from the DB — it never blocks on an exec for bandwidth.
   `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh --local-build` prints the current git branch and waits 10 s
   (Ctrl-C to abort) before starting, and always rebuilds rather than reusing
-  an installed stable binary.
+  an installed stable binary. `install.sh --update` explicitly re-downloads
+  the latest prebuilt release over an existing binary (conservative: on
+  download/checksum failure the old binary is kept, never replaced by a
+  surprise local build); a plain `install.sh` re-run skips an existing
+  binary.
 
 See [ipv6.md](ipv6.md) for the optional IPv6 pass-through feature.

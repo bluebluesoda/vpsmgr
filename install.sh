@@ -3,15 +3,19 @@
 # Usage:
 #   ./install.sh                  # default: download latest prebuilt release binary (fallback: local build)
 #   ./install.sh --local-build    # force local Go compilation of the panel binary
+#   ./install.sh --update         # force re-download of the prebuilt release binary over an existing one
 set -euo pipefail
 
 cd "$(dirname "$0")"
 ROOT="$PWD"
 
 BUILD_MODE=release
-if [[ "${1:-}" == "--local-build" ]]; then
-  BUILD_MODE=local
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --local-build) BUILD_MODE=local ;;
+    --update)      BUILD_MODE=update ;;
+  esac
+done
 export VPSMGR_BUILD_MODE="$BUILD_MODE"
 
 # Storage backend: zfs (default) or dir. dir has no quotas/snapshots/clones —

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 40-panel.sh — install vpsmgr binary and initialize panel (config/cert/db/systemd).
 # Binary source: prebuilt GitHub release by default, local Go build as fallback
-# (or when VPSMGR_BUILD_MODE=local, e.g. via ./install.sh --local-build).
+# (or VPSMGR_BUILD_MODE=local via --local-build; VPSMGR_BUILD_MODE=update via
+# --update forces a fresh prebuilt download over an existing binary).
 set -uo pipefail
 
 log(){ echo "[40] $*"; }
@@ -150,9 +151,15 @@ install_prebuilt(){
   else
     log "warn: could not fetch checksums, skipping verification"
   fi
+  # Replace a running binary (ETXTBSY): stop the service first, then copy,
+  # then let the installer re-enable it below. This runs only after the
+  # download verified, so a failed download never takes the panel down.
+  if systemctl is-active --quiet vps.service 2>/dev/null; then
+    systemctl stop vps.service >/dev/null 2>&1 || true
+    log "stopped vps.service to replace the running binary"
+  fi
   cp "$dir/vps-$arch" /usr/local/bin/vps
   chmod 755 /usr/local/bin/vps
-  rm -rf "$dir"
   log "installed /usr/local/bin/vps from release ($(/usr/local/bin/vps version))"
 }
 
@@ -161,6 +168,14 @@ if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
   # stable binary), so what runs is exactly what the shown branch compiled.
   log "local build requested (--local-build)"
   build_local
+elif [[ "${VPSMGR_BUILD_MODE:-}" == "update" ]]; then
+  # --update forces a re-download of the latest prebuilt release over whatever
+  # is installed. Conservative: on a download/checksum failure the existing
+  # binary is kept (it was never touched), not replaced by a local build.
+  log "update requested (--update) — replacing the installed binary with the latest prebuilt release"
+  if ! install_prebuilt; then
+    log "warn: prebuilt update failed — keeping the installed binary ($(/usr/local/bin/vps version))"
+  fi
 elif [[ ! -x /usr/local/bin/vps ]]; then
   if install_prebuilt; then
     :

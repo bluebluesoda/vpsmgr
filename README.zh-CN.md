@@ -17,6 +17,7 @@ amd64/arm64 均可，主要在amd64上进行了测试
 git clone https://github.com/bluebluesoda/vpsmgr.git && cd vpsmgr
 sudo ./install.sh                  # 安装稳定版预编译二进制
 #sudo ./install.sh --local-build   # 强制本地编译
+#sudo ./install.sh --update        # 强制重新下载预编译二进制（覆盖已安装的）
 ```
 
 **如需启用IPv6直通，请确保宿主机获得整段Route**，可以询问服务商，或者使用仓库中的检查脚本进行不严谨的测试。
