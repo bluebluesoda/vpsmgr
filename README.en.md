@@ -6,20 +6,19 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 [简体中文](README.md) · [Documentation](docs/README.md)
 
-## Features
+## Feature Details
 
-- One Debian 13 container per user
-- Web controls for start, stop, restart, and reinstall
-- IPv4 NAT, SSH forwarding, and user port ranges
-- Traefik HTTP/HTTPS domain proxying
-- Optional IPv6 pass-through, with prefix and address-pool modes
-- CPU, memory, disk, and monthly bandwidth quotas
-- Admin panel, domain management, IPv6 pool management, and audit logs
-- One small Go binary and a slim container image
+- Admin panel: users, quotas, domains, IPv6 pool, and audit logs
+- User panel: power control, self-service Debian 13/AlmaLinux 9 reinstall, and domain configuration
+- CPU, memory, and disk oversubscription; quota changes apply live without a container restart
+- Strict container network isolation; prefix mode assigns each container a dedicated `/112` IPv6 block that it can subdivide
+- Traffic is counted in both directions; over-quota containers are rate-limited to 1 Mbps both ways
+- Compressed ZFS storage by default; the fixed instance limit is 200 containers
+- Ports 80/443 forward to container ports 80/443; port 80 uses shared HTTP proxying and port 443 shared SNI proxying
 
 ## Installation
 
-Ubuntu 22.04, 24.04, or 26.04 is recommended. Debian 12 and 13 are also supported, but installing ZFS on Debian typically requires an additional DKMS build and can take considerably longer.
+Ubuntu 22.04, 24.04, or 26.04 is recommended. Debian 12 and 13 are also supported; Debian requires a kernel-module build and takes longer to install.
 
 Recommended minimum: 1 CPU core, 1.5 GB RAM, 10 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
 
@@ -75,11 +74,10 @@ Users can define an init script in the panel. It runs as root inside the contain
 
 ## Additional Images
 
-Debian 13 is the default image. To offer AlmaLinux 9 or Rocky Linux 9 during reinstall, build one once:
+Debian 13 is the default image. To offer AlmaLinux 9 during reinstall, build it once:
 
 ```sh
 sudo bash scripts/60-rhel-image.sh          # AlmaLinux 9
-sudo bash scripts/60-rhel-image.sh rocky    # Rocky Linux 9
 ```
 
 The image builder is not run by `install.sh`, keeping the default installation small.

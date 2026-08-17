@@ -6,20 +6,19 @@
 
 [English](README.en.md) · [文档](docs/README.md)
 
-## 功能
+## 功能细节
 
-- 每个用户一个 Debian 13 容器
-- Web 面板管理：启动、停止、重启、重装
-- IPv4 NAT、SSH 和端口转发
-- Traefik 代理 HTTP/HTTPS 域名
-- 可选 IPv6 直通：前缀模式或地址池模式，无 NAT
-- CPU、内存、磁盘和月度流量配额
-- 管理员面板、域名管理、IPv6 地址池和审计日志
-- 单个 Go 二进制，容器镜像保持精简
+- 管理员面板：用户、配额、域名、IPv6 地址池和审计日志
+- 用户面板：电源控制、自助重装 Debian 13/AlmaLinux 9、域名配置
+- CPU、内存、磁盘支持超售；配额修改实时生效，无需重启容器
+- 容器网络严格隔离；IPv6 前缀模式下每个容器获得独立 `/112`，可继续划分子网
+- 流量按上下行合计，超额后双向限速至 1 Mbps
+- 默认使用压缩 ZFS 存储池；容器数量上限为 200
+- 80/443 转发到容器的 80/443；80 使用共享 HTTP 转发，443 使用共享 SNI 转发
 
 ## 安装
 
-推荐使用 Ubuntu 22.04、24.04 或 26.04。也支持 Debian 12/13，但 Debian 安装 ZFS 时通常需要额外编译 DKMS 模块，安装时间可能明显更长。
+推荐使用 Ubuntu 22.04、24.04 或 26.04。Debian 12/13 也受支持；Debian 需要编译内核模块，安装时间较长。
 
 最低建议：1 核、1.5 GB 内存、10 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
 
@@ -75,11 +74,10 @@ vps config list|set|help
 
 ## 额外镜像
 
-默认镜像是 Debian 13。需要 AlmaLinux 9 或 Rocky Linux 9 时，可手动构建一次：
+默认镜像是 Debian 13。需要 AlmaLinux 9 时，可手动构建一次：
 
 ```sh
 sudo bash scripts/60-rhel-image.sh          # AlmaLinux 9
-sudo bash scripts/60-rhel-image.sh rocky    # Rocky Linux 9
 ```
 
 该脚本不会由 `install.sh` 自动执行，以减少小型主机的安装负担。
