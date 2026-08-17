@@ -20,7 +20,7 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 Ubuntu 22.04, 24.04, or 26.04 is recommended. Debian 12 and 13 are also supported; Debian requires a kernel-module build and takes longer to install.
 
-Recommended minimum: 1 CPU core, 1.5 GB RAM, 10 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
+Recommended minimum: 1 CPU core, 1.5 GB RAM, 15 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
 
 ```sh
 git clone https://github.com/bluebluesoda/vpsmgr.git
