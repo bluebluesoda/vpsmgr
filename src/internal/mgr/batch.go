@@ -162,14 +162,15 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	live := m.liveStatusFallback(users, latest)
 
 	out := make([]*UserStatus, 0, len(users))
 	for _, u := range users {
 		transfer := bandwidth[u.ID]
 		up, down := transfer.Upload, transfer.Download
-		rs := &UserStatus{User: u, State: "-", UpGB: FormatGB(up), DownGB: FormatGB(down)}
-		if sample, ok := latest[u.ID]; ok {
-			rs.State = resourceStateName(sample.State)
+		sample, hasSample := latest[u.ID]
+		rs := &UserStatus{User: u, State: resolvedState(sample, live[u.Name]), UpGB: FormatGB(up), DownGB: FormatGB(down)}
+		if hasSample {
 			if sample.State == resourceRunning {
 				rs.Procs = sample.Processes
 				rs.MemUse = humanBytes(sample.MemoryMiB * (1 << 20))
@@ -182,7 +183,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 			rs.MemUse = "-"
 			rs.DiskUsed = "-"
 		}
-		if pct, ok := average[u.ID]; ok && latest[u.ID].State == resourceRunning {
+		if pct, ok := average[u.ID]; ok && hasSample && sample.State == resourceRunning {
 			rs.CPUUse = fmt.Sprintf("%.0f%%", pct)
 		} else {
 			rs.CPUUse = "-"

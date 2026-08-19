@@ -139,11 +139,33 @@ func (m *Manager) ResourceHistory(userID int64, since time.Time) ([]db.ResourceS
 	return m.db.ResourceHistory(userID, since.Unix())
 }
 
-func storedState(sample db.ResourceSample) string {
-	if sample.SampleMinute == 0 {
-		return "-"
+// resolvedState picks the persisted state, falling back to a live status for
+// users that have no sample yet (e.g. created after the last background
+// sample), so a brand-new container is not shown as stopped.
+func resolvedState(sample db.ResourceSample, live string) string {
+	if sample.SampleMinute != 0 {
+		return resourceStateName(sample.State)
 	}
-	return resourceStateName(sample.State)
+	if live != "" {
+		return live
+	}
+	return "-"
+}
+
+// liveStatusFallback issues ONE instances-list call, and only when some user
+// lacks a persisted sample yet. In the steady state (every user sampled) it
+// returns nil and the dashboard stays free of Incus calls.
+func (m *Manager) liveStatusFallback(users []*db.User, latest map[int64]db.ResourceSample) map[string]string {
+	for _, u := range users {
+		if _, ok := latest[u.ID]; !ok {
+			st, err := m.lx.InstanceStatuses()
+			if err != nil {
+				return nil
+			}
+			return st
+		}
+	}
+	return nil
 }
 
 func decorateStoredUsage(r *Result, sample db.ResourceSample, hasSample bool, average float64, hasAverage bool) {

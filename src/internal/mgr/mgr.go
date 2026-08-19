@@ -717,11 +717,12 @@ func (m *Manager) List() ([]*Result, error) {
 	}
 	latest, _ := m.db.LatestResourceSamples()
 	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	live := m.liveStatusFallback(users, latest)
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
 		sample, hasSample := latest[u.ID]
 		avg, hasAverage := average[u.ID]
-		r := m.resultForState(u, "", storedState(sample))
+		r := m.resultForState(u, "", resolvedState(sample, live[u.Name]))
 		decorateStoredUsage(r, sample, hasSample, avg, hasAverage)
 		out = append(out, r)
 	}
@@ -736,8 +737,9 @@ func (m *Manager) Show(name string) (*Result, error) {
 	latest, _ := m.db.LatestResourceSamples()
 	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
 	sample, hasSample := latest[u.ID]
+	live := m.liveStatusFallback([]*db.User{u}, latest)
 	avg, hasAverage := average[u.ID]
-	r := m.resultForState(u, "", storedState(sample))
+	r := m.resultForState(u, "", resolvedState(sample, live[u.Name]))
 	decorateStoredUsage(r, sample, hasSample, avg, hasAverage)
 	return r, nil
 }
