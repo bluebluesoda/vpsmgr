@@ -33,6 +33,12 @@ th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; w
 @media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
 th { color: #6b7280; font-weight: 600; }
 @media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: #1c1e21; }
+@media (prefers-color-scheme: dark) { th.sortable:hover { color: #e6e8eb; } }
+th.sortable .ind { display: inline-block; width: 10px; margin-left: 3px; color: #2563eb; }
+th.sort-asc .ind::after { content: "▲"; }
+th.sort-desc .ind::after { content: "▼"; }
 .up { color: #16a34a; font-weight: 600; }
 .down { color: #9ca3af; }
 .ops { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -167,17 +173,17 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}用户列表{{else}}Users{{end}}</h2>
     {{if .Users}}
-    <table>
+    <table id="usersTable">
       <thead>
         <tr>
-          <th>{{if eq .Lang "zh"}}名称{{else}}Name{{end}}</th>
+          <th class="sortable" data-type="string">{{if eq .Lang "zh"}}名称{{else}}Name{{end}}<span class="ind"></span></th>
           <th>{{if eq .Lang "zh"}}状态{{else}}State{{end}}</th>
-          <th>{{if eq .Lang "zh"}}端口 (SSH){{else}}Ports (SSH){{end}}</th>
+          <th>{{if eq .Lang "zh"}}端口/SSH{{else}}Ports/SSH{{end}}</th>
           <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
-          <th>{{if eq .Lang "zh"}}5分钟CPU{{else}}5m CPU{{end}}</th>
-          <th>{{if eq .Lang "zh"}}内存{{else}}Mem{{end}}</th>
-          <th>{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}</th>
-          <th>{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}</th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}5分钟CPU{{else}}5m CPU{{end}}<span class="ind"></span></th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}内存{{else}}Mem{{end}}<span class="ind"></span></th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}<span class="ind"></span></th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}<span class="ind"></span></th>
           <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}</th>
           {{if .IPv6PoolMode}}<th>IPv6</th>{{end}}
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
@@ -186,14 +192,14 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <tbody>
         {{range .Users}}
         <tr>
-          <td>{{.Name}}</td>
+          <td data-sort="{{.Name}}">{{.Name}}</td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}{{if and (ne .Status "ready") (ne .Status "")}} <span class="pill down">{{.Status}}</span>{{end}}</td>
-          <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>ssh -p {{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
+          <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small></td>
-          <td>{{.CPUUse}}</td>
-          <td>{{.MemUse}}</td>
-          <td>{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
-          <td>{{.DiskUsed}}</td>
+          <td data-sort="{{.CPUUse}}">{{.CPUUse}}</td>
+          <td data-sort="{{.MemUse}}">{{.MemUse}}</td>
+          <td data-sort="{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}">{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
+          <td data-sort="{{.DiskUsed}}">{{.DiskUsed}}</td>
           <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
           {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{.IPv6}}{{else}}<span class="down">-</span>{{end}}</td>{{end}}
           <td>
@@ -357,6 +363,53 @@ function del(name){
   // Keep the native spinner granularity in sync with the value.
   var qc = document.getElementById('quotaCpu');
   if (qc) qc.addEventListener('input', function(){ syncCpuStep(qc); });
+})();
+// Clickable column headers for Name / 5m CPU / Mem / Procs / Disk: cycle
+// ascending -> descending -> default. Only one column sorts at a time; the
+// default state restores the original render order.
+(function(){
+  var table = document.getElementById('usersTable');
+  if (!table) return;
+  var tbody = table.tBodies[0];
+  var headers = Array.prototype.slice.call(table.querySelectorAll('th.sortable'));
+  var original = Array.prototype.slice.call(tbody.rows);
+  var col = null, dir = 0;
+
+  function num(v){
+    if (v === null || v === undefined || v === '' || v === '-') return -Infinity;
+    var m = String(v).match(/-?[\d.]+/);
+    if (!m) return -Infinity;
+    var n = parseFloat(m[0]);
+    return isNaN(n) ? -Infinity : n;
+  }
+  function str(v){ return String(v === null || v === undefined ? '' : v).toLowerCase(); }
+
+  function render(){
+    var rows;
+    if (dir === 0 || !col) {
+      rows = original.slice();
+    } else {
+      var type = col.getAttribute('data-type');
+      rows = Array.prototype.slice.call(tbody.rows).sort(function(a, b){
+        var cell = col.cellIndex;
+        var av = (a.cells[cell] && a.cells[cell].getAttribute('data-sort')) || '';
+        var bv = (b.cells[cell] && b.cells[cell].getAttribute('data-sort')) || '';
+        var r = (type === 'number') ? (num(av) - num(bv)) : (str(av) < str(bv) ? -1 : str(av) > str(bv) ? 1 : 0);
+        return r * dir;
+      });
+    }
+    rows.forEach(function(row){ tbody.appendChild(row); });
+    headers.forEach(function(h){ h.classList.remove('sort-asc', 'sort-desc'); });
+    if (col && dir !== 0) col.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+  }
+
+  headers.forEach(function(h){
+    h.addEventListener('click', function(){
+      if (col === h) { dir = dir === 1 ? -1 : dir === -1 ? 0 : 1; }
+      else { col = h; dir = 1; }
+      render();
+    });
+  });
 })();
 // consume flash banner once
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
