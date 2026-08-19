@@ -317,6 +317,13 @@ sample. The persisted history is intentionally ready for a future user-facing
 resource/time chart and selectable windows without adding live sampling to page
 requests.
 
+`vps install` treats a failure to apply guest-side routed IPv6 on one running
+container as a warning and continues the host upgrade. This is necessary
+because users can replace the guest OS or network stack; the affected
+container's host route remains managed, while its guest-side address/default
+route may need manual repair. The explicit `vps ipv6-reapply` command still
+returns an error when any container could not be repaired.
+
 ## Install / uninstall lifecycle
 
 - `uninstall.sh` without `--purge` removes the software but **keeps**

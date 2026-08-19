@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -303,10 +304,17 @@ func cmdInstall() error {
 		return fmt.Errorf("unique machine-id: %w", err)
 	}
 	// Route inter-container IPv6 through the host (no L2 discovery / MITM),
-	// so a container can reach a peer whose address it knows.
+	// so a container can reach a peer whose address it knows. A user-controlled
+	// container may use an unsupported guest network stack; do not let that one
+	// container abort the host installation and prevent the service/security
+	// configuration below from being applied.
 	if err := m.EnsureRoutedIPv6(); err != nil {
-		d.Close()
-		return fmt.Errorf("routed ipv6: %w", err)
+		var guestErr *mgr.RoutedIPv6Error
+		if !errors.As(err, &guestErr) {
+			d.Close()
+			return fmt.Errorf("routed ipv6: %w", err)
+		}
+		log.Printf("warning: routed IPv6 was not applied to every container: %v; continuing install", err)
 	}
 	d.Close()
 	// Unprivileged panel: create the 'vps' service user (if missing), hand it

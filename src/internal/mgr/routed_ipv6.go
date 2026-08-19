@@ -7,6 +7,21 @@ import (
 	"vpsmgr/internal/cfg"
 )
 
+// RoutedIPv6Error means the host-side routing pass reached a container, but
+// that guest rejected its network configuration. It is reported separately so
+// vps install can finish host-wide setup while an explicit ipv6-reapply still
+// returns a failure.
+type RoutedIPv6Error struct {
+	Container string
+	Err       error
+}
+
+func (e *RoutedIPv6Error) Error() string {
+	return fmt.Sprintf("container %s: %v", e.Container, e.Err)
+}
+
+func (e *RoutedIPv6Error) Unwrap() error { return e.Err }
+
 // ipv6ContainerScript returns a shell script that configures a container's
 // IPv6 so peers are reached through the host instead of direct L2 neighbour
 // discovery (which port isolation blocks), and applies the deterministic
@@ -249,7 +264,7 @@ func (m *Manager) EnsureRoutedIPv6() error {
 			continue // stopped or not created yet
 		}
 		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil && firstErr == nil {
-			firstErr = err
+			firstErr = &RoutedIPv6Error{Container: u.Name, Err: err}
 		}
 	}
 	return firstErr
