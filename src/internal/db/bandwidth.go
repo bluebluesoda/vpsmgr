@@ -24,6 +24,28 @@ func (d *DB) GetBandwidth(userID int64) (*Bandwidth, error) {
 	return t, nil
 }
 
+// AllBandwidth returns the monthly totals for all users in one query. Pages
+// use this instead of issuing one small lookup per container row.
+func (d *DB) AllBandwidth() (map[int64]Bandwidth, error) {
+	rows, err := d.sql.Query(`
+		SELECT user_id, period, upload_bytes, download_bytes, last_rx, last_tx, last_pid
+		FROM bandwidth`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]Bandwidth{}
+	for rows.Next() {
+		var b Bandwidth
+		if err := rows.Scan(&b.UserID, &b.Period, &b.Upload, &b.Download,
+			&b.LastRX, &b.LastTX, &b.LastPID); err != nil {
+			return nil, err
+		}
+		out[b.UserID] = b
+	}
+	return out, rows.Err()
+}
+
 // ApplyBandwidth advances a user's monthly totals from the current Incus counters
 // rx/tx (and the container's init PID at sample time). The delta is computed in
 // a single atomic SQL statement against the stored baselines, handling four
@@ -41,29 +63,3 @@ func (d *DB) GetBandwidth(userID int64) (*Bandwidth, error) {
 //
 // Because the delta uses the baseline present in the database at statement
 // time, concurrent samplers never double-count.
-func (d *DB) ApplyBandwidth(userID int64, period string, rx, tx, pid int64) error {
-	_, err := d.sql.Exec(`
-		INSERT INTO bandwidth(user_id, period, upload_bytes, download_bytes, last_rx, last_tx, last_pid)
-		VALUES(?, ?, 0, 0, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET
-			download_bytes = (CASE WHEN bandwidth.period <> excluded.period THEN 0 ELSE download_bytes END) +
-			                 (CASE
-			                   WHEN excluded.last_rx >= bandwidth.last_rx
-			                     THEN excluded.last_rx - bandwidth.last_rx
-			                   WHEN excluded.last_pid <> 0 AND excluded.last_pid <> bandwidth.last_pid
-			                     THEN excluded.last_rx
-			                   ELSE 0 END),
-			upload_bytes = (CASE WHEN bandwidth.period <> excluded.period THEN 0 ELSE upload_bytes END) +
-			               (CASE
-			                 WHEN excluded.last_tx >= bandwidth.last_tx
-			                   THEN excluded.last_tx - bandwidth.last_tx
-			                 WHEN excluded.last_pid <> 0 AND excluded.last_pid <> bandwidth.last_pid
-			                   THEN excluded.last_tx
-			                 ELSE 0 END),
-			last_rx = excluded.last_rx,
-			last_tx = excluded.last_tx,
-			last_pid = excluded.last_pid,
-			period = excluded.period`,
-		userID, period, rx, tx, pid)
-	return err
-}

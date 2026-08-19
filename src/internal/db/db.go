@@ -54,7 +54,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 4
+const schemaVersion = 6
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -137,6 +137,32 @@ var migrations = []struct {
 		`ALTER TABLE users ADD COLUMN ipv6_address TEXT`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6 ON users(ipv6_address)`,
 	}},
+	// v5 is occupied by the blocked-domains migration on the main line. Keep a
+	// no-op slot here so dev databases can advance to the shared v6 safely.
+	{5, []string{`SELECT 1`}},
+	// v6: minute resource history. Values are deliberately compact: memory and
+	// filesystem usage use MiB, CPU uses tenths of a percent, and counters remain
+	// bytes so bandwidth graphs can be calculated without losing small traffic.
+	{6, []string{
+		`ALTER TABLE bandwidth ADD COLUMN last_boot_time INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE resource_samples(
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			sample_minute INTEGER NOT NULL,
+			state INTEGER NOT NULL,
+			boot_time INTEGER,
+			cpu_seconds_ns INTEGER,
+			cpu_pct_x10 INTEGER NOT NULL DEFAULT -1,
+			memory_mib INTEGER,
+			processes INTEGER,
+			disk_used_mib INTEGER,
+			rx_bytes_total INTEGER,
+			tx_bytes_total INTEGER,
+			disk_read_bytes_total INTEGER,
+			disk_write_bytes_total INTEGER,
+			PRIMARY KEY(user_id, sample_minute)
+		) WITHOUT ROWID`,
+		`CREATE INDEX resource_samples_time ON resource_samples(sample_minute)`,
+	}},
 }
 
 // userStatus values (kept as plain strings in the DB).
@@ -211,6 +237,5 @@ func (d *DB) appliedMigrations() (map[int]bool, error) {
 	}
 	return out, rows.Err()
 }
-
 
 func now() string { return time.Now().UTC().Format(time.RFC3339) }

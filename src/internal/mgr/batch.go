@@ -6,7 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"vpsmgr/internal/cfg"
@@ -47,10 +46,9 @@ func (m *Manager) PoolRemainingBytes() (total, used, avail int64, err error) {
 	return total, used, avail, nil
 }
 
-// HostStats gathers host memory/swap from /proc/meminfo, pool space from
-// Incus and uptime from /proc/uptime. Pool / uptime failures are non-fatal
-// (zeroed) so the panel still renders the available sections.
-func (m *Manager) HostStats() HostStats {
+// RefreshHostStats updates the latest in-memory host overview. Host history is
+// intentionally not persisted; the cache only keeps page requests off Incus.
+func (m *Manager) RefreshHostStats() {
 	hs := HostStats{}
 	hs.Mem = readMemInfo()
 	total, used, avail, err := m.PoolRemainingBytes()
@@ -59,7 +57,21 @@ func (m *Manager) HostStats() HostStats {
 	}
 	hs.Uptime = readUptime()
 	hs.RebootNeeded = rebootRequired()
-	return hs
+	m.hostMu.Lock()
+	m.hostStats = hs
+	m.hostReady = true
+	m.hostMu.Unlock()
+}
+
+// HostStats returns the latest cached host overview. The cache is refreshed at
+// startup and with each resource sample; no Incus request is made here.
+func (m *Manager) HostStats() HostStats {
+	m.hostMu.RLock()
+	defer m.hostMu.RUnlock()
+	if !m.hostReady {
+		return HostStats{}
+	}
+	return m.hostStats
 }
 
 // readMemInfo parses /proc/meminfo into usable/available memory and swap.
@@ -117,8 +129,8 @@ func readUptime() time.Duration {
 	return time.Duration(secs * float64(time.Second))
 }
 
-// UserStatus is one row of the admin user table: the DB user record plus live
-// stats (state, CPU%, memory usage, actual disk usage, monthly bandwidth).
+// UserStatus is one row of the admin user table: the DB user record plus the
+// latest persisted resource sample and five-minute CPU average.
 type UserStatus struct {
 	User     *db.User
 	State    string
@@ -128,76 +140,52 @@ type UserStatus struct {
 	UpGB     string
 	DownGB   string
 	IPv6     string
-	Procs    int64 // live process count (0 when stopped / unavailable)
+	Procs    int64 // latest sampled process count (0 when stopped / unavailable)
 }
 
-// BatchUsers returns live status for every user with a MINIMAL number of Incus
-// calls regardless of user count:
-//   - 1 x instances list (SampleBandwidth, also freshens monthly totals)
-//   - 2 x instances list ~1s apart (CPU% delta, same algorithm as List)
-//   - 1 x exec `df -k /` per RUNNING container for real disk usage
-//
-// The per-container disk probe runs concurrently so the total time is bounded
-// by the slowest container, not the count.
+// BatchUsers reads the database-backed resource snapshot. It intentionally
+// performs no Incus call: the background resource sampler owns collection.
 func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return nil, err
 	}
-	m.SampleBandwidth() // best-effort freshness for the displayed totals
-
-	s1, err := m.lx.Containers()
+	latest, err := m.db.LatestResourceSamples()
 	if err != nil {
 		return nil, err
 	}
-	time.Sleep(time.Second)
-	s2, err := m.lx.Containers()
+	average, err := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
 	if err != nil {
 		return nil, err
 	}
-
-	// Concurrent real disk usage per running container.
-	disk := make(map[string]int64)
-	var diskMu sync.Mutex
-	var wg sync.WaitGroup
-	for _, u := range users {
-		if s1[u.Name].Status != "Running" {
-			continue
-		}
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			if kb, err := m.containerDiskKB(name); err == nil && kb >= 0 {
-				diskMu.Lock()
-				disk[name] = kb * 1024
-				diskMu.Unlock()
-			}
-		}(u.Name)
+	bandwidth, err := m.db.AllBandwidth()
+	if err != nil {
+		return nil, err
 	}
-	wg.Wait()
 
 	out := make([]*UserStatus, 0, len(users))
 	for _, u := range users {
-		cur := s2[u.Name]
-		prev, ok := s1[u.Name]
-		up, down := m.BandwidthFor(u.ID)
-		rs := &UserStatus{User: u, State: cur.Status, UpGB: FormatGB(up), DownGB: FormatGB(down), Procs: cur.Processes}
-		if ok && cur.Status == "Running" && prev.Status == "Running" && u.CPU > 0 {
-			delta := cur.CPUUsage - prev.CPUUsage
-			if delta < 0 {
-				delta = 0
+		transfer := bandwidth[u.ID]
+		up, down := transfer.Upload, transfer.Download
+		rs := &UserStatus{User: u, State: "-", UpGB: FormatGB(up), DownGB: FormatGB(down)}
+		if sample, ok := latest[u.ID]; ok {
+			rs.State = resourceStateName(sample.State)
+			if sample.State == resourceRunning {
+				rs.Procs = sample.Processes
+				rs.MemUse = humanBytes(sample.MemoryMiB * (1 << 20))
+				rs.DiskUsed = humanBytes(sample.DiskUsedMiB * (1 << 20))
+			} else {
+				rs.MemUse = "-"
+				rs.DiskUsed = "-"
 			}
-			pct := float64(delta) / 1e9 / (float64(u.CPU) / 10) * 100
+		} else {
+			rs.MemUse = "-"
+			rs.DiskUsed = "-"
+		}
+		if pct, ok := average[u.ID]; ok && latest[u.ID].State == resourceRunning {
 			rs.CPUUse = fmt.Sprintf("%.0f%%", pct)
-			rs.MemUse = humanBytes(cur.MemUsage)
 		} else {
 			rs.CPUUse = "-"
-			rs.MemUse = "-"
-		}
-		if kb, ok := disk[u.Name]; ok && kb > 0 {
-			rs.DiskUsed = humanBytes(kb)
-		} else {
-			rs.DiskUsed = "-"
 		}
 		if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 			rs.IPv6 = u.IPv6Address
@@ -211,29 +199,15 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	return out, nil
 }
 
-// containerDiskKB returns the used kilobytes of the container's root
-// filesystem as reported by `df -k /` inside the container (over the exec
-// API). The first data row of df carries the mount point (/) in its LAST
-// column, the total 1K-blocks in the second and the Used KB in the THIRD; the
-// filesystem name (e.g. vpsmgr/containers/test) is not a reliable marker
-// across storage drivers.
-func (m *Manager) containerDiskKB(name string) (int64, error) {
-	out, err := m.lx.ExecSH(name, "df -k /")
-	if err != nil {
-		return -1, err
+func resourceStateName(state int) string {
+	switch state {
+	case resourceRunning:
+		return "Running"
+	case resourceStopped:
+		return "Stopped"
+	default:
+		return "Unknown"
 	}
-	sc := bufio.NewScanner(strings.NewReader(out))
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		if len(f) >= 6 && f[0] != "Filesystem" && f[len(f)-1] == "/" {
-			n, err := strconv.ParseInt(f[2], 10, 64)
-			if err != nil {
-				return -1, err
-			}
-			return n, nil
-		}
-	}
-	return -1, fmt.Errorf("no df output for %s", name)
 }
 
 // humanBytes renders a byte count as a short human string (e.g. "184 MiB").

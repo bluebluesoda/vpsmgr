@@ -47,12 +47,16 @@ type Manager struct {
 	limitMu   sync.Mutex
 	throttled map[string]bool
 
-	// sampleMu serializes bandwidth sampling. Incus counters are read and the DB
-	// delta applied in one critical section so a slower, out-of-order sampler
-	// (the 60s goroutine vs a panel-triggered sample) can never write a lower
-	// counter after a higher one was recorded — the SQL reset path would then
-	// mistake the stale value for a container restart and double-count it.
+	// sampleMu serializes the combined resource sampler. Incus counters are read
+	// and the DB delta applied in one critical section so concurrent samplers
+	// cannot double-count a counter.
 	sampleMu sync.Mutex
+
+	// hostMu protects the latest in-memory host overview. Host history is not
+	// persisted; caching only avoids an Incus storage-pool request per page.
+	hostMu    sync.RWMutex
+	hostStats HostStats
+	hostReady bool
 
 	// domainMu serializes domain mutations (AddDomain/DelDomain/
 	// SetDomainProtocol + SyncAllDomains) so two panel requests cannot race on
@@ -63,7 +67,9 @@ type Manager struct {
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
-	return &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket), fw: fw.New(c), tfx: tfx.New(c)}
+	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket), fw: fw.New(c), tfx: tfx.New(c)}
+	m.RefreshHostStats()
+	return m
 }
 
 func ValidateName(name string) error {
@@ -512,43 +518,12 @@ type Result struct {
 	V4Forward    bool   // whether IPv4 inbound (ssh/ports/domains) is live
 }
 
-// sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
-func (m *Manager) sampleUsage() (map[string]lx.Usage, error) {
-	u1, err := m.lx.UsageMap()
-	if err != nil {
-		return nil, err
-	}
-	time.Sleep(time.Second)
-	u2, err := m.lx.UsageMap()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]lx.Usage)
-	for name, v := range u2 {
-		if prev, ok := u1[name]; ok {
-			v.CPUUsage -= prev.CPUUsage
-			out[name] = v
-		}
-	}
-	return out, nil
-}
-
-func (m *Manager) decorateUsage(r *Result, use map[string]lx.Usage) {
-	if u, ok := use[r.User.Name]; ok && r.User.CPU > 0 {
-		pct := float64(u.CPUUsage) / 1e9 / (float64(r.User.CPU) / 10) * 100
-		if pct < 0 {
-			pct = 0
-		}
-		r.CPUUse = fmt.Sprintf("%.0f%%", pct)
-		r.MemUse = fmt.Sprintf("%d MiB", u.MemUsage/(1<<20))
-		return
-	}
-	r.CPUUse = "-"
-	r.MemUse = "-"
-}
-
 func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 	st, _ := m.lx.State(u.Name)
+	return m.resultForState(u, pass, st)
+}
+
+func (m *Manager) resultForState(u *db.User, pass, state string) *Result {
 	domains, _ := m.db.ListDomains(u.ID)
 	ds := make([]string, len(domains))
 	for i, d := range domains {
@@ -568,7 +543,7 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		}
 	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
-		State: st, Domains: ds, PortsPerUser: cfg.PortsPerUser,
+		State: state, Domains: ds, PortsPerUser: cfg.PortsPerUser,
 		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block,
 		V4Forward: m.cfg.Net.V4Forward}
 }
@@ -740,12 +715,14 @@ func (m *Manager) List() ([]*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.SampleBandwidth() // best-effort freshness for the displayed totals
-	use, _ := m.sampleUsage()
+	latest, _ := m.db.LatestResourceSamples()
+	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
-		r := m.ResultFor(u, "")
-		m.decorateUsage(r, use)
+		sample, hasSample := latest[u.ID]
+		avg, hasAverage := average[u.ID]
+		r := m.resultForState(u, "", storedState(sample))
+		decorateStoredUsage(r, sample, hasSample, avg, hasAverage)
 		out = append(out, r)
 	}
 	return out, nil
@@ -756,10 +733,12 @@ func (m *Manager) Show(name string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.SampleBandwidth() // best-effort freshness for the displayed totals
-	r := m.ResultFor(u, "")
-	use, _ := m.sampleUsage()
-	m.decorateUsage(r, use)
+	latest, _ := m.db.LatestResourceSamples()
+	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	sample, hasSample := latest[u.ID]
+	avg, hasAverage := average[u.ID]
+	r := m.resultForState(u, "", storedState(sample))
+	decorateStoredUsage(r, sample, hasSample, avg, hasAverage)
 	return r, nil
 }
 

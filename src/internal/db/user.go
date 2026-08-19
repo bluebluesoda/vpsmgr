@@ -76,8 +76,8 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	}
 	u.ID, _ = r.LastInsertId()
 
-	// The bandwidth row always exists for a new user (0 counters), so SampleBandwidth
-	// and the quota logic have a baseline from the start.
+	// The bandwidth row always exists for a new user (0 counters), so the
+	// background resource sampler and quota logic have a baseline from the start.
 	if _, err := tx.Exec(
 		`INSERT INTO bandwidth(user_id, period, upload_bytes, download_bytes, last_rx, last_tx)
 		 VALUES(?, ?, 0, 0, 0, 0)`,

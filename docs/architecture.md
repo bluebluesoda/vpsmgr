@@ -17,8 +17,9 @@ are treated as scarce, which drives every choice in this document:
   consumed by what containers actually use, and clones share the image's
   blocks;
 - container tooling stays minimal (`git` / `python3` are deliberately absent);
-- live stats are batched into a handful of REST calls per refresh, and bandwidth
-  sampling runs every 60 s, keeping idle CPU/RAM use low.
+- resource stats are sampled once per minute in the background and served from
+  SQLite, so opening a panel does not fan out Incus requests or run commands in
+  containers.
 
 "Lightweight" refers to the panel and this storage/memory discipline, not to a
 zero-overhead platform: Incus, nftables and Traefik are the minimal plumbing
@@ -40,8 +41,9 @@ src/      Go source (single binary: CLI + panel)
   install, default 115). The panel talks to the daemon over its
   **Unix-socket REST API** (`internal/lx`, one reusable HTTP connection, no
   `incus` process spawn per call). **Every** operation including `exec`
-  (provisioning scripts, the readiness probe, the per-container `df` probe)
-  goes over the API websocket transport — no CLI calls at all. Fractional CPU
+  (provisioning scripts and readiness probes) goes over the API websocket
+  transport — no CLI calls at all. Resource sampling uses the bulk metrics
+  endpoint rather than per-container `exec`. Fractional CPU
   quotas (0.1..0.9) are enforced as `limits.cpu=1` plus
   `limits.cpu.allowance=<n>ms/100ms` — a one-core pin with a time slice.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
@@ -64,7 +66,8 @@ src/      Go source (single binary: CLI + panel)
   ```
 - **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
-- **SQLite** — users, domains, sessions, bandwidth counters. Located at
+- **SQLite** — users, domains, sessions, bandwidth counters and seven-day
+  minute resource history. Located at
   `/etc/vpsmgr/vpsmgr.db`.
 
 ## Unprivileged panel
@@ -280,8 +283,24 @@ into the kernel.
 ## Bandwidth accounting
 
 Per-container NIC counters come from Incus. A background goroutine in the panel
-samples every 60 s and accumulates deltas into SQLite (`bandwidth` table). The
-panel reads totals from the DB — it never blocks on an exec for bandwidth.
+samples every 60 s through one instances-list request and one bulk metrics
+request, then accumulates deltas into SQLite (`bandwidth` table). The panel reads
+totals from the DB — it never blocks on an exec for bandwidth.
+
+## Resource history
+
+The same background sample writes one compact row per managed container and
+minute to `resource_samples`. It stores container state, CPU time and derived
+CPU percentage, memory usage (`MemTotal - MemAvailable`) and filesystem usage in
+MiB, process count, network counters, and disk I/O counters. Host resource
+history is deliberately not stored. Samples older than seven days are deleted
+automatically; the retention window is currently fixed and not configurable.
+
+The admin overview defines CPU usage as the average of valid samples from the
+most recent five minutes. Memory and disk usage are the latest successful
+sample. The persisted history is intentionally ready for a future user-facing
+resource/time chart and selectable windows without adding live sampling to page
+requests.
 
 ## Install / uninstall lifecycle
 

@@ -586,7 +586,7 @@ func cmdServe() error {
 		}
 	})
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	go sampleBandwidthLoop(m)
+	go sampleResourceLoop(m)
 	log.Printf("panel listening on %s (https, self-signed)", c.Panel.Listen)
 	return startTLS(c, dispatch, tlsCfg)
 }
@@ -602,24 +602,27 @@ func pathUnder(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
-// sampleBandwidthLoop runs the monthly bandwidth collector until the process ends.
-// After every sample it enforces bandwidth quotas: users over their monthly
-// limit get their NIC rate-limited to 1Mbps, users back under (e.g. monthly
-// rollover) get the limit removed. Incus applies the NIC limits live (tc), so no
-// container restart is involved.
-func sampleBandwidthLoop(m *mgr.Manager) {
-	if err := m.SampleBandwidth(); err != nil {
-		log.Printf("bandwidth sample: %v", err)
+// sampleResourceLoop records one compact resource snapshot per user each
+// minute. The same snapshot advances monthly bandwidth totals and is reused by
+// the panels, so opening a page never triggers live Incus sampling. After every
+// sample it enforces bandwidth quotas: users over their monthly limit get their
+// NIC rate-limited to 1Mbps, users back under (e.g. monthly rollover) get the
+// limit removed.
+func sampleResourceLoop(m *mgr.Manager) {
+	if err := m.SampleResources(); err != nil {
+		log.Printf("resource sample: %v", err)
 	}
+	m.RefreshHostStats()
 	if err := m.EnforceBandwidthLimits(); err != nil {
 		log.Printf("bandwidth quota enforcement: %v", err)
 	}
 	tick := time.NewTicker(mgr.BandwidthInterval)
 	defer tick.Stop()
 	for range tick.C {
-		if err := m.SampleBandwidth(); err != nil {
-			log.Printf("bandwidth sample: %v", err)
+		if err := m.SampleResources(); err != nil {
+			log.Printf("resource sample: %v", err)
 		}
+		m.RefreshHostStats()
 		if err := m.EnforceBandwidthLimits(); err != nil {
 			log.Printf("bandwidth quota enforcement: %v", err)
 		}

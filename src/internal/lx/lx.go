@@ -243,16 +243,16 @@ type stateAction struct {
 // execReq is the body of a POST /1.0/instances/<name>/exec call. wait-for-websocket
 // makes the operation respond with the fds (websocket secrets) in its metadata.
 type execReq struct {
-	Command            []string          `json:"command"`
-	WaitForWebsocket   bool              `json:"wait-for-websocket"`
-	Interactive        bool              `json:"interactive"`
-	Environment        map[string]string `json:"environment,omitempty"`
-	RecordOutput       bool              `json:"record-output,omitempty"`
-	User               uint32            `json:"user,omitempty"`
-	Group              uint32            `json:"group,omitempty"`
-	Cwd                string            `json:"cwd,omitempty"`
-	Width              int               `json:"width,omitempty"`
-	Height             int               `json:"height,omitempty"`
+	Command          []string          `json:"command"`
+	WaitForWebsocket bool              `json:"wait-for-websocket"`
+	Interactive      bool              `json:"interactive"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	RecordOutput     bool              `json:"record-output,omitempty"`
+	User             uint32            `json:"user,omitempty"`
+	Group            uint32            `json:"group,omitempty"`
+	Cwd              string            `json:"cwd,omitempty"`
+	Width            int               `json:"width,omitempty"`
+	Height           int               `json:"height,omitempty"`
 }
 
 // ---- high-level helpers ----
@@ -263,6 +263,20 @@ func (c *Client) list() ([]instance, error) {
 		return nil, err
 	}
 	return insts, nil
+}
+
+// InstanceStatuses returns the current status of every instance without
+// issuing one state request per container.
+func (c *Client) InstanceStatuses() (map[string]string, error) {
+	insts, err := c.list()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(insts))
+	for _, it := range insts {
+		out[it.Name] = it.Status
+	}
+	return out, nil
 }
 
 // stateOf returns the live state of one instance.
@@ -390,15 +404,15 @@ func (c *Client) BandwidthMap() (map[string]Bandwidth, error) {
 
 // ContainerInfo is one snapshot of a container taken from a single state read.
 type ContainerInfo struct {
-	Status     string
-	Pid        int64 // init PID of the running container (0 if not running)
-	CPUUsage   int64 // nanoseconds of CPU time since start (0 if not running)
-	MemUsage   int64 // bytes currently used (0 if not running)
-	MemTotal   int64 // memory limit in bytes (0 if not running)
-	Processes  int64 // number of processes inside the container (0 if not running)
-	Rx         int64 // cumulative bytes received (download) since start
-	Tx         int64 // cumulative bytes sent (upload) since start
-	IPv4       string
+	Status    string
+	Pid       int64 // init PID of the running container (0 if not running)
+	CPUUsage  int64 // nanoseconds of CPU time since start (0 if not running)
+	MemUsage  int64 // bytes currently used (0 if not running)
+	MemTotal  int64 // memory limit in bytes (0 if not running)
+	Processes int64 // number of processes inside the container (0 if not running)
+	Rx        int64 // cumulative bytes received (download) since start
+	Tx        int64 // cumulative bytes sent (upload) since start
+	IPv4      string
 }
 
 // Containers returns a live snapshot of every container: one list call plus
@@ -847,10 +861,10 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, ex
 	config["boot.autostart"] = "true"
 	config["security.nesting"] = "true"
 	req := createReq{
-		Name:   name,
-		Source: map[string]string{"type": "image", "alias": image},
-		Config: config,
-		Devices: devices,
+		Name:     name,
+		Source:   map[string]string{"type": "image", "alias": image},
+		Config:   config,
+		Devices:  devices,
 		Profiles: []string{"default"},
 	}
 	if err := c.sendOp(http.MethodPost, "/1.0/instances", req, 5*time.Minute); err != nil {

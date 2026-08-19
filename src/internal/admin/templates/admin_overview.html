@@ -174,10 +174,10 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}状态{{else}}State{{end}}</th>
           <th>{{if eq .Lang "zh"}}端口 (SSH){{else}}Ports (SSH){{end}}</th>
           <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
-          <th>{{if eq .Lang "zh"}}CPU 使用{{else}}CPU use{{end}}</th>
-          <th>{{if eq .Lang "zh"}}内存使用{{else}}Mem use{{end}}</th>
+          <th>{{if eq .Lang "zh"}}CPU 使用（近 5 分钟）{{else}}CPU use (5m avg){{end}}</th>
+          <th>{{if eq .Lang "zh"}}内存使用（最近采样）{{else}}Mem use (latest){{end}}</th>
           <th>{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}</th>
-          <th>{{if eq .Lang "zh"}}磁盘用量{{else}}Disk used{{end}}</th>
+          <th>{{if eq .Lang "zh"}}磁盘用量（最近采样）{{else}}Disk used (latest){{end}}</th>
           <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}</th>
           {{if .IPv6PoolMode}}<th>IPv6</th>{{end}}
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>

@@ -8,50 +8,15 @@ import (
 	"time"
 
 	"vpsmgr/internal/cfg"
-	"vpsmgr/internal/lx"
 )
 
-// BandwidthInterval is how often the background sampler runs.
+// BandwidthInterval is how often the background resource sampler runs.
 const BandwidthInterval = 60 * time.Second
 
-// SampleBandwidth reads the current Incus network counters of every running
-// container and advances each user's monthly transfer totals. Counter resets
-// (container restart/reinstall) and the monthly rollover (period key change)
-// are handled inside the DB update, so concurrent samplers (background
-// goroutine and CLI) can never double-count: the delta is computed against the
-// baselines stored in the database at statement time, not against values read
-// in this process.
+// SampleBandwidth is retained as a compatibility name for callers that request
+// a sample. Resource sampling now records all metrics and bandwidth together.
 func (m *Manager) SampleBandwidth() error {
-	m.sampleMu.Lock()
-	defer m.sampleMu.Unlock()
-	tm, err := m.lx.BandwidthMap()
-	if err != nil {
-		return err
-	}
-	return m.sampleBandwidth(tm)
-}
-
-func (m *Manager) sampleBandwidth(tm map[string]lx.Bandwidth) error {
-	users, err := m.db.ListUsers()
-	if err != nil {
-		return err
-	}
-	if len(users) == 0 {
-		return nil
-	}
-	period := time.Now().UTC().Format("2006-01")
-	var firstErr error
-	for _, u := range users {
-		t, ok := tm[u.Name]
-		if !ok {
-			// container stopped: no counters available, nothing to add
-			continue
-		}
-		if err := m.db.ApplyBandwidth(u.ID, period, t.Rx, t.Tx, t.Pid); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return m.SampleResources()
 }
 
 // BandwidthFor returns the user's monthly upload/download totals in bytes.
