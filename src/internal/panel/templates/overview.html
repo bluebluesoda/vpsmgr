@@ -165,7 +165,7 @@ footer a{color:var(--muted);text-decoration:underline}
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
 <table class="domtable">
-<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，默认不启用；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; disabled by default. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></th><th></th></tr></thead>
+<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，<b>默认不启用</b>；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; <b>disabled by default</b>. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></th><th></th></tr></thead>
 <tbody>
 {{range .Domains}}
 <tr>
@@ -182,7 +182,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
 {{if .V4Forward}}<form action="{{.Prefix}}/domain-add" method="post">
-<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，默认不启用；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; disabled by default. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，<b>默认不启用</b>；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; <b>disabled by default</b>. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
 {{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
  </div>
