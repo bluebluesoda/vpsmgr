@@ -111,34 +111,37 @@ type domainRow struct {
 }
 
 type pageData struct {
-	Title          string
-	User           *db.User
-	State          string
-	IP             string
-	SSHPort        int
-	StartPort      int
-	Ports          string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort     string // compact form, e.g. 107xx
-	SSH            string
-	V4Forward      bool   // false = IPv6-only box: v4 ssh/ports not offered
-	InitScript     string // custom init script, run after a reinstall
+	Title            string
+	User             *db.User
+	State            string
+	IP               string
+	SSHPort          int
+	StartPort        int
+	Ports            string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort       string // compact form, e.g. 107xx
+	SSH              string
+	V4Forward        bool   // false = IPv6-only box: v4 ssh/ports not offered
+	InitScript       string // custom init script, run after a reinstall
 	BandwidthQuotaGB int    // monthly bandwidth quota GiB, 0 = unlimited
 	BandwidthUsedGB  string // used this month (GB, 1 decimal) — only set when limited
 	BandwidthPct     int    // used/quota * 100, clamped to 100
-	Throttled      bool   // over quota: NIC limited to 1Mbps
-	Domains        []domainRow
-	QuotaCPU       string
-	QuotaMem       string
-	QuotaDisk      string
-	Msg            string
-	Err            string
-	PublicIP       string
-	Prefix         string
-	Lang           string
-	UpGB           string
-	DownGB         string
-	IPv6           string // primary global address (the one to connect to)
-	IPv6Block      string // the /112 block the container owns (informational)
+	Throttled        bool   // over quota: NIC limited to 1Mbps
+	Domains          []domainRow
+	QuotaCPU         string
+	QuotaMem         string
+	QuotaDisk        string
+	CPUUse           string // 5-minute CPU average ("12%" or "-")
+	MemUse           string // latest sampled memory usage ("345 MiB" or "-")
+	DiskUsed         string // latest sampled disk usage ("184 MiB" or "-")
+	Msg              string
+	Err              string
+	PublicIP         string
+	Prefix           string
+	Lang             string
+	UpGB             string
+	DownGB           string
+	IPv6             string // primary global address (the one to connect to)
+	IPv6Block        string // the /112 block the container owns (informational)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -278,6 +281,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Msg:        msg,
 		Err:        errMsg,
 	}
+	// Resource usage comes from the persisted sampler snapshot (five-minute CPU
+	// average plus latest memory/disk), never from a live Incus sample.
+	d.CPUUse, d.MemUse, d.DiskUsed = s.mgr.PanelResources(u.ID)
 	// One `incus list` call only for the container status (must be live).
 	// Bandwidth is read from the DB — the background sampler writes it every 60s.
 	st, err := s.mgr.State(u.Name)

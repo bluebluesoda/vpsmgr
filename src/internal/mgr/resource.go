@@ -158,3 +158,29 @@ func decorateStoredUsage(r *Result, sample db.ResourceSample, hasSample bool, av
 		r.MemUse = "-"
 	}
 }
+
+// PanelResources returns the persisted usage for a user's panel page: the
+// five-minute CPU average and the latest memory/disk usage, formatted for
+// display. No Incus call is made — the data comes from the background sampler.
+func (m *Manager) PanelResources(userID int64) (cpuUse, memUse, diskUse string) {
+	latest, err := m.db.LatestResourceSamples()
+	if err != nil {
+		return "-", "-", "-"
+	}
+	avg, err := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	if err != nil {
+		avg = map[int64]float64{}
+	}
+	sample, ok := latest[userID]
+	if !ok || sample.State != resourceRunning {
+		return "-", "-", "-"
+	}
+	if pct, ok := avg[userID]; ok {
+		cpuUse = fmt.Sprintf("%.0f%%", pct)
+	} else {
+		cpuUse = "-"
+	}
+	memUse = humanBytes(sample.MemoryMiB * (1 << 20))
+	diskUse = humanBytes(sample.DiskUsedMiB * (1 << 20))
+	return cpuUse, memUse, diskUse
+}
