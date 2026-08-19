@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -137,9 +138,14 @@ var migrations = []struct {
 		`ALTER TABLE users ADD COLUMN ipv6_address TEXT`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6 ON users(ipv6_address)`,
 	}},
-	// v5 is occupied by the blocked-domains migration on the main line. Keep a
-	// no-op slot here so dev databases can advance to the shared v6 safely.
-	{5, []string{`SELECT 1`}},
+	// v5: seed the default admin blocked-domains list. The INSERT...SELECT
+	// only fires when the settings key was never written, so an admin's later
+	// edits (or a full clear) are never re-seeded on restart.
+	{5, []string{
+		`INSERT INTO settings(key, value)
+		 SELECT '` + SettingBlockedDomains + `', '` + sqliteStr(strings.Join(DefaultBlockedDomains, "\n")) + `'
+		 WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = '` + SettingBlockedDomains + `')`,
+	}},
 	// v6: minute resource history. Values are deliberately compact: memory and
 	// filesystem usage use MiB, CPU uses tenths of a percent, and counters remain
 	// bytes so bandwidth graphs can be calculated without losing small traffic.
@@ -164,6 +170,9 @@ var migrations = []struct {
 		`CREATE INDEX resource_samples_time ON resource_samples(sample_minute)`,
 	}},
 }
+
+// sqliteStr quotes a string literal for SQLite by doubling any single quote.
+func sqliteStr(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // userStatus values (kept as plain strings in the DB).
 const (

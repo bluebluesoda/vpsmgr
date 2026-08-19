@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Settings keys. The settings table is the DB's key/value store for panel
@@ -28,6 +29,11 @@ const (
 	// mgr.ApplyV4State; the panel reads it live to decide whether domains may
 	// be added.
 	SettingV4Forward = "v4_forward"
+
+	// SettingBlockedDomains is the admin blocked-domains list, stored as
+	// newline-separated normalized domains. A blocked domain and all its
+	// subdomains are refused by AddDomain (admin-managed via the web UI).
+	SettingBlockedDomains = "blocked_domains"
 )
 
 // GetSetting returns a settings value; ok is false when the key is absent.
@@ -52,4 +58,22 @@ func (d *DB) SetSetting(key, value string) error {
 		return fmt.Errorf("db: set setting %s: %w", key, err)
 	}
 	return nil
+}
+
+// GetBlockedDomains returns the admin blocked-domains list (already
+// normalized, no empty entries). An absent or empty key yields an empty list.
+func (d *DB) GetBlockedDomains() ([]string, error) {
+	v, ok, err := d.GetSetting(SettingBlockedDomains)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || v == "" {
+		return nil, nil
+	}
+	return strings.Split(v, "\n"), nil
+}
+
+// SetBlockedDomains persists the blocked-domains list, one domain per line.
+func (d *DB) SetBlockedDomains(list []string) error {
+	return d.SetSetting(SettingBlockedDomains, strings.Join(list, "\n"))
 }

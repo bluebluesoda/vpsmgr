@@ -138,6 +138,21 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `vps config set net.v4_forward true`) regenerates every file from the DB and
   deletes orphans, repairing any drift. All timestamps are stored as UTC; the admin
   domain page renders them in the browser's timezone.
+- **Blocked domains**: the admin domain panel keeps a blocked-domains list (a
+  `settings` key, `blocked_domains`, one domain per line, managed via a
+  textarea). `mgr.AddDomain` — the single add path for the user panel — refuses
+  a domain that exactly equals a blocked entry or is a subdomain of one (label
+  boundary: `example.co.uk` blocks `a.example.co.uk` but not
+  `forexample.co.uk`). No wildcards or regex; entries and additions share the
+  same normalization: lowercase, trailing dots stripped, only `[a-z0-9.-]`
+  allowed (anything else is a hard error — pasting a URL is rejected, not
+  silently rewritten), must end with a letter (which also excludes dotted-quad
+  IPs), must contain at least one dot (no single-word names), every label must
+  start/end with a letter or digit (consecutive hyphens mid-label like
+  `xn--p1ai` are fine), total ≤ 253 and label ≤ 63. Only the add
+  path is guarded — domains bound before an entry was blocked stay untouched.
+  The save handler validates each line and
+  reports invalid lines by their numbers while saving the rest.
 - **Audit log**: resource-heavy user actions (power start/stop/restart,
   reinstall, reset root password, domain config changes) are recorded in the
   `audit_log` table (actor / action / UTC timestamp). The actor encodes who
@@ -313,6 +328,10 @@ requests.
   `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh --local-build` prints the current git branch and waits 10 s
   (Ctrl-C to abort) before starting, and always rebuilds rather than reusing
-  an installed stable binary.
+  an installed stable binary. `install.sh --update` explicitly re-downloads
+  the latest prebuilt release over an existing binary (conservative: on
+  download/checksum failure the old binary is kept, never replaced by a
+  surprise local build); a plain `install.sh` re-run skips an existing
+  binary.
 
 See [ipv6.md](ipv6.md) for the optional IPv6 pass-through feature.

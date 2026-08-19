@@ -1065,6 +1065,14 @@ func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	if err != nil {
 		return err
 	}
+	// Refuse domains on the admin blocked list (the entry and all its
+	// subdomains). Read fresh on every add so panel edits apply immediately;
+	// a list that cannot be read fails closed — never silently allow.
+	if blockedBy, err := m.DomainBlocked(domain); err != nil {
+		return err
+	} else if blockedBy != "" {
+		return fmt.Errorf("domain %q is blocked (blocks %q and all its subdomains)", domain, blockedBy)
+	}
 	if exists, err := m.db.DomainExists(domain); err != nil {
 		return err
 	} else if exists {
@@ -1218,27 +1226,60 @@ func (m *Manager) EnsureBlockRoutes() error {
 	return firstErr
 }
 
-// domainRe allows only lowercase letters, digits, dots and hyphens, starting
-// with an alphanumeric. The trailing letter check is applied separately.
-var domainRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*$`)
-
 // normalizeDomain validates and normalizes a domain for use in Traefik
-// dynamic YAML. Strictly limited to [a-z0-9.-] and must end with a letter so
-// it cannot break YAML syntax or inject extra Traefik config.
+// dynamic YAML. Rules:
+//  1. lowercase, strip surrounding whitespace and ALL trailing dots
+//  2. keep only [a-z0-9.-] — any other character is a hard error (never
+//     silently stripped), so pasting "https://example.com" or a path is
+//     rejected instead of being quietly rewritten
+//  3. must end with a letter (this also excludes every dotted-quad IPv4)
+//  4. must contain at least one dot (no single-word names)
+//  5. every label must start and end with a letter or digit (dots can only be
+//     between labels, hyphens never at a label's edge — consecutive hyphens
+//     inside a label like "a--b" or "xn--p1ai" are fine)
+//  6. total length ≤ 253, every label ≤ 63
+//
+// No TLD validation. The resulting string is safe to drop into YAML and as a
+// filename (dots/hyphens only).
 func normalizeDomain(d string) (string, error) {
 	d = strings.TrimSpace(strings.ToLower(d))
-	d = strings.TrimSuffix(d, ".")
+	d = strings.TrimRight(d, ".")
 	if d == "" {
 		return "", errors.New("domain empty")
 	}
 	if len(d) > 253 {
-		return "", errors.New("domain too long")
+		return "", errors.New("domain too long (max 253 characters)")
 	}
-	if !domainRe.MatchString(d) {
-		return "", errors.New("invalid domain: only letters, digits, dots and hyphens allowed")
+	for i := 0; i < len(d); i++ {
+		if !isDomainChar(d[i]) && d[i] != '.' && d[i] != '-' {
+			return "", errors.New("invalid domain: only lowercase letters, digits, dots and hyphens are allowed")
+		}
+	}
+	if !strings.Contains(d, ".") {
+		return "", errors.New("invalid domain: must be a full domain name (e.g. example.com), not a single word")
 	}
 	if last := d[len(d)-1]; last < 'a' || last > 'z' {
 		return "", errors.New("invalid domain: must end with a letter")
 	}
+	// Every label must be non-empty and start/end with a letter or digit.
+	// This rejects leading/trailing/consecutive dots and any hyphen at a
+	// label's edge, while allowing consecutive hyphens mid-label.
+	for _, label := range strings.Split(d, ".") {
+		if label == "" {
+			return "", errors.New("invalid domain: empty label (leading or consecutive dot)")
+		}
+		if len(label) > 63 {
+			return "", errors.New("invalid domain: each label is limited to 63 characters")
+		}
+		if !isDomainChar(label[0]) || !isDomainChar(label[len(label)-1]) {
+			return "", errors.New("invalid domain: each label must start and end with a letter or digit")
+		}
+	}
 	return d, nil
+}
+
+// isDomainChar reports whether b is a lowercase letter or a digit — the only
+// characters allowed at a label's first and last position.
+func isDomainChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
 }

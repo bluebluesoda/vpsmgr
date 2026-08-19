@@ -93,6 +93,17 @@ code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: 12p
     <div class="empty">{{if eq .Lang "zh"}}暂无域名{{else}}No domains{{end}}</div>
     {{end}}
   </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}禁止添加的域名{{else}}Blocked domains{{end}}</h2>
+    <p class="muted">{{if eq .Lang "zh"}}此处封禁的域名本身及其所有子域名都无法被添加，不影响系统中已有的域名。每行一个域名，只需输入域名本身（不支持通配符）。例如 example.co.uk 会封禁 example.co.uk、a.example.co.uk、a.b.c.example.co.uk，但不会封禁 forexample.co.uk。{{else}}Domains listed here — and all of their subdomains — cannot be added anymore; existing domains are unaffected. One domain per line, just the bare domain (no wildcards). E.g. example.co.uk blocks example.co.uk, a.example.co.uk and a.b.c.example.co.uk, but not forexample.co.uk.{{end}}</p>
+    <form action="{{.Prefix}}/blocked-domains" method="post">
+      <textarea name="blocked" rows="6" spellcheck="false" style="width:100%; font-family:monospace; font-size:13px; border-radius:8px; border:1px solid #d1d5db; padding:8px; color-scheme:light dark;">{{.Blocked}}</textarea>
+      <div class="savebar">
+        <button class="primary" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+      </div>
+    </form>
+  </div>
 </main>
 <script>
 var P='{{.Prefix}}';
