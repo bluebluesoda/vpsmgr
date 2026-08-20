@@ -395,6 +395,23 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
 }
 
+// handleUserBandwidthReset zeroes a user's monthly traffic counters without
+// touching the resource quotas. If the user was over quota (and thus
+// throttled), the reset also lifts the NIC rate limit immediately.
+func (s *Server) handleUserBandwidthReset(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	if err := s.mgr.ResetBandwidth(name); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000+"+name, "bandwidth.reset")
+	s.redirect(w, r, s.p(""), s.t(r, "bandwidth_reset", name))
+}
+
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), 400)

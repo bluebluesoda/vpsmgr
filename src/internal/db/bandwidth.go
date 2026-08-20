@@ -24,6 +24,16 @@ func (d *DB) GetBandwidth(userID int64) (*Bandwidth, error) {
 	return t, nil
 }
 
+// ResetBandwidth zeroes a user's monthly transfer totals without touching the
+// Incus counter baselines (last_rx/last_tx), so the next sampler adds only the
+// traffic since the reset instead of re-accumulating the pre-reset amount.
+func (d *DB) ResetBandwidth(userID int64) error {
+	_, err := d.sql.Exec(
+		`UPDATE bandwidth SET upload_bytes=0, download_bytes=0 WHERE user_id=?`,
+		userID)
+	return err
+}
+
 // AllBandwidth returns the monthly totals for all users in one query. Pages
 // use this instead of issuing one small lookup per container row.
 func (d *DB) AllBandwidth() (map[int64]Bandwidth, error) {

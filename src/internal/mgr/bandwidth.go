@@ -64,6 +64,29 @@ func (m *Manager) IsThrottled(name string) bool {
 	return m.throttled[name]
 }
 
+// ResetBandwidth zeroes a user's monthly transfer totals. If the user was
+// currently throttled for exceeding the quota, the NIC limit is removed
+// immediately (not just on the next 60s sampler pass) and the in-memory
+// throttle state is cleared, so an over-quota user is un-throttled right away.
+func (m *Manager) ResetBandwidth(name string) error {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	if err := m.db.ResetBandwidth(u.ID); err != nil {
+		return err
+	}
+	m.limitMu.Lock()
+	defer m.limitMu.Unlock()
+	if m.throttled[u.Name] {
+		if err := m.lx.EnsureNicRateLimit(u.Name, ""); err != nil {
+			return fmt.Errorf("unthrottle %s after bandwidth reset: %w", u.Name, err)
+		}
+		delete(m.throttled, u.Name)
+	}
+	return nil
+}
+
 // EnforceBandwidthLimits applies or removes the NIC rate limit for every user
 // based on their monthly quota. Called by the 60s sampler only (single
 // goroutine), so two containers crossing the limit in the same pass are both

@@ -6,10 +6,10 @@ import (
 )
 
 func TestValidateName(t *testing.T) {
-	valid := []string{"a", "alice", "alice-1", "a1", "vps-12345678"}
+	valid := []string{"a", "alice", "a1", "vps12345678"}
 	invalid := []string{
 		"", "1alice", "1", "Alice", "ALICE", "alice_", "alice.", "alice-",
-		"-alice", "al ice", "alice@x", strings.Repeat("a", 64), "a-",
+		"-alice", "al-ice", "al ice", "alice@x", strings.Repeat("a", 32), "a-",
 	}
 	for _, n := range valid {
 		if err := ValidateName(n); err != nil {

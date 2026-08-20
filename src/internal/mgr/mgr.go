@@ -21,10 +21,10 @@ import (
 	"vpsmgr/internal/tfx"
 )
 
-// nameRe follows Incus instance-name rules (lowercase letters/digits/hyphens,
-// max 63, no trailing hyphen — Incus rejects "abc-") plus a leading-letter
-// requirement so a username can never start with a digit.
-var nameRe = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
+// nameRe is stricter than Incus instance-name rules: lowercase letters and
+// digits only (no hyphens), max 31, and a leading-letter requirement so a
+// username can never start with a digit.
+var nameRe = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 
 type Manager struct {
 	cfg *cfg.Config
@@ -73,8 +73,8 @@ func New(c *cfg.Config, d *db.DB) *Manager {
 }
 
 func ValidateName(name string) error {
-	if len(name) > 63 || !nameRe.MatchString(name) {
-		return errors.New("invalid name: must start with a letter, then lowercase letters/digits/hyphens, max 63, no trailing hyphen")
+	if len(name) > 31 || !nameRe.MatchString(name) {
+		return errors.New("invalid name: must start with a letter, then lowercase letters/digits only, max 31, no hyphens")
 	}
 	return nil
 }

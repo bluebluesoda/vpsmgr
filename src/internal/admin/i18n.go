@@ -87,6 +87,7 @@ func tr(l, key string, args ...any) string {
 		"user_created":          {"用户已创建：\n%[1]v", "user created:\n%[1]v"},
 		"user_deleted":          {"用户 %[1]v 已删除", "user %[1]v deleted"},
 		"quota_updated":         {"已更新 %[1]v 的配额", "quotas updated for %[1]v"},
+		"bandwidth_reset":       {"已重置 %[1]v 的流量统计（若曾限速则已解除）", "bandwidth reset for %[1]v (throttle lifted if active)"},
 		"power_ok":              {"%[1]v %[2]v 成功", "%[2]v %[1]v ok"},
 		"new_panel_password":    {"用户 %[1]v 的面板密码已重置：\n%[2]v\n面板：%[3]v", "%[1]v panel password reset:\n%[2]v\npanel: %[3]v"},
 		"admin_pass_changed":    {"管理员密码已修改", "admin password changed"},

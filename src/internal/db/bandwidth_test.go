@@ -45,6 +45,53 @@ func wantBandwidth(t *testing.T, tr *Bandwidth, period string, up, down uint64, 
 	}
 }
 
+// TestResetBandwidth verifies ResetBandwidth zeroes the monthly totals while
+// preserving the Incus counter baselines, so the next ApplyBandwidth only adds
+// post-reset traffic.
+func TestResetBandwidth(t *testing.T) {
+	d := openTestDB(t)
+	u := mkUser(t, d, "alice", 1)
+
+	// Seed some traffic: two samples. The first INSERT establishes the 1000/500
+	// baseline (0/0 used), the second adds the delta 500/200.
+	if err := d.ApplyBandwidth(u.ID, "2026-08", 1000, 500, 111); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ApplyBandwidth(u.ID, "2026-08", 1500, 700, 111); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := d.GetBandwidth(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBandwidth(t, tr, "2026-08", 200, 500, 1500, 700, 111)
+
+	if err := d.ResetBandwidth(u.ID); err != nil {
+		t.Fatal(err)
+	}
+	tr, err = d.GetBandwidth(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Totals zeroed; baseline counters and pid preserved.
+	if tr.Upload != 0 || tr.Download != 0 {
+		t.Errorf("after reset: upload=%d download=%d, want 0/0", tr.Upload, tr.Download)
+	}
+	if tr.LastRX != 1500 || tr.LastTX != 700 || tr.LastPID != 111 {
+		t.Errorf("baselines changed: rx=%d tx=%d pid=%d, want 1500/700/111", tr.LastRX, tr.LastTX, tr.LastPID)
+	}
+
+	// Next sample only adds the delta since the reset (2000-1500=500 rx, 900-700=200 tx).
+	if err := d.ApplyBandwidth(u.ID, "2026-08", 2000, 900, 111); err != nil {
+		t.Fatal(err)
+	}
+	tr, err = d.GetBandwidth(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBandwidth(t, tr, "2026-08", 200, 500, 2000, 900, 111)
+}
+
 func TestApplyBandwidth(t *testing.T) {
 	d := openTestDB(t)
 	u := mkUser(t, d, "alice", 1)

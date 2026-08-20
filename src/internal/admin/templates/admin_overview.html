@@ -149,7 +149,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="63" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母、数字、连字符（63 位内）{{else}}starts with a lowercase letter; letters, digits and hyphens only (max 63){{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z][a-z0-9]*" maxlength="31" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母和数字（31 位内，无连字符）{{else}}starts with a lowercase letter; lowercase letters and digits only (max 31, no hyphens){{end}}"></div>
       <div class="field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
@@ -261,6 +261,12 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:14px 0;">
+    <form action="{{.Prefix}}/user-bandwidth-reset" method="post">
+      <input type="hidden" name="name" id="quotaBwName">
+      <button type="submit" class="warn" onclick="return confirm({{if eq .Lang "zh"}}'确定将 ' + document.getElementById('quotaName').textContent + ' 的当月流量统计重置为 0？超限限速将自动解除。'{{else}}'Reset monthly traffic for ' + document.getElementById('quotaName').textContent + ' to 0? Any over-quota throttle will be lifted.'{{end}})">{{if eq .Lang "zh"}}仅重置流量统计{{else}}Reset traffic only{{end}}</button>
+      <small style="color:#9aa0a8;display:block;margin-top:6px">{{if eq .Lang "zh"}}将当月已用流量清零，不影响 CPU/内存/磁盘配额{{else}}Zeroes this month's used traffic; CPU/mem/disk quotas are unaffected{{end}}</small>
+    </form>
   </div>
 </div>
 
@@ -286,6 +292,7 @@ function copyModal(){
 function quota(name, cpu, mem, disk, bandwidth){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
+  document.getElementById('quotaBwName').value = name;
   document.getElementById('quotaCpu').value = parseFloat(cpu);
   document.getElementById('quotaMem').value = parseInt(mem);
   document.getElementById('quotaDisk').value = parseInt(disk);
