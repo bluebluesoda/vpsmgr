@@ -8,6 +8,52 @@ set -uo pipefail
 log(){ echo "[10] $*"; }
 die(){ echo "[10] error: $*" >&2; exit 1; }
 
+# --- snap lxd conflict ---
+# Ubuntu images commonly ship lxd as a snap, even when it is never used or
+# initialized. The snap's daemon (snap.lxd.daemon) binds 8443 and owns
+# /var/lib/lxd + lxdbr0, which collide with Incus's own socket, bridge and
+# storage namespace. Since vpsmgr manages Incus (never LXD), remove the snap
+# before installing Incus — but only when it is clearly unused: an initialized
+# lxd with containers/config is the user's data, and aborting is safer than
+# deleting it. Idempotent (skipped when the snap is already gone).
+if snap list lxd >/dev/null 2>&1; then
+  log "snap lxd is installed (Ubuntu images ship it by default) — checking whether it is used"
+  IN_USE=0
+  if systemctl is-active --quiet snap.lxd.daemon 2>/dev/null; then
+    log "  lxd daemon is RUNNING"
+    IN_USE=1
+  fi
+  # Containers/config are the strongest "in use" signals. The data dir depends
+  # on the package: deb lxd uses /var/lib/lxd, the snap uses
+  # /var/snap/lxd/common/lxd (both may exist; check whichever is present).
+  for D in /var/lib/lxd /var/snap/lxd/common/lxd; do
+    [[ -d "$D/containers" ]] && compgen -G "$D/containers/*" >/dev/null 2>&1 && {
+      log "  lxd has containers under $D/containers"
+      IN_USE=1
+    }
+    # An initialized database is a strong signal even without running daemon.
+    if [[ -f "$D/lxd.db" ]] && [[ $(stat -c%s "$D/lxd.db" 2>/dev/null || echo 0) -gt 4096 ]]; then
+      log "  lxd has an initialized database ($D/lxd.db)"
+      IN_USE=1
+    fi
+  done
+  if [[ "$IN_USE" -eq 1 ]]; then
+    die "snap lxd appears to be IN USE (daemon running / containers / initialized db).
+   vpsmgr manages Incus, not LXD — running both would collide on ports, bridges and
+   storage. Remove lxd manually (after backing up anything you need):
+     snap stop lxd
+     snap remove --purge lxd
+   then re-run the installer."
+  fi
+  log "snap lxd is not in use — removing it to free space and avoid conflicts"
+  snap stop lxd 2>/dev/null || true
+  if snap remove --purge lxd; then
+    log "snap lxd removed"
+  else
+    die "could not remove snap lxd (snap remove --purge lxd failed) — remove it manually and re-run"
+  fi
+fi
+
 # --- ensure the Zabbly repo is present, then install Incus ---
 ZABBLY_SOURCE="/etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources"
 if [[ -f "$ZABBLY_SOURCE" ]]; then
