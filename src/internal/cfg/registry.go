@@ -153,8 +153,8 @@ var Fields = []Field{
 			c.Panel.PublicIP = v
 			return nil
 		}}, 
-	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints); empty = fall back to public_ip",
-		"203.0.113.5 or AUTO",
+	{"panel.display_ip", KindOperator, ApplyRestart, "address shown to users (panel URL / SSH hints); any string without spaces, or empty = fall back to public_ip",
+		"203.0.113.5, 2001:db8::1, panel.example.com or AUTO",
 		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
 		func(c *Config, v string) error {
 			v = strings.TrimSpace(v)
@@ -163,9 +163,10 @@ var Fields = []Field{
 				return nil
 			}
 			// display_ip is only ever shown to users (never used in rules), so
-			// any valid IP is acceptable.
-			if net.ParseIP(v) == nil {
-				return fmt.Errorf("panel.display_ip must be a valid IP address, or empty/AUTO")
+			// any string without spaces is acceptable — e.g. an IPv6 address or
+			// a domain name.
+			if strings.ContainsAny(v, " \t") {
+				return fmt.Errorf("panel.display_ip must not contain spaces")
 			}
 			c.Panel.DisplayIP = v
 			return nil

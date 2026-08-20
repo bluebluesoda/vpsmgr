@@ -6,7 +6,7 @@ panel:
   key: /etc/vpsmgr/panel.key
   db: /etc/vpsmgr/vpsmgr.db
   public_ip: AUTO          # NIC IPv4 used by firewall/routing (private on NAT-ing clouds like AWS/Alibaba)
-  display_ip: AUTO         # optional: public IPv4 for DISPLAY ONLY (panel URL / SSH hints);
+  display_ip: AUTO         # optional: address shown to users (panel URL / SSH hints); any string without spaces (IP or domain)
                            # auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3
   url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install

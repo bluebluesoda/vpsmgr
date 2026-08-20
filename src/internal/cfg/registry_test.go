@@ -245,8 +245,11 @@ func TestIPValidators(t *testing.T) {
 	if err := FieldFor("panel.display_ip").Assign(c, "2001:db8::1"); err != nil {
 		t.Fatalf("valid IPv6 display_ip rejected: %v", err)
 	}
-	if err := FieldFor("panel.display_ip").Assign(c, "junk"); err == nil {
-		t.Error("invalid display_ip accepted")
+	if err := FieldFor("panel.display_ip").Assign(c, "panel.example.com"); err != nil {
+		t.Fatalf("domain display_ip rejected: %v", err)
+	}
+	if err := FieldFor("panel.display_ip").Assign(c, "has space"); err == nil {
+		t.Error("display_ip with spaces accepted")
 	}
 }
 

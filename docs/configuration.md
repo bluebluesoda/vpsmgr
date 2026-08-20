@@ -23,7 +23,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.key` | operator | restart panel | TLS private key path |
 | `panel.db` | operator | restart panel | SQLite database path |
 | `panel.public_ip` | operator | re-run `vps install` | NIC IPv4 used by firewall/routing; cert is regenerated |
-| `panel.display_ip` | operator | restart panel | public IPv4 shown to users (panel URL / SSH hints); empty = fall back to `public_ip` |
+| `panel.display_ip` | operator | restart panel | address shown to users (panel URL / SSH hints); any string without spaces (IP or domain), or empty = fall back to `public_ip` |
 | `panel.session_days` | operator | restart panel | login session lifetime (days) |
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
@@ -77,7 +77,7 @@ panel:
   key: /etc/vpsmgr/panel.key   # private key
   db: /etc/vpsmgr/vpsmgr.db    # SQLite database
   public_ip: AUTO              # NIC IPv4 used by the firewall / routing; on NAT-ing clouds (AWS/Alibaba) this is a private address
-  display_ip: AUTO             # public IPv4 for DISPLAY ONLY (panel URL, SSH hints); auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
+  display_ip: AUTO             # address shown to users (panel URL, SSH hints); any string without spaces (IP or domain); auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3              # login session lifetime (days)
   url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
   admin_url_path: AUTO         # random secret path of the admin panel; do not change after first install
