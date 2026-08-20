@@ -10,6 +10,7 @@
   --head:#0284c7; --accent:#2563eb; --on-accent:#fff;
   --ok:#059669; --ok-bg:#ecfdf5; --ok-fg:#047857;
   --warn:#d97706; --danger:#dc2626; --err-bg:#fef2f2; --err-fg:#dc2626;
+  --violet-bg:#f3e8ff; --violet-fg:#6d28d9; --violet-border:#c4b5fd;
   --code-bg:#f8fafc; --code:#b45309; --shadow:0 6px 20px rgba(15,23,42,.15);
   color-scheme:light;
 }
@@ -19,6 +20,7 @@
     --head:#38bdf8; --accent:#3b82f6; --on-accent:#fff;
     --ok:#10b981; --ok-bg:#052e16; --ok-fg:#86efac;
     --warn:#f59e0b; --danger:#ef4444; --err-bg:#450a0a; --err-fg:#fecaca;
+    --violet-bg:#2e1a47; --violet-fg:#c4b5fd; --violet-border:#6d28d9;
     --code-bg:#14161a; --code:#fbbf24; --shadow:0 6px 20px rgba(0,0,0,.5);
     color-scheme:dark;
   }
@@ -52,6 +54,7 @@ code{background:var(--code-bg);padding:.05rem .35rem;border-radius:5px;color:var
 .ok{background:var(--ok);color:#fff;border-color:var(--ok)}
 .warn{background:var(--warn);color:#fff;border-color:var(--warn)}
 .danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+.violet{background:var(--violet-bg);color:var(--violet-fg);border-color:var(--violet-border)}
 .btnrow{display:flex;flex-wrap:wrap;gap:.45rem;margin-bottom:.55rem}
 .btnrow:last-child{margin-bottom:0}
 form.inline{display:inline}
@@ -155,7 +158,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
-<button class="btn" id="snapBtn">{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</button>
+<button class="btn violet" id="snapBtn">{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 </div>
