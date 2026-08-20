@@ -228,6 +228,7 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog(u.Name, "passwd.change")
 	s.redirect(w, r, s.p(""), "ok: panel password changed")
 }
 

@@ -73,7 +73,14 @@ var ACT={
   'power.restart':{zh:'重启',en:'restart'},
   'reinstall':{zh:'重装系统',en:'reinstall'},
   'reset_root_password':{zh:'重置 root 密码',en:'reset root password'},
-  'domain_update':{zh:'更新域名配置',en:'update domain config'}
+  'domain_update':{zh:'更新域名配置',en:'update domain config'},
+  'user.create':{zh:'创建用户',en:'create user'},
+  'user.delete':{zh:'删除用户',en:'delete user'},
+  'passwd.change':{zh:'修改面板密码',en:'change panel password'},
+  'passwd.reset':{zh:'重置面板密码',en:'reset panel password'},
+  'admin.passwd':{zh:'修改管理员密码',en:'change admin password'},
+  'quota.update':{zh:'修改配额',en:'update quota'},
+  'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'}
 };
 function actLabel(a){var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);}
 function pad2(n){return (n<10?'0':'')+n;}

@@ -338,6 +338,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000+"+name, "user.create")
 	// The password is always auto-generated and shown once.
 	cred := "user:      " + res.User.Name +
 		"\npassword:  " + res.Password +
@@ -359,6 +360,7 @@ func (s *Server) handleUserDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000+"+name, "user.delete")
 	s.redirect(w, r, s.p(""), s.t(r, "user_deleted", name))
 }
 
@@ -392,6 +394,7 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000+"+name, "quota.update")
 	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
 }
 
@@ -440,6 +443,7 @@ func (s *Server) handleResetPanelPass(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	panel := s.cfg.PanelURL("/" + s.cfg.Panel.URLPath)
+	_ = s.db.AddAuditLog("000+"+name, "passwd.reset")
 	s.redirectModal(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel))
 }
 
@@ -474,6 +478,7 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("vpsmgr_admin_session"); err == nil {
 		s.sessions.clearExcept(c.Value)
 	}
+	_ = s.db.AddAuditLog("000", "admin.passwd")
 	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
 }
 
@@ -637,6 +642,7 @@ func (s *Server) handleBlockedDomains(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000", "blocked.update")
 	if len(bad) > 0 {
 		lines := make([]string, 0, len(bad))
 		for _, n := range bad {
