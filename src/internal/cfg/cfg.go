@@ -521,11 +521,17 @@ func shCmd(name string, args ...string) string {
 }
 
 // DetectExtIF returns the name of the interface used for the default route.
+// Tries, in order: the IPv4 default route, the IPv6 default route (covers
+// IPv6-only hosts and policy-routed boxes whose v4 default lives in a
+// non-main table), then the first non-virtual UP interface.
 func DetectExtIF() string {
-	if s := shCmd("sh", "-c", "ip route show default | awk '{print $5; exit}'"); s != "" {
+	if s := shCmd("sh", "-c", "ip route show default | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}'"); s != "" {
 		return s
 	}
-	if s := shCmd("sh", "-c", "ip -o link show up | grep -v -E 'lo|incusbr|virbr|docker' | awk -F': ' '{print $2; exit}'"); s != "" {
+	if s := shCmd("sh", "-c", "ip -6 route show default | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}'"); s != "" {
+		return s
+	}
+	if s := shCmd("sh", "-c", "ip -o link show up | grep -v -E 'lo|incusbr|virbr|docker|veth|warp|wg' | awk -F': ' '{print $2; exit}'"); s != "" {
 		return s
 	}
 	return "eth0"

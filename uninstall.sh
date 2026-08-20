@@ -26,7 +26,16 @@ if [[ -n "$V6SUBNET" ]]; then
   rm -f /etc/vpsmgr/ndppd.conf
   rm -f /etc/ndppd.conf   # root-owned symlink -> /etc/vpsmgr/ndppd.conf (created at install)
   # remove proxy_ndp entries on the ext iface for the prefix
-  EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+  # ext iface: prefer the IPv4 default route, then the IPv6 default route
+  # (covers IPv6-only hosts / policy-routed boxes), then the first non-virtual
+  # UP link — the same fallback chain the installer uses.
+  EXT_IF=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  if [[ -z "$EXT_IF" ]]; then
+    EXT_IF=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  fi
+  if [[ -z "$EXT_IF" ]]; then
+    EXT_IF=$(ip -o link show up 2>/dev/null | grep -v -E 'lo|incusbr|virbr|docker|veth|warp|wg' | awk -F': ' '{print $2; exit}')
+  fi
   if [[ -n "$EXT_IF" ]]; then
     ip -6 neigh show proxy dev "$EXT_IF" 2>/dev/null | awk '{print $1}' | while read -r a; do
       case "$a" in

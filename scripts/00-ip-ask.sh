@@ -230,8 +230,19 @@ ask_ipv6(){
 # VPSMGR_IPV6_MODE=prefix + VPSMGR_IPV6_SUBNET.
 ask_prefix_mode(){
   local EXT_IF GLOBAL CAND
-  EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-  GLOBAL=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4; exit}')
+  # ext iface: IPv4 default route first, then IPv6 default route (covers
+  # IPv6-only hosts / policy-routed boxes), then the first non-virtual UP link.
+  EXT_IF=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  if [[ -z "$EXT_IF" ]]; then
+    EXT_IF=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  fi
+  if [[ -z "$EXT_IF" ]]; then
+    EXT_IF=$(ip -o link show up 2>/dev/null | grep -v -E 'lo|incusbr|virbr|docker|veth|warp|wg' | awk -F': ' '{print $2; exit}')
+  fi
+  GLOBAL=""
+  if [[ -n "$EXT_IF" ]]; then
+    GLOBAL=$(ip -6 -o addr show dev "$EXT_IF" scope global 2>/dev/null | awk '{print $4; exit}')
+  fi
   CAND=""
   if [[ -n "$GLOBAL" ]]; then
     local GADDR GLEN

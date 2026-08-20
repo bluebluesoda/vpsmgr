@@ -257,14 +257,23 @@ fi
 log "reserved ports are free"
 
 # --- detect public ip / ext iface ---
-EXT_IF=$(ip route show default | awk '{print $5; exit}')
+# ext iface: prefer the IPv4 default route, then the IPv6 default route (covers
+# IPv6-only hosts and policy-routed boxes whose v4 default lives in a non-main
+# table), then the first non-virtual UP interface.
+EXT_IF=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+if [[ -z "$EXT_IF" ]]; then
+  EXT_IF=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+fi
+if [[ -z "$EXT_IF" ]]; then
+  EXT_IF=$(ip -o link show up 2>/dev/null | grep -v -E 'lo|incusbr|virbr|docker|veth|warp|wg' | awk -F': ' '{print $2; exit}')
+fi
 PUB_IP=""
 if [[ -n "$EXT_IF" ]]; then
   PUB_IP=$(ip -4 -o addr show dev "$EXT_IF" scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
 fi
 if [[ -z "$PUB_IP" ]]; then
   PUB_IP=$(hostname -I | awk '{print $1}')
-  log "  warn: no public IP detected on $EXT_IF, using $PUB_IP (private) as fallback"
+  log "  warn: no public IPv4 detected on $EXT_IF, using $PUB_IP (private/other) as fallback"
 fi
 log "public/panel IP: $PUB_IP  (ext iface: ${EXT_IF:-auto})"
 

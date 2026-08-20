@@ -50,6 +50,25 @@ key(){ echo "${C_GREEN}${C_BOLD}$*${C_OFF}"; }
 # note: secondary emphasis (yellow)
 note(){ echo "${C_YELLOW}$*${C_OFF}"; }
 
+# detect_ext_if — the interface the host uses to reach the internet. Tries, in
+# order: the IPv4 default route, the IPv6 default route (covers IPv6-only hosts
+# and policy-routed boxes whose v4 default lives in a non-main table), then the
+# first non-virtual UP interface. Prints the interface name, or empty.
+detect_ext_if(){
+  local iface dev
+  iface=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  [[ -n "$iface" ]] && { echo "$iface"; return 0; }
+  iface=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  [[ -n "$iface" ]] && { echo "$iface"; return 0; }
+  for dev in $(ip -o link show up 2>/dev/null | awk -F': ' '{print $2}'); do
+    case "$dev" in
+      lo|incusbr*|virbr*|docker*|veth*|warp|wg*) continue ;;
+    esac
+    echo "$dev"; return 0
+  done
+  return 1
+}
+
 # derive_prefix — compute the canonical CIDR (network + prefix length) of an
 # IPv6 address for its configured prefix length (e.g. /64, /80).
 # Example: derive_prefix 2602:fada:6::7b:275c 64  ->  2602:fada:6::/64
@@ -133,8 +152,8 @@ echo
 # Phase 1 — local facts
 # ---------------------------------------------------------------------------
 echo "== Phase 1: local facts (from this host, always reliable) =="
-EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-[[ -n "$EXT_IF" ]] || die "no default route / ext interface found (is IPv4 up?)"
+EXT_IF=$(detect_ext_if)
+[[ -n "$EXT_IF" ]] || die "no default route / ext interface found (is networking up?)"
 log "external interface: $EXT_IF"
 
 # Kernel IPv6 forwarding — must be 1 for pass-through (host relays containers).
