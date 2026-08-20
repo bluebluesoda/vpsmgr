@@ -310,6 +310,13 @@ fi
 # Globalping helpers: run one measurement and summarize per-probe loss.
 # Locations: world is fine; we want a few probes, not one.
 # ---------------------------------------------------------------------------
+# Phase-3 time budget: the ICMP and TCP tests SHARE one 300s (5 min) budget so
+# the whole external probe finishes within ~5 minutes even when Globalping is
+# slow or unresponsive (per-test 90s waits could previously stretch to ~10
+# minutes). Both tests keep their up-to-3 attempts and stop early on success,
+# so a healthy host is unaffected.
+PHASE3_START=$SECONDS
+PHASE3_BUDGET=300
 gp_measure(){
   local body="$1"
   curl -fsS --max-time 15 -X POST https://api.globalping.io/v1/measurements \
@@ -317,8 +324,9 @@ gp_measure(){
 }
 gp_wait(){
   local id="$1" res=""
-  # wait generously (up to 90s) — probes can be slow to schedule
+  # wait up to the remaining Phase-3 budget (probes can be slow to schedule)
   for i in $(seq 1 30); do
+    (( SECONDS - PHASE3_START >= PHASE3_BUDGET )) && break
     sleep 3
     res=$(curl -fsS --max-time 10 "https://api.globalping.io/v1/measurements/$id" 2>/dev/null) && break
   done
@@ -359,6 +367,11 @@ gp_run_test(){
   local label="$1" body="$2"
   local attempt best_ok=0 best_any=0 best_worst=100 best_sum="probes=0 ok=0 any=0 worst=100"
   for attempt in 1 2 3; do
+    # Stop starting new attempts once the shared Phase-3 budget is used up.
+    if (( SECONDS - PHASE3_START >= PHASE3_BUDGET )); then
+      echo "[$label] Phase-3 time budget (${PHASE3_BUDGET}s) used up — stopping" >&2
+      break
+    fi
     echo "[$label attempt $attempt/3] starting measurement..." >&2
     local MEAS MEAS_ID RESULT sum ok any worst
     MEAS=$(gp_measure "$body")
@@ -422,6 +435,12 @@ log "host global address: $HOST_ADDR/$HOST_LEN"
 log "test address (random, in-prefix): $TEST_ADDR"
 log "ICMP ping result: $PING_SUM"
 log "TCP ping result: $TCP_SUM"
+if (( SECONDS - PHASE3_START >= PHASE3_BUDGET )); then
+  warn "external verification hit the ${PHASE3_BUDGET}s time budget (Globalping slow) —"
+  warn "conclusion treated as unverified; re-run the installer to retry"
+else
+  log "external verification took $(( SECONDS - PHASE3_START ))s (budget ${PHASE3_BUDGET}s)"
+fi
 echo
 
 # Verdict: ANY probe success (TCP or ICMP) counts as verified. Globalping
@@ -432,6 +451,9 @@ if [[ "$TCP_ANY" -gt 0 ]] || [[ "$PING_ANY" -gt 0 ]]; then
   echo "  $(key "Pass-through:             VERIFIED — provider routes the whole prefix")"
   echo "  $(note "Use this prefix as your ipv6_subnet when running ./install.sh")"
 else
+  if (( SECONDS - PHASE3_START >= PHASE3_BUDGET )); then
+    warn "   (the ${PHASE3_BUDGET}s time budget was used up — no verification could complete)"
+  fi
   warn "=> prefix NOT verified from outside: no probe got a single reply for"
   warn "   a random address in $CAND_PREFIX."
   warn "   - contact the provider to confirm they route $CAND_PREFIX"
