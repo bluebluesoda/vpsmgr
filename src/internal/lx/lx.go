@@ -532,12 +532,12 @@ func (c *Client) SetDisk(name string, gb int) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
-// EnsureEth0Options ensures eth0 carries the given options, patching the
-// device and restarting the container when any are missing (preserving a
-// stopped state). Returns true when a change was made. Patching a running
-// container hot-removes eth0, which trips an Incus netprio bug and can leave
-// the option unapplied, so the container is stopped first.
-func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, error) {
+// EnsureDeviceOptions ensures the named device carries the given options,
+// patching the device and restarting the container when any are missing
+// (preserving a stopped state). Returns true when a change was made. Patching
+// a running container hot-removes the device, which trips an Incus netprio bug
+// and can leave the option unapplied, so the container is stopped first.
+func (c *Client) EnsureDeviceOptions(name, devName string, opts map[string]string) (bool, error) {
 	l := c.lockDev(name)
 	l.Lock()
 	defer l.Unlock()
@@ -545,14 +545,14 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return false, err
 	}
-	eth0, ok := it.Devices["eth0"]
+	dev, ok := it.Devices[devName]
 	if !ok {
-		return false, fmt.Errorf("incus: instance %s has no eth0 device", name)
+		return false, fmt.Errorf("incus: instance %s has no %s device", name, devName)
 	}
 	changed := false
 	for k, v := range opts {
-		if eth0[k] != v {
-			eth0[k] = v
+		if dev[k] != v {
+			dev[k] = v
 			changed = true
 		}
 	}
@@ -573,6 +573,11 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 		return true, c.Start(name)
 	}
 	return true, nil
+}
+
+// EnsureEth0Options is a convenience wrapper for EnsureDeviceOptions on eth0.
+func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, error) {
+	return c.EnsureDeviceOptions(name, "eth0", opts)
 }
 
 // EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
@@ -623,23 +628,37 @@ func (c *Client) NicRateLimit(name string) (string, error) {
 	return eth0["limits.ingress"], nil
 }
 
-// HardenIsolation ensures a container's eth0 carries the NIC isolation options.
-// Idempotent. IPv6 filtering is only applied when eth0 already has an IPv6
-// address or route (Incus 7.0 rejects ipv6_filtering without one).
+// HardenIsolation ensures every container NIC carries the isolation options
+// valid for its type. Idempotent. IPv6 filtering is only applied when the NIC
+// already has an IPv6 address or route (Incus 7.0 rejects ipv6_filtering
+// without one).
+//
+// Only bridged NICs accept the security.* isolation options: a routed NIC
+// (pool-mode eth0, carrying the public /128) rejects them with "Invalid device
+// option", so it is skipped — its host-side routes and rp_filter already
+// isolate it. Pool-mode eth1 (private IPv4 on the bridge) is hardened like a
+// prefix-mode eth0.
 func (c *Client) HardenIsolation(name string) (bool, error) {
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return false, err
 	}
-	eth0, ok := it.Devices["eth0"]
-	if !ok {
-		return false, fmt.Errorf("incus: instance %s has no eth0 device", name)
+	changed := false
+	for devName, dev := range it.Devices {
+		if dev["type"] != "nic" || dev["nictype"] != "bridged" {
+			continue
+		}
+		iso := nicIsolation
+		if dev["ipv6.address"] == "" && dev["ipv6.routes"] == "" {
+			iso = nicIsolationNoV6
+		}
+		ok, err := c.EnsureDeviceOptions(name, devName, iso)
+		if err != nil {
+			return false, err
+		}
+		changed = changed || ok
 	}
-	iso := nicIsolation
-	if eth0["ipv6.address"] == "" && eth0["ipv6.routes"] == "" {
-		iso = nicIsolationNoV6
-	}
-	return c.EnsureEth0Options(name, iso)
+	return changed, nil
 }
 
 // Delete force-stops the container if needed and removes it. Already-gone
