@@ -11,6 +11,14 @@ log(){ echo "[50] $*"; }
 
 incus info >/dev/null 2>&1 || { echo "[50] error: Incus not ready" >&2; exit 1; }
 
+# --- prebuilt sshd image ---
+# Check this FIRST: on reinstall/upgrade the sshd image already exists, so we
+# must not pull the base image (or download anything) just to discover that.
+if incus image show vpsmgr/debian-sshd >/dev/null 2>&1; then
+  log "sshd image vpsmgr/debian-sshd already present"
+  exit 0
+fi
+
 # --- base image ---
 if incus image show vpsmgr-debian-13 >/dev/null 2>&1; then
   log "base image vpsmgr-debian-13 already present"
@@ -21,12 +29,6 @@ else
     incus image copy images:debian/trixie local: --alias vpsmgr-debian-13 \
       || log "  warn: image pull failed — add-user needs network and will retry"
   fi
-fi
-
-# --- prebuilt sshd image ---
-if incus image show vpsmgr/debian-sshd >/dev/null 2>&1; then
-  log "sshd image vpsmgr/debian-sshd already present"
-  exit 0
 fi
 
 if ! incus image show vpsmgr-debian-13 >/dev/null 2>&1; then
