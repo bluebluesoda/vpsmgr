@@ -155,6 +155,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
+<button class="btn" id="snapBtn">{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 </div>
@@ -186,35 +187,6 @@ footer a{color:var(--muted);text-decoration:underline}
 </form>
 {{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
   </div>
-</div>
-
-<div class="card">
-<h2>{{if eq .Lang "zh"}}快照{{else}}Snapshots{{end}}</h2>
-<p class="muted">{{if eq .Lang "zh"}}快照是容器磁盘在某一时刻的只读副本（不含内存状态）。可用于把系统恢复到快照时刻。每容器最多保留 {{.SnapshotLimit}} 个；重装系统会删除容器与全部快照。{{else}}A snapshot is a read-only copy of the container disk at a point in time (no memory state), used to roll the system back to that moment. Up to {{.SnapshotLimit}} snapshots per container; reinstalling deletes the container and all its snapshots.{{end}}</p>
-<div class="btnrow">
-<form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapBtn">{{if eq .Lang "zh"}}创建快照{{else}}Create snapshot{{end}}</button></form>
-</div>
-{{if .Snapshots}}
-<table class="domtable">
-<thead><tr><th>{{if eq .Lang "zh"}}快照{{else}}Snapshot{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th>{{if eq .Lang "zh"}}大小{{else}}Size{{end}}</th><th></th></tr></thead>
-<tbody>
-{{range .Snapshots}}
-<tr>
-<td><code>{{.Name}}</code></td>
-<td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
-<td class="muted">{{.Size}}</td>
-<td>
-<button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
-<button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
-</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-<div class="muted">{{if eq .Lang "zh"}}暂无快照{{else}}No snapshots yet{{end}}</div>
-{{end}}
-</div>
 </div>
 
 <div class="card">
@@ -255,6 +227,38 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="actions">
 <button class="btn accent" type="button" id="dispCopy">{{if eq .Lang "zh"}}复制密码{{else}}Copy password{{end}}</button>
 <button class="btn" type="button" id="dispClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+</div>
+</div>
+</div>
+
+<div class="overlay" id="snapModal">
+<div class="modal">
+<h3>{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}快照是容器磁盘在某一时刻的只读副本（不含内存状态），可用于把系统恢复到快照时刻。每容器最多保留 {{.SnapshotLimit}} 个；重装系统会删除容器与全部快照。{{else}}A snapshot is a read-only copy of the container disk at a point in time (no memory state), used to roll the system back to that moment. Up to {{.SnapshotLimit}} per container; reinstalling deletes the container and all its snapshots.{{end}}</p>
+<div class="btnrow">
+<form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapCreate">{{if eq .Lang "zh"}}创建快照{{else}}Create snapshot{{end}}</button></form>
+</div>
+{{if .Snapshots}}
+<table class="domtable">
+<thead><tr><th>{{if eq .Lang "zh"}}快照{{else}}Snapshot{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th></th></tr></thead>
+<tbody>
+{{range .Snapshots}}
+<tr>
+<td><code>{{.Name}}</code></td>
+<td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
+<td>
+<button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
+<button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<div class="muted">{{if eq .Lang "zh"}}暂无快照{{else}}No snapshots yet{{end}}</div>
+{{end}}
+<div class="actions">
+<button class="btn" type="button" id="snapClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
 </div>
 </div>
 </div>
@@ -414,11 +418,21 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     document.body.appendChild(f); f.submit();
   };
 })();
-// Snapshot actions: local-time rendering, and confirm() before delete/restore
-// (both are destructive or state-changing).
+// Snapshot management: the Machine card button opens the snapshot modal.
+// Operations (create/delete/restore) submit as forms and the page reloads;
+// when the URL carries #snapshots the modal reopens so the user sees the
+// result of their action without hunting for the button again.
 (function(){
   var P='{{.Prefix}}';
   var LANG='{{.Lang}}';
+  var modal=document.getElementById('snapModal');
+  var btn=document.getElementById('snapBtn');
+  var close=document.getElementById('snapClose');
+  function open(){if(modal)modal.classList.add('show');}
+  function closeModal(){if(modal)modal.classList.remove('show');}
+  if(btn)btn.addEventListener('click',open);
+  if(close)close.addEventListener('click',closeModal);
+  if(modal)modal.addEventListener('click',function(e){if(e.target===modal)closeModal();});
   function pad2(n){return (n<10?'0':'')+n;}
   document.querySelectorAll('.snapts').forEach(function(el){
     var d=new Date(el.getAttribute('data-ts'));
@@ -427,20 +441,26 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds());
     }
   });
-  function post(path, fields){
-    var f=document.createElement('form'); f.method='post'; f.action=P+path;
-    for(var k in fields){var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fields[k];f.appendChild(i);}
-    document.body.appendChild(f); f.submit();
-  }
   window.delSnap=function(n){
     var msg=(LANG==='zh')?('删除快照 '+n+'？此操作不可恢复。'):('Delete snapshot '+n+'? This cannot be undone.');
-    if(confirm(msg)) post('/snapshot-del',{name:n});
+    if(confirm(msg)) submitSnap('/snapshot-del',{name:n});
   };
   window.restoreSnap=function(n){
     var msg=(LANG==='zh')?('恢复到快照 '+n+' 将丢弃容器当前所有数据，确认？')
       :('Restoring snapshot '+n+' will discard all current container data. Confirm?');
-    if(confirm(msg)) post('/snapshot-restore',{name:n});
+    if(confirm(msg)) submitSnap('/snapshot-restore',{name:n});
   };
+  // Create form and all destructive ops: keep the hash so the modal reopens
+  // after the reload that follows the POST.
+  function submitSnap(path, fields){
+    location.hash='snapshots';
+    var f=document.createElement('form'); f.method='post'; f.action=P+path;
+    for(var k in fields){var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fields[k];f.appendChild(i);}
+    document.body.appendChild(f); f.submit();
+  }
+  var createForm=document.querySelector('#snapModal form[action*="/snapshot"]');
+  if(createForm)createForm.addEventListener('submit',function(){location.hash='snapshots';});
+  if(location.hash==='#snapshots')open();
 })();
 </script>
 </body>

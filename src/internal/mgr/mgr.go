@@ -875,20 +875,6 @@ var validSnapName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 // API. Exported for tests and the panel.
 func ValidSnapName(v string) bool { return validSnapName.MatchString(v) }
 
-// FormatBytes renders a byte count human-readably ("12 MiB").
-func FormatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
 // SnapshotLimit returns the configured per-container snapshot cap.
 func (m *Manager) SnapshotLimit() int {
 	if m.cfg.Snapshots.Limit < 1 {

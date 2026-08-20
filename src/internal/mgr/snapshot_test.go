@@ -45,23 +45,3 @@ func TestSnapNameFormat(t *testing.T) {
 		t.Error("snapName() returned the same value twice; concurrent creates would collide")
 	}
 }
-
-func TestFormatBytes(t *testing.T) {
-	cases := []struct {
-		in   int64
-		want string
-	}{
-		{0, "0 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1536, "1.5 KiB"},
-		{1024 * 1024, "1.0 MiB"},
-		{12 * 1024 * 1024, "12.0 MiB"},
-		{1024 * 1024 * 1024, "1.0 GiB"},
-	}
-	for _, c := range cases {
-		if got := FormatBytes(c.in); got != c.want {
-			t.Errorf("FormatBytes(%d) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}

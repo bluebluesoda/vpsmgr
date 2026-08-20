@@ -114,7 +114,6 @@ type domainRow struct {
 type snapshotRow struct {
 	Name      string
 	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
-	Size      string // human-readable ("12 MiB")
 }
 
 type pageData struct {
@@ -341,10 +340,10 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.Domains = append(d.Domains, domainRow{Domain: x.Domain, ProxyProtocol: x.ProxyProtocol})
 	}
 	// Snapshots come from Incus (one list call). A failure is non-fatal: the
-	// page still renders, and the snapshot card shows the error text.
+	// page still renders, and the snapshot modal shows the empty state.
 	if snaps, err := s.mgr.SnapshotList(u.Name); err == nil {
 		for _, sn := range snaps {
-			d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt, Size: mgr.FormatBytes(sn.Size)})
+			d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt})
 		}
 	}
 	d.SnapshotLimit = s.mgr.SnapshotLimit()

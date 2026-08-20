@@ -910,3 +910,42 @@ func TestSnapshotLimitClamped(t *testing.T) {
 		t.Fatalf("SnapshotLimit() with 0 = %d, want 1", got)
 	}
 }
+
+// TestOverviewSnapshotModal checks the snapshot UI lives inside the Machine
+// card as a button + modal: the standalone snapshots card is gone, the modal
+// carries the create button and the table has no size column.
+func TestOverviewSnapshotModal(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+	rr := doReq(t, h, http.MethodGet, prefix, nil, cookie)
+	body := rr.Body.String()
+	for _, want := range []string{`id="snapBtn"`, `id="snapModal"`, `id="snapClose"`, `id="snapCreate"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+	// Size column must NOT be rendered.
+	if strings.Contains(body, ">Size<") || strings.Contains(body, ">大小<") {
+		t.Error("snapshot size column should not be rendered")
+	}
+	// The snapshot create button must be inside the modal.
+	iModal := strings.Index(body, `id="snapModal"`)
+	iCreate := strings.Index(body, `id="snapCreate"`)
+	if iModal < 0 || iCreate < iModal {
+		t.Error("snapshot create button should live inside the snapshot modal")
+	}
+	// No standalone snapshot card: the modal is the only place the snapshot
+	// intro paragraph appears.
+	if strings.Count(body, "No snapshots yet") > 0 || strings.Count(body, "暂无快照") > 0 {
+		// allowed only inside the modal
+		if i := strings.Index(body, "暂无快照"); i >= 0 && i < iModal {
+			t.Error("snapshot card content leaked outside the modal")
+		}
+	}
+}
