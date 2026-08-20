@@ -71,3 +71,24 @@ func TestUpdateQuotasValidatesBeforeApplying(t *testing.T) {
 		t.Errorf("quotas changed despite validation failure: cpu=%d mem=%d disk=%d", u.CPU, u.MemMB, u.DiskGB)
 	}
 }
+
+// TestApplySwapToAllPropagatesError ensures swap-reapply actually attempts an
+// Incus call for every DB user, so an unreachable daemon surfaces as an error
+// (and a silent no-op cannot be mistaken for success).
+func TestApplySwapToAllPropagatesError(t *testing.T) {
+	c := cfg.Default()
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.CreateUser("carol", "h", "10.115.0.4", 3, 30003, 10200, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	m := New(c, d)
+
+	if err := m.ApplySwapToAll(); err == nil {
+		t.Fatal("expected an error: Incus is unreachable")
+	}
+}

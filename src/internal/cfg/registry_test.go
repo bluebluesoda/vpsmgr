@@ -286,3 +286,28 @@ func TestNonEmptyOperators(t *testing.T) {
 		}
 	}
 }
+
+func TestSwapRatioValidator(t *testing.T) {
+	c := Default()
+	if got := c.Incus.SwapRatio; got != DefaultSwapRatio {
+		t.Fatalf("default swap ratio = %v, want %v", got, DefaultSwapRatio)
+	}
+	if err := FieldFor("incus.swap_ratio").Assign(c, "0.75"); err != nil {
+		t.Errorf("valid 0.75 rejected: %v", err)
+	}
+	if c.Incus.SwapRatio != 0.75 {
+		t.Errorf("after set 0.75, ratio = %v", c.Incus.SwapRatio)
+	}
+	// 0 must round-trip (disables container swap), not be treated as unset.
+	if err := FieldFor("incus.swap_ratio").Assign(c, "0"); err != nil {
+		t.Errorf("valid 0 rejected: %v", err)
+	}
+	if c.Incus.SwapRatio != 0 {
+		t.Errorf("after set 0, ratio = %v", c.Incus.SwapRatio)
+	}
+	for _, bad := range []string{"-1", "abc", ""} {
+		if err := FieldFor("incus.swap_ratio").Assign(c, bad); err == nil {
+			t.Errorf("invalid %q accepted", bad)
+		}
+	}
+}

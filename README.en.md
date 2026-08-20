@@ -64,11 +64,14 @@ vps del <name>
 vps panel-url
 vps admin-passwd
 vps config list|set|help
+vps swap-reapply
 ```
 
 The default allocation is 1 CPU core, 1 GB of RAM, and 10 GB of disk. CPU values may be whole cores or a fraction from `0.1` to `0.9`; disk capacity can only be increased. Generated passwords are shown once.
 
 Bandwidth quotas are monthly GiB totals for upload and download combined. Containers over quota are rate-limited to 1 Mbps in both directions without a restart.
+
+Container swap is controlled by `incus.swap_ratio` (default 0.5 — a 1 GiB memory container may use up to 512 MiB of host swap). Setting the value applies it to all existing containers immediately (no restart); `vps swap-reapply` is available for a manual refresh when needed.
 
 Users can define an init script in the panel. It runs as root inside the container after reinstall, with output written to `/var/log/vpsmgr-init.log`.
 

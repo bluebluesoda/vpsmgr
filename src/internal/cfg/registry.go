@@ -332,6 +332,19 @@ var Fields = []Field{
 		"/var/lib/incus/unix.socket",
 		getStr(func(c *Config) string { return c.Incus.Socket }),
 		nonEmpty("incus.socket", func(c *Config, v string) { c.Incus.Socket = v })},
+	{"incus.swap_ratio", KindOperator, ApplyImmediate,
+		"swap granted to each new container as a multiple of its memory limit (0 = no swap; 0.5 = 1 GiB container gets 512 MiB swap) — applied to ALL containers immediately on set",
+		"0.5",
+		getStr(func(c *Config) string { return strconv.FormatFloat(c.Incus.SwapRatio, 'f', -1, 64) }),
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			r, err := strconv.ParseFloat(v, 64)
+			if err != nil || r < 0 {
+				return fmt.Errorf("incus.swap_ratio must be a non-negative number (0 disables container swap)")
+			}
+			c.Incus.SwapRatio = r
+			return nil
+		}},
 	{"snapshots.limit", KindOperator, ApplyRestart,
 		"max snapshots a user may keep per container (0 = default 1)",
 		"1",

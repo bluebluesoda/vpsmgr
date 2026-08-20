@@ -30,6 +30,13 @@ type Client struct {
 	socket string
 	http   *http.Client
 
+	// swapRatio is the per-container swap allowance as a multiple of the
+	// memory limit (limits.memory.swap = limits.memory * swapRatio).
+	// Incus 7 on cgroup v2 writes memory.swap.max=0 unless limits.memory.swap
+	// carries a byte amount, so 0 disables container swap entirely and any
+	// positive value grants that much host swap on top of limits.memory.
+	swapRatio float64
+
 	// devLocks serialize device-map read-modify-write PATCHes per instance.
 	// SetDisk, EnsureEth0Options and EnsureNicRateLimit each read the full
 	// devices map and PATCH it back as a whole; without a per-instance lock
@@ -41,8 +48,10 @@ type Client struct {
 }
 
 // New creates a client for the Incus Unix socket at path. The connection is
-// lazy: nothing dials the socket until the first request.
-func New(socket string) *Client {
+// lazy: nothing dials the socket until the first request. swapRatio is the
+// per-container swap allowance as a multiple of the memory limit (0 disables
+// container swap; see cfg.DefaultSwapRatio).
+func New(socket string, swapRatio float64) *Client {
 	t := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -51,10 +60,11 @@ func New(socket string) *Client {
 	// Per-request cap guards against a hung daemon. The operation wait uses
 	// timeout=30 server-side, so 60s covers it with margin.
 	return &Client{
-		base:     "http://unix",
-		socket:   socket,
-		http:     &http.Client{Transport: t, Timeout: 60 * time.Second},
-		devLocks: map[string]*sync.Mutex{},
+		base:      "http://unix",
+		socket:    socket,
+		http:      &http.Client{Transport: t, Timeout: 60 * time.Second},
+		swapRatio: swapRatio,
+		devLocks:  map[string]*sync.Mutex{},
 	}
 }
 
@@ -469,6 +479,18 @@ func (c *Client) Restart(name string) error {
 // now — no config knob; the admin panel renders it as "<used> / 4096".
 const DefaultProcessesLimit = "4096"
 
+// swapSizeBytes converts a memory limit in MiB and a swap ratio (multiple of
+// the memory limit) into the limits.memory.swap value: the swap allowance in
+// MiB, or "" when the ratio is <= 0 (no swap). Incus 7 on cgroup v2 writes
+// memory.swap.max=0 unless limits.memory.swap carries a byte amount, so we
+// must set an explicit byte value to enable swap at all.
+func swapSizeBytes(memMB int, ratio float64) string {
+	if ratio <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.0fMiB", float64(memMB)*ratio)
+}
+
 // cpuLimitConfig maps a CPU quota in tenths of a core onto Incus config keys.
 // Whole cores set `limits.cpu=<n>`. Fractional quotas (0.1..0.9) pin the
 // container to a single core and add a time allowance
@@ -503,9 +525,25 @@ func (c *Client) SetAutostart(name string, on bool) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
-// SetMem live-updates the memory limit.
+// SetMem live-updates the memory limit and keeps the swap allowance
+// proportional (limits.memory.swap = limits.memory * c.swapRatio).
 func (c *Client) SetMem(name string, mb int) error {
-	body := map[string]map[string]string{"config": {"limits.memory": strconv.Itoa(mb) + "MiB"}}
+	body := map[string]map[string]string{"config": {
+		"limits.memory":      strconv.Itoa(mb) + "MiB",
+		"limits.memory.swap": swapSizeBytes(mb, c.swapRatio),
+	}}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
+// SetSwap applies only the swap allowance for an existing container from its
+// current memory limit (limits.memory.swap = limits.memory * c.swapRatio),
+// leaving the memory limit untouched. Used to refresh containers created
+// before a swap_ratio change or before swap support existed. The swap key is
+// removed entirely when the ratio is <= 0 (PATCH merges; empty deletes).
+func (c *Client) SetSwap(name string, memMB int) error {
+	body := map[string]map[string]string{"config": {
+		"limits.memory.swap": swapSizeBytes(memMB, c.swapRatio),
+	}}
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
@@ -876,6 +914,7 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, ex
 	}
 	config := cpuLimitConfig(cpu)
 	config["limits.memory"] = strconv.Itoa(memMB) + "MiB"
+	config["limits.memory.swap"] = swapSizeBytes(memMB, c.swapRatio)
 	config["limits.processes"] = DefaultProcessesLimit
 	config["boot.autostart"] = "true"
 	config["security.nesting"] = "true"

@@ -142,6 +142,10 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
+	case "swap-reapply":
+		// Refresh limits.memory.swap on every existing container from the
+		// configured incus.swap_ratio (idempotent).
+		err = cmdSwapReapply()
 	case "ip6":
 		// Root helper behind the sudoers whitelist: validates every argument
 		// before running the pinned ip -6 operations (see main_ip6.go).
@@ -173,6 +177,7 @@ usage:
   vps del <name>
   vps panel-url                    print panel address
   vps config list|set|help         inspect/change config.yaml (per-field validated edits)
+  vps swap-reapply                 re-apply incus.swap_ratio to all containers (auto after config set)
   vps version
 system:
   vps install | serve | ipv6-reapply
@@ -423,6 +428,25 @@ func cmdIPv6Reapply() error {
 	// a manual `vps ipv6-reapply` heal containers that were created before
 	// the host-routed scheme existed or whose networkd config got corrupted.
 	return m.EnsureRoutedIPv6()
+}
+
+// cmdSwapReapply refreshes limits.memory.swap on every existing container from
+// the configured incus.swap_ratio (memory limits untouched). Setting
+// incus.swap_ratio already does this automatically; this command is the manual
+// / repair path (e.g. after containers were created before swap support, or to
+// fix a container whose swap key drifted). Idempotent.
+func cmdSwapReapply() error {
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	m := mgr.New(c, d)
+	return m.ApplySwapToAll()
 }
 
 func writeUnit(name, content string) error {
@@ -862,6 +886,23 @@ func configSet(args []string) error {
 	case cfg.ApplyNextAdd:
 		fmt.Printf("%s saved. Applies on the next vps add / reinstall.\n", key)
 	case cfg.ApplyImmediate:
+		if key == "incus.swap_ratio" {
+			// The panel daemon reads the config at startup, but swap-reapply
+			// needs the live config (the ratio just saved) plus the DB. It
+			// refreshes limits.memory.swap on every container from the new
+			// ratio — no restart needed (live update).
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				return fmt.Errorf("config saved, but swap refresh failed: %w", err)
+			}
+			defer d.Close()
+			m := mgr.New(c, d)
+			if err := m.ApplySwapToAll(); err != nil {
+				return fmt.Errorf("config saved, but applying it to containers failed: %w", err)
+			}
+			fmt.Printf("%s updated and applied to all containers.\n", key)
+			return nil
+		}
 		if err := applyV4State(c); err != nil {
 			return err
 		}
@@ -928,9 +969,12 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 	case cfg.ApplyInstall:
 		what = "re-runs `vps install`, regenerating the firewall / routing / container wiring"
 	case cfg.ApplyImmediate:
-		if key == "net.v4_forward" {
+		switch key {
+		case "net.v4_forward":
 			what = "toggles container IPv4 inbound immediately — SSH / port / domain reachability of every container changes"
-		} else {
+		case "incus.swap_ratio":
+			what = "re-applies the swap allowance of every existing container (no restart)"
+		default:
 			what = "applies immediately"
 		}
 	}

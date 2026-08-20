@@ -40,6 +40,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.pool` | **fixed at install** | — | storage pool |
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
+| `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
 | `snapshots.limit` | operator | restart panel | max snapshots a user may keep per container (`0` = default `1`) |
 
 ### How "fixed at install" is enforced
@@ -103,6 +104,10 @@ incus:
   pool: vpsmgr
   bridge: incusbr0
   socket: "/var/lib/incus/unix.socket"   # Incus daemon Unix socket (REST API)
+  swap_ratio: 0.5                        # swap per container as a multiple of its
+                                         # memory limit (0 = no swap; 0.5 = a 1 GiB
+                                         # container may use 512 MiB host swap);
+                                         # applied to all containers immediately on set
 ```
 
 ## Port scheme (fixed)

@@ -36,6 +36,15 @@ const (
 	// talks to it directly (no `incus` process spawn per call).
 	DefaultSocket = "/var/lib/incus/unix.socket"
 
+	// DefaultSwapRatio is the swap granted to each container as a multiple
+	// of its memory limit (limits.memory.swap = limits.memory * ratio).
+	// Incus 7 on cgroup v2 sets memory.swap.max to 0 unless limits.memory.swap
+	// is given a byte amount, so without this every container gets zero swap.
+	// 0.5 means a 1 GiB container may use up to 512 MiB of host swap — the
+	// host swap pool is shared by all containers, so a ratio < 1 avoids
+	// over-subscribing it (see docs/configuration.md).
+	DefaultSwapRatio = 0.5
+
 	// Panel listen port: a FRESH install picks a random free port in
 	// PanelPortMin..PanelPortMax (written to panel.listen). DefaultListen
 	// (8443) is only a code-level fallback, never the fresh-install default.
@@ -171,6 +180,11 @@ type IncusCfg struct {
 	// default matches the Debian package install
 	// (`/var/lib/incus/unix.socket`).
 	Socket string `yaml:"socket,omitempty"`
+	// SwapRatio is the swap allowed to each new container as a multiple of
+	// its memory limit (limits.memory.swap = limits.memory * SwapRatio).
+	// 0 disables container swap entirely; see DefaultSwapRatio.
+	// Deliberately NOT omitempty: 0 must round-trip through the config.
+	SwapRatio float64 `yaml:"swap_ratio"`
 }
 
 // SnapshotsCfg controls per-container user snapshots.
@@ -186,7 +200,7 @@ func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true}
-	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
+	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1}
 	return c
 }

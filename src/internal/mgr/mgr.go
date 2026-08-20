@@ -67,7 +67,7 @@ type Manager struct {
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
-	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket), fw: fw.New(c), tfx: tfx.New(c)}
+	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket, c.Incus.SwapRatio), fw: fw.New(c), tfx: tfx.New(c)}
 	m.RefreshHostStats()
 	return m
 }
@@ -1300,6 +1300,26 @@ func (m *Manager) HardenAll() error {
 	var firstErr error
 	for _, u := range users {
 		if _, err := m.lx.HardenIsolation(u.Name); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ApplySwapToAll refreshes the swap allowance (limits.memory.swap) of every
+// existing container from its current memory limit and the configured
+// incus.swap_ratio. Memory limits are untouched. Idempotent — safe to run
+// after every swap_ratio change, and the way containers created before swap
+// support get a swap allowance at all. Containers not present in Incus are
+// skipped; the first error encountered is returned (others are still tried).
+func (m *Manager) ApplySwapToAll() error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, u := range users {
+		if err := m.lx.SetSwap(u.Name, u.MemMB); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

@@ -64,11 +64,14 @@ vps del <name>
 vps panel-url
 vps admin-passwd
 vps config list|set|help
+vps swap-reapply
 ```
 
 默认配额为 1 核、1 GB 内存和 10 GB 磁盘。CPU 支持整数核心，或 `0.1` 到 `0.9` 的小数核心；磁盘只能扩容。密码只显示一次。
 
 月度流量配额单位为 GiB，统计上传和下载总量。超额后容器双向限速为 1 Mbps，无需重启。
+
+容器 swap 由 `incus.swap_ratio` 控制（默认 0.5，即 1 GiB 内存容器最多用 512 MiB 宿主 swap）。设置该配置后立即应用到所有容器（无需重启）；`vps swap-reapply` 可在需要时手动重刷。
 
 用户可以在面板设置初始化脚本。重装后脚本会在容器内以 root 运行，日志位于 `/var/log/vpsmgr-init.log`。
 

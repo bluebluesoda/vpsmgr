@@ -115,6 +115,18 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.
+- **Container swap**: Incus 7 on cgroup v2 writes `memory.swap.max=0` for every
+  container unless `limits.memory.swap` carries an explicit byte amount
+  (`true`/`false` both end up as 0), so without an explicit value containers
+  cannot use the host's swap at all and `free` inside shows 0. vpsmgr sets
+  `limits.memory.swap = limits.memory × incus.swap_ratio` (default 0.5) at
+  create/reinstall and on quota changes. The allowance is a **per-container
+  cap**, not a reservation — the host swap pool is shared, so the sum of all
+  container allowances may over-subscribe a small host swap (e.g. zram);
+  lxcfs clamps the visible `SwapTotal` to the host's actual swap, so a
+  container never sees more swap than physically exists. Setting
+  `incus.swap_ratio` re-applies the allowance to every existing container
+  immediately (no restart); `vps swap-reapply` does the same on demand.
 - **Bandwidth quota**: each user can carry a monthly bandwidth quota in GiB
   (`users.bandwidth_quota_gb`, 0 = unlimited; counts upload + download of the
   current month). The 60s bandwidth sampler enforces it: over-quota containers
