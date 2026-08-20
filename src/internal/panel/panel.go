@@ -110,6 +110,13 @@ type domainRow struct {
 	ProxyProtocol bool
 }
 
+// snapshotRow is one container snapshot in the user's overview list.
+type snapshotRow struct {
+	Name      string
+	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
+	Size      string // human-readable ("12 MiB")
+}
+
 type pageData struct {
 	Title            string
 	User             *db.User
@@ -142,6 +149,8 @@ type pageData struct {
 	DownGB           string
 	IPv6             string // primary global address (the one to connect to)
 	IPv6Block        string // the /112 block the container owns (informational)
+	Snapshots        []snapshotRow
+	SnapshotLimit    int // configured per-container snapshot cap (for display)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -158,6 +167,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
 	mux.HandleFunc("/init-script", s.requireAuth(s.requirePost(s.handleInitScript)))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
+	mux.HandleFunc("/snapshot", s.requireAuth(s.requirePost(s.handleSnapshot)))
+	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))
+	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requirePost(s.handleSnapshotRestore)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -328,5 +340,13 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	for _, x := range domains {
 		d.Domains = append(d.Domains, domainRow{Domain: x.Domain, ProxyProtocol: x.ProxyProtocol})
 	}
+	// Snapshots come from Incus (one list call). A failure is non-fatal: the
+	// page still renders, and the snapshot card shows the error text.
+	if snaps, err := s.mgr.SnapshotList(u.Name); err == nil {
+		for _, sn := range snaps {
+			d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt, Size: mgr.FormatBytes(sn.Size)})
+		}
+	}
+	d.SnapshotLimit = s.mgr.SnapshotLimit()
 	return d
 }

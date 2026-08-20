@@ -331,6 +331,18 @@ var Fields = []Field{
 		"/var/lib/incus/unix.socket",
 		getStr(func(c *Config) string { return c.Incus.Socket }),
 		nonEmpty("incus.socket", func(c *Config, v string) { c.Incus.Socket = v })},
+	{"snapshots.limit", KindOperator, ApplyRestart,
+		"max snapshots a user may keep per container (0 = default 1)",
+		"1",
+		getStr(func(c *Config) string { return strconv.Itoa(c.Snapshots.Limit) }),
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return fmt.Errorf("snapshots.limit must be a non-negative integer")
+			}
+			c.Snapshots.Limit = n
+			return nil
+		}},
 }
 
 var secretPathRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

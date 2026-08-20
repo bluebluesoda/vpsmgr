@@ -1130,3 +1130,56 @@ func hasShebang(script string) bool {
 	}
 	return strings.HasPrefix(strings.TrimSpace(line), "#!")
 }
+
+// ---- snapshots ----
+
+// SnapshotInfo is one container snapshot as returned by the Incus API.
+type SnapshotInfo struct {
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+	Size      int64  `json:"size"`
+}
+
+// snapshotCreateReq is the POST body for /1.0/instances/{name}/snapshots.
+// Stateful is deliberately omitted: snapshots are disk-only.
+type snapshotCreateReq struct {
+	Name string `json:"name"`
+}
+
+// instanceRestoreReq is the PUT body for /1.0/instances/{name}, restoring the
+// instance disk from a snapshot. DiskOnly keeps the current container
+// configuration (quota limits, NIC devices, boot.autostart) untouched — a full
+// restore would roll config back to the snapshot moment and silently desync it
+// from the vpsmgr DB.
+type instanceRestoreReq struct {
+	Restore  string `json:"restore"`
+	DiskOnly bool   `json:"disk_only"`
+}
+
+// SnapshotCreate takes a disk-only snapshot of the container.
+func (c *Client) SnapshotCreate(name, snapName string) error {
+	return c.sendOp(http.MethodPost, "/1.0/instances/"+url.PathEscape(name)+"/snapshots",
+		snapshotCreateReq{Name: snapName}, 2*time.Minute)
+}
+
+// SnapshotList returns the container's snapshots, newest first.
+func (c *Client) SnapshotList(name string) ([]SnapshotInfo, error) {
+	var snaps []SnapshotInfo
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"/snapshots?recursion=1", &snaps); err != nil {
+		return nil, err
+	}
+	return snaps, nil
+}
+
+// SnapshotDelete removes a snapshot.
+func (c *Client) SnapshotDelete(name, snapName string) error {
+	return c.sendOp(http.MethodDelete, "/1.0/instances/"+url.PathEscape(name)+"/snapshots/"+url.PathEscape(snapName), nil, 2*time.Minute)
+}
+
+// SnapshotRestore restores the container disk from a snapshot, keeping the
+// current container configuration. The container must be stopped (the caller
+// is responsible for stopping it first).
+func (c *Client) SnapshotRestore(name, snapName string) error {
+	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name),
+		instanceRestoreReq{Restore: snapName, DiskOnly: true}, 5*time.Minute)
+}

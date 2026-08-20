@@ -866,6 +866,124 @@ func (m *Manager) Power(name, action string) error {
 	return errors.New("unknown action")
 }
 
+// validSnapName restricts snapshot names to a safe charset so user-supplied
+// names can never reach the Incus API path with separators, and to Incus's
+// 63-char name limit.
+var validSnapName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+
+// ValidSnapName reports whether a snapshot name is safe to pass to the Incus
+// API. Exported for tests and the panel.
+func ValidSnapName(v string) bool { return validSnapName.MatchString(v) }
+
+// FormatBytes renders a byte count human-readably ("12 MiB").
+func FormatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// SnapshotLimit returns the configured per-container snapshot cap.
+func (m *Manager) SnapshotLimit() int {
+	if m.cfg.Snapshots.Limit < 1 {
+		return 1
+	}
+	return m.cfg.Snapshots.Limit
+}
+
+// snapName returns a fresh snapshot name like snap-20260820-153000-4f7a (UTC
+// second + 4 random hex chars, so concurrent creates in the same second never
+// collide).
+func snapName() string {
+	b := make([]byte, 2)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("snap-%s-%04x", time.Now().UTC().Format("20060102-150405"), b)
+}
+
+// SnapshotCreate takes a disk-only snapshot of the user's container, enforcing
+// the per-container snapshot cap. opMu serializes the count-then-create so two
+// concurrent requests cannot both pass the cap check.
+func (m *Manager) SnapshotCreate(name string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	snaps, err := m.lx.SnapshotList(u.Name)
+	if err != nil {
+		return err
+	}
+	if len(snaps) >= m.SnapshotLimit() {
+		return fmt.Errorf("snapshot limit reached (%d)", m.SnapshotLimit())
+	}
+	return m.lx.SnapshotCreate(u.Name, snapName())
+}
+
+// SnapshotList returns the user's container snapshots.
+func (m *Manager) SnapshotList(name string) ([]lx.SnapshotInfo, error) {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return m.lx.SnapshotList(u.Name)
+}
+
+// SnapshotDelete removes a snapshot.
+func (m *Manager) SnapshotDelete(name, snapName string) error {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	if !ValidSnapName(snapName) {
+		return errors.New("invalid snapshot name")
+	}
+	return m.lx.SnapshotDelete(u.Name, snapName)
+}
+
+// SnapshotRestore restores the container disk from a snapshot, keeping the
+// current container configuration (quota, NICs, autostart). If the container
+// was running it is stopped first and started again afterwards; a failure in
+// the middle leaves the container stopped and returns the error so the caller
+// can see the partial state rather than pretending the restore succeeded.
+// opMu prevents a concurrent reinstall/delete from racing the restore.
+func (m *Manager) SnapshotRestore(name, snapName string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	if !ValidSnapName(snapName) {
+		return errors.New("invalid snapshot name")
+	}
+	st, err := m.lx.State(u.Name)
+	if err != nil {
+		return err
+	}
+	wasRunning := st == "Running"
+	if wasRunning {
+		if err := m.lx.Stop(u.Name); err != nil {
+			return err
+		}
+	}
+	if err := m.lx.SnapshotRestore(u.Name, snapName); err != nil {
+		return err
+	}
+	if wasRunning {
+		return m.lx.Start(u.Name)
+	}
+	return nil
+}
+
 // ChangePanelPassword updates only the panel login hash and invalidates all
 // other sessions of the user. keepToken is the current session token to
 // preserve (empty means none, so every session is dropped). Container root

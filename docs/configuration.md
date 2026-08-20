@@ -40,6 +40,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.pool` | **fixed at install** | — | storage pool |
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
+| `snapshots.limit` | operator | restart panel | max snapshots a user may keep per container (`0` = default `1`) |
 
 ### How "fixed at install" is enforced
 

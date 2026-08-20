@@ -852,3 +852,61 @@ func TestPanelCSRFRejectsCrossOriginPOST(t *testing.T) {
 		t.Fatal("same-origin POST must not be blocked by CSRF")
 	}
 }
+
+// TestSnapshotRoutesRegistered checks that the snapshot routes exist behind the
+// prefix and fail gracefully (redirect with an error) when Incus is
+// unreachable. The test server points the Incus client at a socket that does
+// not exist, so every snapshot op fails before touching real state — and no
+// audit row is written on failure.
+func TestSnapshotRoutesRegistered(t *testing.T) {
+	srv, d := newTestServer(t)
+	// Point the lx client at a dead socket so snapshot ops fail fast and the
+	// test never touches a real Incus daemon.
+	srv.cfg.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	srv.mgr = mgr.New(srv.cfg, d)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	// POST /snapshot: registered (not 404) and errors out (no Incus socket).
+	rr := doReq(t, h, http.MethodPost, prefix+"/snapshot", url.Values{}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /snapshot = %d, want 302", rr.Code)
+	}
+	// POST /snapshot-del with a bogus name: errors (invalid snapshot name).
+	rr = doReq(t, h, http.MethodPost, prefix+"/snapshot-del", url.Values{"name": {"../evil"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /snapshot-del = %d, want 302", rr.Code)
+	}
+	// POST /snapshot-restore: same shape.
+	rr = doReq(t, h, http.MethodPost, prefix+"/snapshot-restore", url.Values{"name": {"snap-x"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /snapshot-restore = %d, want 302", rr.Code)
+	}
+
+	// No audit rows: all snapshot calls failed before any successful action.
+	rows, err := d.ListAuditLog(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("audit rows = %+v, want none (all snapshot ops failed)", rows)
+	}
+}
+
+// TestSnapshotLimitClamped checks the config-driven cap is clamped to >= 1.
+func TestSnapshotLimitClamped(t *testing.T) {
+	srv, _ := newTestServer(t)
+	if got := srv.mgr.SnapshotLimit(); got != 1 {
+		t.Fatalf("SnapshotLimit() = %d, want 1 (default)", got)
+	}
+	// A zero/negative config value is treated as 1.
+	srv.cfg.Snapshots.Limit = 0
+	if got := srv.mgr.SnapshotLimit(); got != 1 {
+		t.Fatalf("SnapshotLimit() with 0 = %d, want 1", got)
+	}
+}

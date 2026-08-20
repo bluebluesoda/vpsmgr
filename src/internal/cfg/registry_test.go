@@ -41,6 +41,35 @@ func TestFieldValueReadsConfig(t *testing.T) {
 	}
 }
 
+func TestSnapshotsLimitField(t *testing.T) {
+	c := Default()
+	if c.Snapshots.Limit != 1 {
+		t.Fatalf("default snapshots.limit = %d, want 1", c.Snapshots.Limit)
+	}
+	f := FieldFor("snapshots.limit")
+	if f == nil {
+		t.Fatal("snapshots.limit not in registry")
+	}
+	if v := FieldValue(c, "snapshots.limit"); v != "1" {
+		t.Errorf("snapshots.limit default value = %q, want 1", v)
+	}
+	if err := f.Assign(c, "5"); err != nil {
+		t.Fatalf("snapshots.limit=5: %v", err)
+	}
+	if c.Snapshots.Limit != 5 {
+		t.Errorf("snapshots.limit = %d, want 5", c.Snapshots.Limit)
+	}
+	// 0 is allowed (treated as default 1 at runtime); negative and junk are not.
+	if err := f.Assign(c, "0"); err != nil {
+		t.Errorf("snapshots.limit=0 rejected: %v", err)
+	}
+	for _, bad := range []string{"-1", "x", "1.5", ""} {
+		if err := f.Assign(c, bad); err == nil {
+			t.Errorf("snapshots.limit=%q accepted", bad)
+		}
+	}
+}
+
 func TestAssignValidators(t *testing.T) {
 	c := Default()
 

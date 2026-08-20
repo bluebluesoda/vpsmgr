@@ -72,9 +72,10 @@ const GeneratedBanner = "# Managed by vpsmgr — generated file, do not edit by 
 	"# Changes are overwritten on the next write; use the panel / `vps` CLI instead.\n"
 
 type Config struct {
-	Panel PanelCfg `yaml:"panel"`
-	Net   NetCfg   `yaml:"net"`
-	Incus IncusCfg `yaml:"incus"`
+	Panel     PanelCfg      `yaml:"panel"`
+	Net       NetCfg        `yaml:"net"`
+	Incus     IncusCfg      `yaml:"incus"`
+	Snapshots SnapshotsCfg  `yaml:"snapshots"`
 }
 
 type PanelCfg struct {
@@ -172,11 +173,21 @@ type IncusCfg struct {
 	Socket string `yaml:"socket,omitempty"`
 }
 
+// SnapshotsCfg controls per-container user snapshots.
+type SnapshotsCfg struct {
+	// Limit caps how many snapshots a user may keep per container. The default
+	// of 1 gives a light safety net; a snapshot is disk-only (no memory) and
+	// lives under the container in Incus, so it is deleted together with the
+	// container on reinstall/delete. 0 or negative is treated as 1.
+	Limit int `yaml:"limit"`
+}
+
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
+	c.Snapshots = SnapshotsCfg{Limit: 1}
 	return c
 }
 

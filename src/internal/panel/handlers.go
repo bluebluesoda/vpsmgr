@@ -338,3 +338,58 @@ func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 		Default string             `json:"default"`
 	}{imgs, s.cfg.Incus.Image})
 }
+
+// handleSnapshot creates a disk-only snapshot of the user's container. The
+// snapshot name is auto-generated, so the form carries no user input.
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	var msg string
+	if err := s.mgr.SnapshotCreate(u.Name); err != nil {
+		msg = "error: " + err.Error()
+	} else {
+		_ = s.db.AddAuditLog(u.Name, "snapshot.create")
+		msg = "ok: snapshot created"
+	}
+	s.redirect(w, r, s.p(""), msg)
+}
+
+// handleSnapshotDel deletes a snapshot by name.
+func (s *Server) handleSnapshotDel(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	var msg string
+	if err := s.mgr.SnapshotDelete(u.Name, name); err != nil {
+		msg = "error: " + err.Error()
+	} else {
+		_ = s.db.AddAuditLog(u.Name, "snapshot.delete")
+		msg = "ok: snapshot deleted"
+	}
+	s.redirect(w, r, s.p(""), msg)
+}
+
+// handleSnapshotRestore restores the container disk from a snapshot. The
+// container is stopped first if running, then started again afterwards.
+func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	var msg string
+	if err := s.mgr.SnapshotRestore(u.Name, name); err != nil {
+		msg = "error: " + err.Error()
+	} else {
+		_ = s.db.AddAuditLog(u.Name, "snapshot.restore")
+		msg = "ok: snapshot restored"
+	}
+	s.redirect(w, r, s.p(""), msg)
+}

@@ -80,7 +80,10 @@ var ACT={
   'passwd.reset':{zh:'重置面板密码',en:'reset panel password'},
   'admin.passwd':{zh:'修改管理员密码',en:'change admin password'},
   'quota.update':{zh:'修改配额',en:'update quota'},
-  'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'}
+  'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'},
+  'snapshot.create':{zh:'创建快照',en:'create snapshot'},
+  'snapshot.delete':{zh:'删除快照',en:'delete snapshot'},
+  'snapshot.restore':{zh:'恢复快照',en:'restore snapshot'}
 };
 function actLabel(a){var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);}
 function pad2(n){return (n<10?'0':'')+n;}

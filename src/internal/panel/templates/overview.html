@@ -185,7 +185,36 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，<b>默认不启用</b>；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; <b>disabled by default</b>. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
 {{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
- </div>
+  </div>
+</div>
+
+<div class="card">
+<h2>{{if eq .Lang "zh"}}快照{{else}}Snapshots{{end}}</h2>
+<p class="muted">{{if eq .Lang "zh"}}快照是容器磁盘在某一时刻的只读副本（不含内存状态）。可用于把系统恢复到快照时刻。每容器最多保留 {{.SnapshotLimit}} 个；重装系统会删除容器与全部快照。{{else}}A snapshot is a read-only copy of the container disk at a point in time (no memory state), used to roll the system back to that moment. Up to {{.SnapshotLimit}} snapshots per container; reinstalling deletes the container and all its snapshots.{{end}}</p>
+<div class="btnrow">
+<form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapBtn">{{if eq .Lang "zh"}}创建快照{{else}}Create snapshot{{end}}</button></form>
+</div>
+{{if .Snapshots}}
+<table class="domtable">
+<thead><tr><th>{{if eq .Lang "zh"}}快照{{else}}Snapshot{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th>{{if eq .Lang "zh"}}大小{{else}}Size{{end}}</th><th></th></tr></thead>
+<tbody>
+{{range .Snapshots}}
+<tr>
+<td><code>{{.Name}}</code></td>
+<td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
+<td class="muted">{{.Size}}</td>
+<td>
+<button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
+<button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<div class="muted">{{if eq .Lang "zh"}}暂无快照{{else}}No snapshots yet{{end}}</div>
+{{end}}
+</div>
 </div>
 
 <div class="card">
@@ -233,7 +262,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建所选系统。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。若设置了初始化脚本，重装完成后将在容器内自动运行。{{else}}All data inside the container will be deleted and the selected system rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall. If an init script is set, it will run inside the container after the reinstall.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建所选系统。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。若设置了初始化脚本，重装完成后将在容器内自动运行。{{else}}All data inside the container will be deleted and the selected system rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall. If an init script is set, it will run inside the container after the reinstall.{{end}}<br><b style="color:var(--danger)">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</b></p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
@@ -383,6 +412,34 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var f=document.createElement('form'); f.method='post'; f.action=P+'/domain-del';
     f.innerHTML='<input type="hidden" name="domain" value="'+d+'">';
     document.body.appendChild(f); f.submit();
+  };
+})();
+// Snapshot actions: local-time rendering, and confirm() before delete/restore
+// (both are destructive or state-changing).
+(function(){
+  var P='{{.Prefix}}';
+  var LANG='{{.Lang}}';
+  function pad2(n){return (n<10?'0':'')+n;}
+  document.querySelectorAll('.snapts').forEach(function(el){
+    var d=new Date(el.getAttribute('data-ts'));
+    if(!isNaN(d)){
+      el.textContent=d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+
+        pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds());
+    }
+  });
+  function post(path, fields){
+    var f=document.createElement('form'); f.method='post'; f.action=P+path;
+    for(var k in fields){var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fields[k];f.appendChild(i);}
+    document.body.appendChild(f); f.submit();
+  }
+  window.delSnap=function(n){
+    var msg=(LANG==='zh')?('删除快照 '+n+'？此操作不可恢复。'):('Delete snapshot '+n+'? This cannot be undone.');
+    if(confirm(msg)) post('/snapshot-del',{name:n});
+  };
+  window.restoreSnap=function(n){
+    var msg=(LANG==='zh')?('恢复到快照 '+n+' 将丢弃容器当前所有数据，确认？')
+      :('Restoring snapshot '+n+' will discard all current container data. Confirm?');
+    if(confirm(msg)) post('/snapshot-restore',{name:n});
   };
 })();
 </script>
