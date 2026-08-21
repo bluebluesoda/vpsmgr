@@ -13,9 +13,10 @@ type ManagedImage struct {
 
 // imageLabels maps known managed image aliases to friendly display names.
 var imageLabels = map[string]string{
-	"vpsmgr/debian-sshd": "Debian 13",
-	"vpsmgr/alma-sshd":   "Alma 9",
-	"vpsmgr/rocky-sshd":  "Rocky 9",
+	"vpsmgr/debian-sshd":    "Debian 13",
+	"vpsmgr/alma-sshd":      "Alma 9",
+	"vpsmgr/rocky-sshd":     "Rocky 9",
+	"vpsmgr/opensuse-sshd":  "openSUSE Leap 16",
 }
 
 // collectManagedImages picks the reinstallable images out of a raw alias list:

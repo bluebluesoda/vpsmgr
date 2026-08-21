@@ -35,6 +35,15 @@ func TestCollectManagedImages(t *testing.T) {
 			},
 		},
 		{
+			name:         "default plus opensuse, sorted after alma",
+			defaultAlias: "vpsmgr/debian-sshd",
+			aliases:      []string{"vpsmgr/opensuse-sshd", "vpsmgr/debian-sshd"},
+			want: []ManagedImage{
+				{"vpsmgr/debian-sshd", "Debian 13"},
+				{"vpsmgr/opensuse-sshd", "openSUSE Leap 16"},
+			},
+		},
+		{
 			name:         "default missing locally still offered, unknown alias humanized",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/fedora-sshd"},

@@ -233,6 +233,15 @@ validates that a picked non-default image still exists. Containers run from
 either base with the same light provisioning (random hostname, root password,
 sshd enabled — the service is `sshd` on RHEL and `ssh` on Debian).
 
+## Optional openSUSE image (`vpsmgr/opensuse-sshd`)
+
+`70-opensuse-image.sh` (also NOT part of `install.sh`) builds an openSUSE Leap
+16 image — `images:opensuse/16.0`, published as `vpsmgr/opensuse-sshd` — with
+the same hygiene: sshd + universal tooling via `zypper`, caches/logs cleaned,
+base image deleted after publishing. Leap 16 ships systemd-networkd by default,
+so its IPv6 is configured at runtime by the panel's standard networkd branch
+(static /128 + `fe80::1` gateway), unlike the RHEL-family nmcli path.
+
 ## Per-container provisioning
 
 `mgr.Provision` runs inside every new or reinstalled container and:

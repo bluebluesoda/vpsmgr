@@ -9,7 +9,7 @@
 ## 功能细节
 
 - 管理员面板：用户、配额、域名、IPv6 地址池和审计日志
-- 用户面板：电源控制、自助重装 Debian 13/AlmaLinux 9、域名配置
+- 用户面板：电源控制、自助重装 Debian 13/AlmaLinux 9/openSUSE Leap 16、域名配置
 - CPU、内存、磁盘支持超售；配额修改实时生效，无需重启容器
 - 容器网络严格隔离；IPv6 前缀模式下每个容器获得独立 `/112`，可继续划分子网
 - 流量按上下行合计，超额后双向限速至 1 Mbps
@@ -76,10 +76,11 @@ vps config list|set|help
 
 ## 额外镜像
 
-默认镜像是 Debian 13。需要 AlmaLinux 9 时，可手动构建一次：
+默认镜像是 Debian 13。需要 AlmaLinux 9 或 openSUSE Leap 16 时，可手动构建一次：
 
 ```sh
 sudo bash scripts/60-rhel-image.sh          # AlmaLinux 9
+sudo bash scripts/70-opensuse-image.sh      # openSUSE Leap 16
 ```
 
 该脚本不会由 `install.sh` 自动执行，以减少小型主机的安装负担。

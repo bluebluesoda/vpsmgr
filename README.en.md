@@ -9,7 +9,7 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 ## Feature Details
 
 - Admin panel: users, quotas, domains, IPv6 pool, and audit logs
-- User panel: power control, self-service Debian 13/AlmaLinux 9 reinstall, and domain configuration
+- User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16 reinstall, and domain configuration
 - CPU, memory, and disk oversubscription; quota changes apply live without a container restart
 - Strict container network isolation; prefix mode assigns each container a dedicated `/112` IPv6 block that it can subdivide
 - Traffic is counted in both directions; over-quota containers are rate-limited to 1 Mbps both ways
@@ -76,10 +76,11 @@ Users can define an init script in the panel. It runs as root inside the contain
 
 ## Additional Images
 
-Debian 13 is the default image. To offer AlmaLinux 9 during reinstall, build it once:
+Debian 13 is the default image. To offer AlmaLinux 9 or openSUSE Leap 16 during reinstall, build it once:
 
 ```sh
 sudo bash scripts/60-rhel-image.sh          # AlmaLinux 9
+sudo bash scripts/70-opensuse-image.sh      # openSUSE Leap 16
 ```
 
 The image builder is not run by `install.sh`, keeping the default installation small.
