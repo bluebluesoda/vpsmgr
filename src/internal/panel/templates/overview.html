@@ -449,11 +449,15 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       return 'mkdir -p /root/.ssh && chmod 700 /root/.ssh\n'+
              'echo \''+k+'\' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys';
     }
-    // Accept exactly `type base64` (no trailing comment, no newline, no
-    // quotes) so the generated `echo '...'` line can never break. The base64
-    // body must be a realistic length (shortest real key is ed25519 at 68
-    // chars; 32 is a safe floor).
-    function sshKeyValid(k){ return /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+[A-Za-z0-9+/=]{32,}$/.test(k); }
+    // Parse `type base64 [comment]`: the comment is dropped on insert. Only
+    // the type and base64 body land in the script, so the generated
+    // `echo '...'` line can never break. The base64 body must be a realistic
+    // length (shortest real key is ed25519 at 68 chars; 32 is a safe floor).
+    function sshKeyParts(k){
+      var m=k.match(/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+([A-Za-z0-9+/=]{32,})\b/);
+      if(!m||/[^A-Za-z0-9+/=\s]/.test(k.slice(m[0].length)))return null;
+      return m[1]+' '+m[2];
+    }
     sshBtn.addEventListener('click',function(){sshInput.value='';sshSnippet.textContent='';sshModal.classList.add('show');sshInput.focus();});
     sshCancel.addEventListener('click',function(){sshModal.classList.remove('show');});
     sshModal.addEventListener('click',function(e){if(e.target===sshModal)sshModal.classList.remove('show');});
@@ -464,9 +468,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     });
     sshOk.addEventListener('click',function(){
       var k=sshInput.value.trim();
-      if(!sshKeyValid(k)){sshInput.classList.add('bad');sshInput.focus();return;}
+      var key=sshKeyParts(k);
+      if(!key){sshInput.classList.add('bad');sshInput.focus();return;}
       var ta=document.getElementById('initScript');
-      var block=sshKeySnippetFor(k)+'\n\n';
+      var block=sshKeySnippetFor(key)+'\n\n';
       // insert after the shebang line so the snippet stays valid
       var m=ta.value.match(/^#![^\n]*\n/);
       var cur=ta.value;
@@ -478,15 +483,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       var insertAt=m?m[0].length:0;
       ta.value=cur.slice(0,insertAt)+block+cur.slice(insertAt);
       sshModal.classList.remove('show');
-      // save immediately so the insert is not lost
-      var body=new URLSearchParams(new FormData(document.getElementById('initForm')));
-      fetch(P+'/init-script',{method:'POST',body:body,credentials:'same-origin'})
-        .then(function(r){return r.text();})
-        .then(function(t){
-          var ok=!/error:/i.test(t);
-          toast(ok?{{if eq .Lang "zh"}}'已保存，重装系统后生效'{{else}}'Saved — takes effect after reinstall'{{end}}:{{if eq .Lang "zh"}}'保存失败：'+t{{else}}'Save failed: '+t{{end}},!ok);
-        })
-        .catch(function(){toast({{if eq .Lang "zh"}}'保存失败'{{else}}'Save failed'{{end}},true);});
+      // Submit the form natively: the handler 302-redirects and the flash
+      // message ("ok: init script saved" / "error: ...") is shown on reload.
+      document.getElementById('initForm').submit();
     });
   }
 })();
