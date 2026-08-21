@@ -86,6 +86,13 @@ a{color:var(--accent);text-decoration:none}
 .bandwidth-quota .trow{display:flex;justify-content:space-between;align-items:center;font-size:.82rem;margin-bottom:.3rem;gap:.5rem}
 .bandwidth-quota .bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden}
 .bandwidth-quota .bar .fill{height:100%;background:var(--accent);border-radius:4px;min-width:2px}
+.chart-card{scroll-margin-top:.5rem}
+.chart-card .legend{font-size:.78rem;color:var(--muted);font-weight:400;margin-left:.4rem}
+.chart-card .legend .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 8px;vertical-align:baseline}
+.chart-card canvas{width:100%;height:200px;display:block;cursor:crosshair;border-radius:6px;touch-action:none;user-select:none;-webkit-user-select:none}
+.ctip{position:fixed;pointer-events:none;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:.78rem;line-height:1.5;box-shadow:var(--shadow);display:none;z-index:150;white-space:nowrap}
+.ctip b{color:var(--text)}
+.chart-card .caxis{display:flex;justify-content:space-between;color:var(--muted);font-size:.74rem;margin-top:2px}
 footer{margin-top:1.5rem;text-align:center;color:var(--muted);font-size:.8rem}
 footer a{color:var(--muted);text-decoration:underline}
 .toast{position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:100;background:var(--ok);color:#fff;padding:.6rem 1rem;border-radius:8px;font-size:.88rem;box-shadow:var(--shadow);max-width:90vw;opacity:1;transition:opacity .3s}
@@ -201,6 +208,24 @@ apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button></div>
 </form>
+</div>
+
+<div class="card chart-card">
+<h2>{{if eq .Lang "zh"}}CPU 使用率{{else}}CPU usage{{end}}<span class="legend"><span class="dot" style="background:var(--accent)"></span>{{if eq .Lang "zh"}}每分钟平均 %{{else}}per-minute avg %{{end}}</span></h2>
+<canvas id="chartCpu" height="200"></canvas>
+<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
+</div>
+
+<div class="card chart-card">
+<h2>{{if eq .Lang "zh"}}内存使用{{else}}Memory usage{{end}}<span class="legend"><span class="dot" style="background:#8b5cf6"></span>{{if eq .Lang "zh"}}已用 MiB{{else}}used MiB{{end}}</span></h2>
+<canvas id="chartMem" height="200"></canvas>
+<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
+</div>
+
+<div class="card chart-card">
+<h2>{{if eq .Lang "zh"}}流量{{else}}Bandwidth{{end}}<span class="legend"><span class="dot" style="background:#f59e0b"></span>{{if eq .Lang "zh"}}上传{{else}}up{{end}}<span class="dot" style="background:#10b981"></span>{{if eq .Lang "zh"}}下载{{else}}down{{end}}</span></h2>
+<canvas id="chartBw" height="200"></canvas>
+<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
 </div>
 
 </div>
@@ -464,6 +489,266 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var createForm=document.querySelector('#snapModal form[action*="/snapshot"]');
   if(createForm)createForm.addEventListener('submit',function(){location.hash='snapshots';});
   if(location.hash==='#snapshots')open();
+})();
+// Resource usage charts (last 24h, per-minute). Vanilla canvas, no deps:
+// shared pan/zoom view across the three charts, adaptive time ticks, stable
+// Y axes (computed once from the full 24h window, not per zoom level).
+(function(){
+  var P='{{.Prefix}}';
+  var LANG='{{.Lang}}';
+  var PAD={l:46,r:10,t:10,b:18};
+  var MIN_MS=60000, WIN_MS=24*3600*1000;
+  var H=200;
+  var cpus=document.getElementById('chartCpu'),
+      mems=document.getElementById('chartMem'),
+      bws=document.getElementById('chartBw');
+  if(!cpus||!mems||!bws)return; // template without charts (login etc.)
+
+  var data={cpu:[],mem:[],rx:[],tx:[]}, ts=[], T0=0, T1=0;
+  var view={t0:0,t1:0};
+  var W=960, memCap=0;
+
+  function theme(){
+    var dark=matchMedia('(prefers-color-scheme: dark)').matches;
+    return {
+      grid:dark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)',
+      text:dark?'#9aa0a8':'#64748b',
+      cpu:dark?'#3b82f6':'#2563eb',
+      mem:dark?'#a78bfa':'#8b5cf6',
+      up:dark?'#fbbf24':'#f59e0b',
+      down:dark?'#34d399':'#10b981'
+    };
+  }
+  function setup(cv){
+    var dpr=devicePixelRatio||1;
+    var r=cv.getBoundingClientRect();
+    cv.width=Math.max(1,Math.round(r.width*dpr));
+    cv.height=Math.max(1,Math.round(H*dpr));
+    var ctx=cv.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    W=r.width;
+    return {ctx:ctx,w:r.width,h:H};
+  }
+  function fmtBytes(b){
+    var kb=b/1024;
+    if(kb>=1024*1024)return (kb/1024/1024).toFixed(2)+' GiB';
+    if(kb>=1024)return (kb/1024).toFixed(1)+' MiB';
+    return Math.round(kb)+' KiB';
+  }
+  function niceMax(v){
+    if(v<=0)return 1;
+    var e=Math.pow(10,Math.floor(Math.log10(v))), f=v/e;
+    var nf=f<=1?1:f<=2?2:f<=5?5:10;
+    return nf*e;
+  }
+  // Adaptive tick step: enough labels for the width, never crowded.
+  function tickStep(){
+    var span=view.t1-view.t0;
+    var plotW=Math.max(80,W-PAD.l-PAD.r);
+    var target=span/Math.max(1,Math.floor(plotW/48));
+    var steps=[10*MIN_MS,30*MIN_MS,3600*1000,2*3600*1000,4*3600*1000,8*3600*1000,12*3600*1000,24*3600*1000];
+    var ch=steps[0];
+    for(var i=0;i<steps.length;i++){ if(steps[i]>=target){ch=steps[i];break;} ch=steps[i]; }
+    return ch;
+  }
+  function fmtTick(t){
+    var d=new Date(t), hh=('0'+d.getHours()).slice(-2), mm=('0'+d.getMinutes()).slice(-2);
+    return hh+':'+mm;
+  }
+  function xAt(t){ return PAD.l+(W-PAD.l-PAD.r)*((t-view.t0)/(view.t1-view.t0)); }
+  function yAt(v,lo,hi){ return PAD.t+(H-PAD.t-PAD.b)*(1-(v-lo)/(hi-lo)); }
+
+  function drawGrid(ctx,c,lo,hi,n,fmt){
+    ctx.strokeStyle=c.grid; ctx.fillStyle=c.text; ctx.font='10px sans-serif';
+    ctx.lineWidth=1; ctx.textAlign='right';
+    for(var i=0;i<=n;i++){
+      var v=lo+(hi-lo)*i/n, y=yAt(v,lo,hi);
+      ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(W-PAD.r,y); ctx.stroke();
+      ctx.fillText(fmt(v),PAD.l-6,y+3);
+    }
+    ctx.textAlign='center';
+    var step=tickStep();
+    var first=Math.ceil(view.t0/step)*step;
+    for(var t=first;t<=view.t1;t+=step) ctx.fillText(fmtTick(t),xAt(t),H-4);
+  }
+  function linePath(ctx,arr,lo,hi){
+    ctx.beginPath();
+    var drawn=false;
+    for(var i=0;i<arr.length;i++){
+      if(ts[i]<view.t0||ts[i]>view.t1)continue;
+      var x=xAt(ts[i]), y=yAt(arr[i],lo,hi);
+      if(!drawn){ctx.moveTo(x,y);drawn=true;}else ctx.lineTo(x,y);
+    }
+  }
+
+  // ---- stable Y maxima (computed once) ----
+  var cpuHi=100;
+  var memHi=0, bwHi=0;
+  function computeAxes(){
+    var mm=0, mb=0;
+    for(var i=0;i<data.cpu.length;i++){
+      if(data.mem[i]>mm)mm=data.mem[i];
+      var s=data.rx[i]+data.tx[i];
+      if(s>mb)mb=s;
+    }
+    memHi=niceMax(mm*1.1||1);
+    bwHi=niceMax(mb*1.08||1);
+  }
+
+  function drawCPU(){
+    var s=setup(cpus), ctx=s.ctx, c=theme();
+    ctx.clearRect(0,0,s.w,s.h);
+    drawGrid(ctx,c,0,cpuHi,5,function(v){return v+'%';});
+    linePath(ctx,data.cpu,0,cpuHi);
+    ctx.strokeStyle=c.cpu; ctx.lineWidth=1.6; ctx.stroke();
+    ctx.lineTo(xAt(view.t1),yAt(0,0,cpuHi));
+    ctx.lineTo(xAt(view.t0),yAt(0,0,cpuHi));
+    ctx.closePath();
+    var g=ctx.createLinearGradient(0,PAD.t,0,H-PAD.b);
+    g.addColorStop(0,c.cpu+'55'); g.addColorStop(1,c.cpu+'00');
+    ctx.fillStyle=g; ctx.fill();
+  }
+  function drawMem(){
+    var s=setup(mems), ctx=s.ctx, c=theme();
+    ctx.clearRect(0,0,s.w,s.h);
+    drawGrid(ctx,c,0,memHi,5,function(v){return v+'M';});
+    linePath(ctx,data.mem,0,memHi);
+    ctx.lineTo(xAt(view.t1),yAt(0,0,memHi));
+    ctx.lineTo(xAt(view.t0),yAt(0,0,memHi));
+    ctx.closePath();
+    var g=ctx.createLinearGradient(0,PAD.t,0,H-PAD.b);
+    g.addColorStop(0,c.mem+'66'); g.addColorStop(1,c.mem+'08');
+    ctx.fillStyle=g; ctx.fill();
+    ctx.strokeStyle=c.mem; ctx.lineWidth=1.6; ctx.stroke();
+    if(memCap>0){
+      var capY=yAt(memCap,0,memHi);
+      if(capY>PAD.t&&capY<H-PAD.b){
+        ctx.strokeStyle=c.grid; ctx.setLineDash([4,4]);
+        ctx.beginPath(); ctx.moveTo(PAD.l,capY); ctx.lineTo(W-PAD.r,capY); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle=c.text; ctx.textAlign='left';
+        ctx.fillText('max '+memCap+'M',PAD.l+4,capY-4);
+      }
+    }
+  }
+  function drawBW(){
+    var s=setup(bws), ctx=s.ctx, c=theme();
+    ctx.clearRect(0,0,s.w,s.h);
+    drawGrid(ctx,c,0,bwHi,5,fmtBytes);
+    var plotW=W-PAD.l-PAD.r;
+    var nVis=Math.max(1,Math.round((view.t1-view.t0)/MIN_MS));
+    var bw=Math.max(1,plotW/nVis-1);
+    for(var i=0;i<ts.length;i++){
+      if(ts[i]<view.t0||ts[i]>view.t1)continue;
+      var x=xAt(ts[i])-bw/2;
+      var sum=data.rx[i]+data.tx[i];
+      var hgt=(sum/bwHi)*(H-PAD.t-PAD.b);
+      if(hgt<0.5)hgt=0;
+      var dh=sum===0?0:(data.rx[i]/sum)*hgt;
+      ctx.fillStyle=c.down;
+      ctx.fillRect(x,H-PAD.b-dh,bw,dh);
+      ctx.fillStyle=c.up;
+      ctx.fillRect(x,H-PAD.b-hgt,bw,hgt-dh);
+    }
+  }
+
+  var tip=document.createElement('div');
+  tip.className='ctip'; document.body.appendChild(tip);
+  function moveTip(ev,html,cv){
+    tip.innerHTML=html; tip.style.display='block';
+    var r=cv.getBoundingClientRect();
+    var x=ev.clientX-r.left, y=ev.clientY-r.top;
+    var tw=tip.offsetWidth, th=tip.offsetHeight;
+    var px=x+14, py=y-th-8;
+    if(px+tw>r.width)px=x-tw-14;
+    if(py<0)py=y+14;
+    tip.style.left=(r.left+px)+'px';
+    tip.style.top=(r.top+py)+'px';
+  }
+  function hideTip(){ tip.style.display='none'; }
+  function idxAt(ev,cv){
+    var r=cv.getBoundingClientRect();
+    var x=ev.clientX-r.left;
+    var t=view.t0+((x-PAD.l)/(W-PAD.l-PAD.r))*(view.t1-view.t0);
+    var i=Math.round((t-T0)/MIN_MS);
+    return Math.max(0,Math.min(ts.length-1,i));
+  }
+  function timeLabel(i){
+    var d=new Date(ts[i]);
+    var hh=('0'+d.getHours()).slice(-2), mm=('0'+d.getMinutes()).slice(-2);
+    return hh+':'+mm;
+  }
+  function clampView(){
+    var span=view.t1-view.t0;
+    if(view.t0<T0){view.t0=T0;view.t1=T0+span;}
+    if(view.t1>T1){view.t1=T1;view.t0=T1-span;}
+  }
+  function redraw(){ drawCPU(); drawMem(); drawBW(); }
+
+  function bindPan(cv){
+    var downX=0,downT=0,moved=false;
+    cv.addEventListener('pointerdown',function(e){downX=e.clientX;downT=view.t0;moved=false;cv.setPointerCapture(e.pointerId);});
+    cv.addEventListener('pointermove',function(e){
+      if(e.buttons!==1){ if(moved) hideTip(); return; }
+      var span=view.t1-view.t0;
+      var dt=(e.clientX-downX)/(W-PAD.l-PAD.r)*span;
+      view.t0=downT-dt; view.t1=downT+span-dt;
+      clampView(); redraw(); moved=true; hideTip();
+    });
+    cv.addEventListener('pointerup',function(){ moved=false; });
+    cv.addEventListener('wheel',function(e){
+      e.preventDefault();
+      var r=cv.getBoundingClientRect();
+      var x=e.clientX-r.left;
+      var t=view.t0+((x-PAD.l)/(W-PAD.l-PAD.r))*(view.t1-view.t0);
+      var span=view.t1-view.t0;
+      var factor=e.deltaY<0?1/1.15:1.15;
+      var nspan=Math.max(20*MIN_MS,Math.min(WIN_MS,span*factor));
+      var k=(t-view.t0)/span;
+      view.t0=t-nspan*k; view.t1=view.t0+nspan;
+      clampView(); redraw();
+    },{passive:false});
+    cv.addEventListener('dblclick',function(){view.t0=T0;view.t1=T1;redraw();});
+    cv.addEventListener('mousemove',function(e){
+      if(moved)return;
+      var i=idxAt(e,cv);
+      var html;
+      if(cv===cpus) html='<b>'+timeLabel(i)+'</b><br>CPU: <b>'+data.cpu[i].toFixed(1)+'%</b>';
+      else if(cv===mems) html='<b>'+timeLabel(i)+'</b><br>Mem: <b>'+data.mem[i]+' MiB</b>'+(memCap?' / '+memCap+' MiB':'');
+      else html='<b>'+timeLabel(i)+'</b><br>↓ <b>'+fmtBytes(data.rx[i])+'</b><br>↑ <b>'+fmtBytes(data.tx[i])+'</b>';
+      moveTip(e,html,cv);
+    });
+    cv.addEventListener('mouseleave',hideTip);
+  }
+
+  // ---- fetch real data ----
+  fetch(P+'/stats').then(function(r){ if(!r.ok)throw new Error('http '+r.status); return r.json(); })
+  .then(function(j){
+    var pts=j.points||[];
+    if(!pts.length)throw new Error('no data');
+    data.cpu=[];data.mem=[];data.rx=[];data.tx=[];ts=[];
+    pts.forEach(function(p){
+      ts.push(p.m*1000);
+      data.cpu.push(p.c<0?0:p.c);
+      data.mem.push(p.y<0?0:p.y);
+      data.rx.push(p.r);
+      data.tx.push(p.t);
+    });
+    T0=ts[0]; T1=ts[ts.length-1]+MIN_MS;
+    view.t0=T0; view.t1=T1;
+    // container memory cap from the overview quota (e.g. "2 GiB")
+    var q=document.querySelector('.qgrid .qitem:nth-child(2) .qval');
+    if(q){
+      var m=q.textContent.match(/([\d.]+)\s*(G|M)ib/i);
+      if(m) memCap=Math.round(parseFloat(m[1])*(m[2].toUpperCase()==='G'?1024:1));
+    }
+    computeAxes();
+    ['chartCpu','chartMem','chartBw'].forEach(function(id){ bindPan(document.getElementById(id)); });
+    redraw();
+  }).catch(function(e){ console.log('charts: '+e.message); });
+
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redraw);
+  window.addEventListener('resize',redraw);
 })();
 </script>
 </body>

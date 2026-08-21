@@ -1,12 +1,14 @@
 package panel
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -947,5 +949,72 @@ func TestOverviewSnapshotModal(t *testing.T) {
 		if i := strings.Index(body, "暂无快照"); i >= 0 && i < iModal {
 			t.Error("snapshot card content leaked outside the modal")
 		}
+	}
+}
+
+// TestStatsEndpoint verifies the /stats JSON endpoint: it requires auth,
+// returns per-minute points for the current user, and computes per-minute
+// bandwidth as the delta of the cumulative rx/tx counters between samples.
+func TestStatsEndpoint(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Minute).Unix()
+	// Two consecutive running samples: rx +1000, tx +500 between them.
+	samples := []db.ResourceSample{
+		{UserID: u.ID, SampleMinute: now - 60, State: 1, BootTime: 1,
+			CPUPercentX10: 120, MemoryMiB: 512,
+			RXBytesTotal: 10000, TXBytesTotal: 5000},
+		{UserID: u.ID, SampleMinute: now, State: 1, BootTime: 1,
+			CPUPercentX10: 250, MemoryMiB: 600,
+			RXBytesTotal: 11000, TXBytesTotal: 5500},
+	}
+	if err := d.RecordResourceSamples(samples, nil, "2026-08", now-7*24*3600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unauthenticated: redirect to login.
+	rr := doReq(t, h, http.MethodGet, prefix+"/stats", nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated /stats = %d, want 302", rr.Code)
+	}
+
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+	rr = doReq(t, h, http.MethodGet, prefix+"/stats", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/stats = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Points []struct {
+			M   int64   `json:"m"`
+			C   float64 `json:"c"`
+			Y   int64   `json:"y"`
+			R   int64   `json:"r"`
+			T   int64   `json:"t"`
+		} `json:"points"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v (%s)", err, rr.Body.String())
+	}
+	if len(resp.Points) != 2 {
+		t.Fatalf("points = %d, want 2", len(resp.Points))
+	}
+	// First point has no predecessor -> 0 bandwidth; second has the delta.
+	if resp.Points[0].R != 0 || resp.Points[0].T != 0 {
+		t.Errorf("first point bandwidth = %d/%d, want 0/0", resp.Points[0].R, resp.Points[0].T)
+	}
+	if resp.Points[1].R != 1000 || resp.Points[1].T != 500 {
+		t.Errorf("second point bandwidth = %d/%d, want 1000/500", resp.Points[1].R, resp.Points[1].T)
+	}
+	if resp.Points[1].C != 25.0 {
+		t.Errorf("second point cpu = %v, want 25.0 (cpu_pct_x10=250)", resp.Points[1].C)
+	}
+	if resp.Points[1].Y != 600 {
+		t.Errorf("second point mem = %d, want 600", resp.Points[1].Y)
 	}
 }

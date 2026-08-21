@@ -139,6 +139,53 @@ func (m *Manager) ResourceHistory(userID int64, since time.Time) ([]db.ResourceS
 	return m.db.ResourceHistory(userID, since.Unix())
 }
 
+// ChartPoint is one minute of chart data for the user panel: CPU percent,
+// memory in MiB, and the bytes transferred during that minute (download rx /
+// upload tx), derived from the cumulative counter deltas between samples.
+type ChartPoint struct {
+	Minute int64   `json:"m"` // unix seconds, minute-floored
+	CPU    float64 `json:"c"` // percent; -1 when unknown/not running
+	Mem    int64   `json:"y"` // MiB; -1 when unknown/not running
+	RX     int64   `json:"r"` // bytes downloaded during this minute
+	TX     int64   `json:"t"` // bytes uploaded during this minute
+}
+
+// ChartHistory returns up to 24h of per-minute chart data for one user. It is
+// a pure DB read (no Incus call): cpu_pct_x10 is stored per-minute, and the
+// per-minute bandwidth is the delta of the cumulative rx/tx counters between
+// consecutive samples. A counter reset or container restart (boot time
+// change) yields a 0-delta for that minute rather than a bogus spike.
+func (m *Manager) ChartHistory(userID int64, since time.Time) ([]ChartPoint, error) {
+	samples, err := m.db.ResourceHistory(userID, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChartPoint, 0, len(samples))
+	var prev *db.ResourceSample
+	for i := range samples {
+		s := &samples[i]
+		p := ChartPoint{Minute: s.SampleMinute, CPU: -1, Mem: -1}
+		if s.State == resourceRunning && s.CPUPercentX10 >= 0 {
+			p.CPU = float64(s.CPUPercentX10) / 10
+		}
+		if s.State == resourceRunning && s.MemoryMiB >= 0 {
+			p.Mem = s.MemoryMiB
+		}
+		// Bandwidth = counter delta vs the previous minute, only when the
+		// container kept running across both samples (same boot, counters
+		// monotonically increasing).
+		if prev != nil && s.State == resourceRunning && prev.State == resourceRunning &&
+			s.BootTime != 0 && s.BootTime == prev.BootTime &&
+			s.RXBytesTotal >= prev.RXBytesTotal && s.TXBytesTotal >= prev.TXBytesTotal {
+			p.RX = s.RXBytesTotal - prev.RXBytesTotal
+			p.TX = s.TXBytesTotal - prev.TXBytesTotal
+		}
+		out = append(out, p)
+		prev = s
+	}
+	return out, nil
+}
+
 // resolvedState picks the persisted state, falling back to a live status for
 // users that have no sample yet (e.g. created after the last background
 // sample), so a brand-new container is not shown as stopped.

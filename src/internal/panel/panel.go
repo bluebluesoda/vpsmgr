@@ -165,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
 	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
 	mux.HandleFunc("/init-script", s.requireAuth(s.requirePost(s.handleInitScript)))
+	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requirePost(s.handleSnapshot)))
 	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))

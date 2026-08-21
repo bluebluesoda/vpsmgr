@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/mgr"
@@ -337,6 +338,24 @@ func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 		Images  []mgr.ManagedImage `json:"images"`
 		Default string             `json:"default"`
 	}{imgs, s.cfg.Incus.Image})
+}
+
+// handleStats returns the last 24h of per-minute resource history for the
+// current user, for the usage charts on the overview page. Pure DB read — no
+// Incus call. Points are [{m, c, y, r, t}] with minute-floored unix seconds,
+// CPU percent (-1 = unknown), memory MiB (-1 = unknown) and per-minute rx/tx
+// bytes derived from the cumulative counter deltas.
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	points, err := s.mgr.ChartHistory(u.ID, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Points []mgr.ChartPoint `json:"points"`
+	}{points})
 }
 
 // handleSnapshot creates a disk-only snapshot of the user's container. The
