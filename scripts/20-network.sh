@@ -17,6 +17,17 @@ net.ipv4.ip_forward=1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 kernel.io_uring_disabled=1
+net.ipv6.conf.all.use_tempaddr = 0
+net.ipv6.conf.default.use_tempaddr = 0
+net.core.netdev_max_backlog = 8192
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.ipv4.tcp_rmem = 8192 262144 4194304
+net.ipv4.tcp_wmem = 4096 16384 4194304
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_slow_start_after_idle = 0
 EOF
 # IPv6 pass-through: forwarding must be on so the host relays container v6.
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
