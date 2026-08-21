@@ -126,7 +126,8 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   lxcfs clamps the visible `SwapTotal` to the host's actual swap, so a
   container never sees more swap than physically exists. Setting
   `incus.swap_ratio` re-applies the allowance to every existing container
-  immediately (no restart); `vps swap-reapply` does the same on demand.
+  immediately (no restart); `vps install` does the same for containers
+  created before swap support (upgrade path).
 - **Bandwidth quota**: each user can carry a monthly bandwidth quota in GiB
   (`users.bandwidth_quota_gb`, 0 = unlimited; counts upload + download of the
   current month). The 60s bandwidth sampler enforces it: over-quota containers

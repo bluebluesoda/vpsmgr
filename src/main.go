@@ -142,10 +142,6 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
-	case "swap-reapply":
-		// Refresh limits.memory.swap on every existing container from the
-		// configured incus.swap_ratio (idempotent).
-		err = cmdSwapReapply()
 	case "ip6":
 		// Root helper behind the sudoers whitelist: validates every argument
 		// before running the pinned ip -6 operations (see main_ip6.go).
@@ -177,7 +173,6 @@ usage:
   vps del <name>
   vps panel-url                    print panel address
   vps config list|set|help         inspect/change config.yaml (per-field validated edits)
-  vps swap-reapply                 re-apply incus.swap_ratio to all containers (auto after config set)
   vps version
 system:
   vps install | serve | ipv6-reapply
@@ -308,6 +303,13 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("unique machine-id: %w", err)
 	}
+	// Swap allowance: refresh limits.memory.swap on containers created before
+	// swap support (or before a swap_ratio change), so an upgrade brings the
+	// whole fleet to the configured incus.swap_ratio.
+	if err := m.ApplySwapToAll(); err != nil {
+		d.Close()
+		return fmt.Errorf("apply swap ratio: %w", err)
+	}
 	// Route inter-container IPv6 through the host (no L2 discovery / MITM),
 	// so a container can reach a peer whose address it knows. A user-controlled
 	// container may use an unsupported guest network stack; do not let that one
@@ -428,25 +430,6 @@ func cmdIPv6Reapply() error {
 	// a manual `vps ipv6-reapply` heal containers that were created before
 	// the host-routed scheme existed or whose networkd config got corrupted.
 	return m.EnsureRoutedIPv6()
-}
-
-// cmdSwapReapply refreshes limits.memory.swap on every existing container from
-// the configured incus.swap_ratio (memory limits untouched). Setting
-// incus.swap_ratio already does this automatically; this command is the manual
-// / repair path (e.g. after containers were created before swap support, or to
-// fix a container whose swap key drifted). Idempotent.
-func cmdSwapReapply() error {
-	c, err := cfg.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	d, err := db.Open(c.Panel.DB)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	m := mgr.New(c, d)
-	return m.ApplySwapToAll()
 }
 
 func writeUnit(name, content string) error {
