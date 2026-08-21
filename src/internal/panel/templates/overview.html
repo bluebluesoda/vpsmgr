@@ -41,6 +41,9 @@ tr:last-child td{border-bottom:0}
 th{color:var(--muted);font-weight:500;white-space:nowrap;text-align:left}
 td{width:auto}
 code{background:var(--code-bg);padding:.05rem .35rem;border-radius:5px;color:var(--code);font-size:.84rem;word-break:break-all}
+code.copyable{cursor:copy;user-select:all;-webkit-user-select:all}
+code.copyable:hover{outline:1px dashed var(--border);outline-offset:2px}
+code.copyable.copied{outline:1px solid var(--ok);outline-offset:2px;color:var(--ok)}
 .pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.78rem}
 .up{background:var(--ok-bg);color:var(--ok-fg)}
 .down{background:var(--err-bg);color:var(--err-fg)}
@@ -132,9 +135,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
-{{if .V4Forward}}<tr><th>IPV4</th><td><code>{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
+{{if .V4Forward}}<tr><th>IPV4</th><td><code class="copyable">{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code>{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code>22</code></span>{{end}}</td></tr>
-{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}</td></tr>{{end}}
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code class="copyable">{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}</td></tr>{{end}}
 </table>
 </div>
 
@@ -202,30 +205,30 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</h2>
 <p class="muted">{{if eq .Lang "zh"}}下次重装系统后将以 root 身份在容器内自动运行此脚本（仅影响你自己的机器）。输出写入容器内 /var/log/vpsmgr-init.log；支持 #!/bin/bash 等 shebang；上限 64 KiB。{{else}}Run automatically as root inside your container after the next reinstall (only affects your own machine). Output is logged to /var/log/vpsmgr-init.log inside the container; shebangs like #!/bin/bash are honored; max 64 KiB.{{end}}</p>
-<form action="{{.Prefix}}/init-script" method="post">
-<textarea name="script" rows="8" spellcheck="false" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
+<form action="{{.Prefix}}/init-script" method="post" id="initForm">
+<textarea name="script" rows="8" spellcheck="false" id="initScript" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
-<div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button></div>
+<div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button><button class="btn" type="button" id="sshKeyBtn">{{if eq .Lang "zh"}}快速添加 SSH 公钥{{else}}Add SSH key{{end}}</button></div>
 </form>
 </div>
 
 <div class="card chart-card">
 <h2>{{if eq .Lang "zh"}}CPU 使用率{{else}}CPU usage{{end}}<span class="legend"><span class="dot" style="background:var(--accent)"></span>{{if eq .Lang "zh"}}每分钟平均 %{{else}}per-minute avg %{{end}}</span></h2>
 <canvas id="chartCpu" height="200"></canvas>
-<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
+<div class="caxis"><span>{{if eq .Lang "zh"}}24h 前{{else}}24h ago{{end}}</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
 </div>
 
 <div class="card chart-card">
 <h2>{{if eq .Lang "zh"}}内存使用{{else}}Memory usage{{end}}<span class="legend"><span class="dot" style="background:#8b5cf6"></span>{{if eq .Lang "zh"}}已用 MiB{{else}}used MiB{{end}}</span></h2>
 <canvas id="chartMem" height="200"></canvas>
-<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
+<div class="caxis"><span>{{if eq .Lang "zh"}}24h 前{{else}}24h ago{{end}}</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
 </div>
 
 <div class="card chart-card">
 <h2>{{if eq .Lang "zh"}}流量{{else}}Bandwidth{{end}}<span class="legend"><span class="dot" style="background:#f59e0b"></span>{{if eq .Lang "zh"}}上传{{else}}up{{end}}<span class="dot" style="background:#10b981"></span>{{if eq .Lang "zh"}}下载{{else}}down{{end}}</span></h2>
 <canvas id="chartBw" height="200"></canvas>
-<div class="caxis"><span>24h 前</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
+<div class="caxis"><span>{{if eq .Lang "zh"}}24h 前{{else}}24h ago{{end}}</span><span>{{if eq .Lang "zh"}}现在{{else}}now{{end}}</span></div>
 </div>
 
 </div>
@@ -255,6 +258,19 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="actions">
 <button class="btn accent" type="button" id="dispCopy">{{if eq .Lang "zh"}}复制密码{{else}}Copy password{{end}}</button>
 <button class="btn" type="button" id="dispClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+</div>
+</div>
+</div>
+
+<div class="overlay" id="sshKeyModal">
+<div class="modal">
+<h3>{{if eq .Lang "zh"}}添加 SSH 公钥{{else}}Add SSH public key{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}粘贴你的 SSH 公钥（形如 ssh-ed25519 AAAA... 或 ssh-rsa AAAA...）。确认后会把下面这段追加到初始化脚本开头，重装后 root 即可用该密钥登录：{{else}}Paste your SSH public key (e.g. ssh-ed25519 AAAA... or ssh-rsa AAAA...). On confirm, this snippet is prepended to your init script so root can log in with that key after reinstall:{{end}}</p>
+<pre class="pw-display" style="text-align:left;white-space:pre-wrap;word-break:break-all" id="sshKeySnippet"></pre>
+<div class="frow"><label>{{if eq .Lang "zh"}}公钥{{else}}Public key{{end}}</label><textarea id="sshKeyInput" rows="3" spellcheck="false" placeholder="ssh-ed25519 AAAA..."></textarea></div>
+<div class="actions">
+<button class="btn" type="button" id="sshKeyCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+<button class="btn accent" type="button" id="sshKeyOk">{{if eq .Lang "zh"}}插入脚本{{else}}Insert into script{{end}}</button>
 </div>
 </div>
 </div>
@@ -394,6 +410,26 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     else{var ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();done.call(this);}
   });
   dispModal.addEventListener('click',function(e){if(e.target===dispModal)closeDisp();});
+  // Click-to-copy for IP addresses in the overview table. Uses the clipboard
+  // API when available, falls back to a hidden textarea + execCommand.
+  document.querySelectorAll('code.copyable').forEach(function(el){
+    el.addEventListener('click',function(){
+      var txt=el.textContent.trim();
+      function done(ok){
+        el.classList.add('copied');
+        setTimeout(function(){el.classList.remove('copied');},1200);
+        if(ok)toast({{if eq .Lang "zh"}}'已复制 '+txt{{else}}'Copied '+txt{{end}},false);
+      }
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(txt).then(function(){done(true);},function(){done(false);});
+      }else{
+        var ta=document.createElement('textarea');
+        ta.value=txt;document.body.appendChild(ta);ta.select();
+        try{document.execCommand('copy');done(true);}catch(e){done(false);}
+        ta.remove();
+      }
+    });
+  });
   // Root password reset takes ~10s+; show a busy state on the button so it
   // cannot be clicked again while the POST is in flight.
   var resetBtn=document.getElementById('resetBtn');
@@ -402,6 +438,55 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     rf.addEventListener('submit',function(){
       resetBtn.classList.add('pending');resetBtn.disabled=true;
       resetBtn.textContent={{if eq .Lang "zh"}}'重置中...'{{else}}'Resetting...'{{end}};
+    });
+  }
+  // ---- quick add SSH public key to the init script ----
+  var sshBtn=document.getElementById('sshKeyBtn'),sshModal=document.getElementById('sshKeyModal');
+  if(sshBtn&&sshModal){
+    var sshInput=document.getElementById('sshKeyInput'),sshSnippet=document.getElementById('sshKeySnippet');
+    var sshCancel=document.getElementById('sshKeyCancel'),sshOk=document.getElementById('sshKeyOk');
+    function sshKeySnippetFor(k){
+      return 'mkdir -p /root/.ssh && chmod 700 /root/.ssh\n'+
+             'echo \''+k+'\' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys';
+    }
+    // Accept exactly `type base64` (no trailing comment, no newline, no
+    // quotes) so the generated `echo '...'` line can never break. The base64
+    // body must be a realistic length (shortest real key is ed25519 at 68
+    // chars; 32 is a safe floor).
+    function sshKeyValid(k){ return /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+[A-Za-z0-9+/=]{32,}$/.test(k); }
+    sshBtn.addEventListener('click',function(){sshInput.value='';sshSnippet.textContent='';sshModal.classList.add('show');sshInput.focus();});
+    sshCancel.addEventListener('click',function(){sshModal.classList.remove('show');});
+    sshModal.addEventListener('click',function(e){if(e.target===sshModal)sshModal.classList.remove('show');});
+    sshInput.addEventListener('input',function(){
+      sshInput.classList.remove('bad');
+      var k=sshInput.value.trim();
+      sshSnippet.textContent=k?sshKeySnippetFor(k):'';
+    });
+    sshOk.addEventListener('click',function(){
+      var k=sshInput.value.trim();
+      if(!sshKeyValid(k)){sshInput.classList.add('bad');sshInput.focus();return;}
+      var ta=document.getElementById('initScript');
+      var block=sshKeySnippetFor(k)+'\n\n';
+      // insert after the shebang line so the snippet stays valid
+      var m=ta.value.match(/^#![^\n]*\n/);
+      var cur=ta.value;
+      if(cur.indexOf(block)!==-1){
+        sshModal.classList.remove('show');
+        toast({{if eq .Lang "zh"}}'该公钥已在脚本中'{{else}}'This key is already in the script'{{end}},false);
+        return;
+      }
+      var insertAt=m?m[0].length:0;
+      ta.value=cur.slice(0,insertAt)+block+cur.slice(insertAt);
+      sshModal.classList.remove('show');
+      // save immediately so the insert is not lost
+      var body=new URLSearchParams(new FormData(document.getElementById('initForm')));
+      fetch(P+'/init-script',{method:'POST',body:body,credentials:'same-origin'})
+        .then(function(r){return r.text();})
+        .then(function(t){
+          var ok=!/error:/i.test(t);
+          toast(ok?{{if eq .Lang "zh"}}'已保存，重装系统后生效'{{else}}'Saved — takes effect after reinstall'{{end}}:{{if eq .Lang "zh"}}'保存失败：'+t{{else}}'Save failed: '+t{{end}},!ok);
+        })
+        .catch(function(){toast({{if eq .Lang "zh"}}'保存失败'{{else}}'Save failed'{{end}},true);});
     });
   }
 })();
