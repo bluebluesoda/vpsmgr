@@ -429,7 +429,17 @@ func cmdIPv6Reapply() error {
 	// Also re-apply the per-container routed-IPv6 config, so the boot unit and
 	// a manual `vps ipv6-reapply` heal containers that were created before
 	// the host-routed scheme existed or whose networkd config got corrupted.
-	return m.EnsureRoutedIPv6()
+	// One guest that rejects its config (e.g. a user-broken networkd) must not
+	// fail the whole pass: log it and move on, so vps-ipv6.service stays up and
+	// the panel comes back. Genuine host-level errors still abort.
+	if err := m.EnsureRoutedIPv6(); err != nil {
+		var guestErr *mgr.RoutedIPv6Error
+		if !errors.As(err, &guestErr) {
+			return err
+		}
+		log.Printf("warning: routed IPv6 was not applied to container %s: %v; skipping", guestErr.Container, guestErr.Err)
+	}
+	return nil
 }
 
 func writeUnit(name, content string) error {
