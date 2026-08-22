@@ -293,8 +293,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Msg:        msg,
 		Err:        errMsg,
 	}
-	// Resource usage comes from the persisted sampler snapshot (five-minute CPU
-	// average plus latest memory/disk), never from a live Incus sample.
+	// Resource usage comes from the persisted sampler snapshot (fifteen-minute
+	// CPU average plus latest memory/disk), never from a live Incus sample.
 	d.CPUUse, d.MemUse, d.DiskUsed = s.mgr.PanelResources(u.ID)
 	// One `incus list` call only for the container status (must be live).
 	// Bandwidth is read from the DB — the background sampler writes it every 60s.
