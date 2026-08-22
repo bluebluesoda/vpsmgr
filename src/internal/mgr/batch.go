@@ -130,7 +130,7 @@ func readUptime() time.Duration {
 }
 
 // UserStatus is one row of the admin user table: the DB user record plus the
-// latest persisted resource sample and five-minute CPU average.
+// latest persisted resource sample and fifteen-minute CPU average.
 type UserStatus struct {
 	User     *db.User
 	State    string
@@ -154,7 +154,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	average, err := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	average, err := m.db.AverageCPU(time.Now().Add(-15 * time.Minute).Unix())
 	if err != nil {
 		return nil, err
 	}

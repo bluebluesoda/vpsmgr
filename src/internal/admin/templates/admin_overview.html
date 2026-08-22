@@ -63,6 +63,8 @@ form.inline { display: inline; }
 @media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
 .field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
 @media (prefers-color-scheme: dark) { .field input { background: #15171b; border-color: #3a3f47; } }
+.field select.field-select { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
+@media (prefers-color-scheme: dark) { .field select.field-select { background: #15171b; border-color: #3a3f47; } }
 .cpu-row { display: flex; gap: 4px; align-items: stretch; }
 .cpu-row input { flex: 1; min-width: 0; }
 .cpu-row .step { display: flex; flex-direction: column; }
@@ -158,7 +160,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
-        <select name="ipv6" id="cfIpv6" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;color:inherit;">
+        <select name="ipv6" id="cfIpv6" class="field-select">
           <option value="auto" selected>{{if eq .Lang "zh"}}自动分配（第一个空闲）{{else}}Auto (first free){{end}}</option>
           {{range .PoolFree}}<option value="{{.}}">{{.}}</option>{{end}}
           <option value="none">{{if eq .Lang "zh"}}不分配 V6{{else}}No IPv6{{end}}</option>
@@ -180,7 +182,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}状态{{else}}State{{end}}</th>
           <th>{{if eq .Lang "zh"}}端口/SSH{{else}}Ports/SSH{{end}}</th>
           <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
-          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}5分钟CPU{{else}}5m CPU{{end}}<span class="ind"></span></th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}15分钟CPU{{else}}15m CPU{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}内存{{else}}Mem{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}<span class="ind"></span></th>
@@ -371,7 +373,7 @@ function del(name){
   var qc = document.getElementById('quotaCpu');
   if (qc) qc.addEventListener('input', function(){ syncCpuStep(qc); });
 })();
-// Clickable column headers for Name / 5m CPU / Mem / Procs / Disk: cycle
+// Clickable column headers for Name / 15m CPU / Mem / Procs / Disk: cycle
 // ascending -> descending -> default. Only one column sorts at a time; the
 // default state restores the original render order.
 (function(){
