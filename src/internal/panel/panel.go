@@ -158,7 +158,8 @@ type pageData struct {
 	IPv6Block        string // the /112 block the container owns (informational)
 	Snapshots        []snapshotRow
 	SnapshotLimit    int // configured per-container snapshot cap (for display)
-	SSHKeys          []sshKeyRow
+	SSHKeys            []sshKeyRow
+	MaxNotesPlaintext  int // sticky-notes plaintext byte cap (client-side check)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -180,6 +181,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))
 	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requirePost(s.handleSnapshotRestore)))
 	mux.HandleFunc("/ssh-keys", s.requireAuth(s.requirePost(s.handleSSHKeys)))
+	mux.HandleFunc("/notes", s.requireAuth(s.handleNotes))
+	mux.HandleFunc("/notes/reset", s.requireAuth(s.requirePost(s.handleNotesReset)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +300,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		SSH:        "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
 		V4Forward:  s.mgr.V4ForwardLive(),
 		InitScript: u.InitScript,
+		MaxNotesPlaintext: cfg.MaxNotesPlaintextBytes,
 		QuotaCPU:   mgr.FormatCPU(u.CPU),
 		QuotaMem:   itoa(u.MemMB) + " MiB",
 		QuotaDisk:  itoa(u.DiskGB) + " GiB",
