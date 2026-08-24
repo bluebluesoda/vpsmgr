@@ -756,6 +756,29 @@ func TestLoginAsRequiresAdminAuth(t *testing.T) {
 	}
 }
 
+// TestLoginAsDisabledUserPanel guards the disabled-panel edge case: with no
+// user URLPath, /login-as must refuse instead of setting a Path="/" cookie.
+func TestLoginAsDisabledUserPanel(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	srv.cfg.Panel.URLPath = "" // user panel disabled
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+	rr := doReq(t, h, http.MethodPost, prefix+"/login-as", url.Values{"name": {"alice"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login-as = %d, want 302", rr.Code)
+	}
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			t.Error("must not set a user-panel cookie when the user panel is disabled")
+		}
+	}
+}
+
 // TestFlashCarriesData verifies the post-create flash delivers the username as
 // opaque data so the modal can offer "log in as this user".
 func TestFlashCarriesData(t *testing.T) {

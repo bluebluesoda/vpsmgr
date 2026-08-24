@@ -177,7 +177,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
 {{if .V4Forward}}<tr><th>IPV4</th><td><code class="copyable">{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
-<tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code>{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code>22</code></span>{{end}}</td></tr>
+<tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code class="copyable" data-copy="ssh -p {{.SSHPort}} root@{{.PublicIP}}" title="ssh -p {{.SSHPort}} root@{{.PublicIP}}">{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code class="copyable" data-copy="ssh -p 22 root@{{.IPv6}}" title="ssh -p 22 root@{{.IPv6}}">22</code></span>{{end}}</td></tr>
 {{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code class="copyable">{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}</td></tr>{{end}}
 </table>
 </div>
@@ -531,11 +531,13 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     else{var ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();done.call(this);}
   });
   dispModal.addEventListener('click',function(e){if(e.target===dispModal)closeDisp();});
-  // Click-to-copy for IP addresses in the overview table. Uses the clipboard
-  // API when available, falls back to a hidden textarea + execCommand.
+  // Click-to-copy for IP addresses and SSH port blocks in the overview table.
+  // A data-copy attribute overrides what is copied (e.g. a full ssh command)
+  // without changing what the block displays. Uses the clipboard API when
+  // available, falls back to a hidden textarea + execCommand.
   document.querySelectorAll('code.copyable').forEach(function(el){
     el.addEventListener('click',function(){
-      var txt=el.textContent.trim();
+      var txt=el.getAttribute('data-copy')||el.textContent.trim();
       function done(ok){
         el.classList.add('copied');
         setTimeout(function(){el.classList.remove('copied');},1200);
