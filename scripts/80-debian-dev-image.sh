@@ -69,7 +69,7 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends openssh-server ca-certificates curl wget less bind9-dnsutils openssh-client unzip nano
 # dev toolchain. --no-install-recommends means pip/venv are NOT pulled in by
 # python3 (Debian disables ensurepip), so they are explicit packages here.
-apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv git sqlite3 ripgrep jq gh sshpass
+apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv git sqlite3 ripgrep jq gh sshpass rsync
 # hard gate: never publish an image without sshd baked in (mgr.Provision does
 # NOT rewrite sshd config for vpsmgr/* images)
 command -v sshd >/dev/null || { echo "sshd install failed" >&2; exit 1; }
