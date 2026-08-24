@@ -782,18 +782,41 @@ func (c *Client) EnsureImage(alias string) error {
 // ImageAliases returns every image alias stored locally, e.g. to enumerate the
 // managed reinstall images (`vpsmgr/*-sshd`).
 func (c *Client) ImageAliases() ([]string, error) {
+	infos, err := c.ImageAliasesWithDesc()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(infos))
+	for _, i := range infos {
+		out = append(out, i.Alias)
+	}
+	return out, nil
+}
+
+// ImageInfo is one local image's alias with its description (e.g. the Arch
+// rolling build records "Archlinux2608" so the panel can show the build date).
+type ImageInfo struct {
+	Alias       string
+	Description string
+}
+
+// ImageAliasesWithDesc is ImageAliases plus each alias's image description, so
+// callers can surface build-time metadata (like the rolling snapshot version)
+// in the reinstall dialog. Same single /1.0/images?recursion=1 call.
+func (c *Client) ImageAliasesWithDesc() ([]ImageInfo, error) {
 	var images []struct {
 		Aliases []struct {
 			Name string `json:"name"`
 		} `json:"aliases"`
+		Description string `json:"description"`
 	}
 	if err := c.get("/1.0/images?recursion=1", &images); err != nil {
 		return nil, err
 	}
-	var out []string
+	var out []ImageInfo
 	for _, img := range images {
 		for _, a := range img.Aliases {
-			out = append(out, a.Name)
+			out = append(out, ImageInfo{Alias: a.Name, Description: img.Description})
 		}
 	}
 	return out, nil
