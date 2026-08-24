@@ -199,7 +199,9 @@ type SnapshotsCfg struct {
 	// Limit caps how many snapshots a user may keep per container. The default
 	// of 1 gives a light safety net; a snapshot is disk-only (no memory) and
 	// lives under the container in Incus, so it is deleted together with the
-	// container on reinstall/delete. 0 or negative is treated as 1.
+	// container on reinstall/delete. 0 disables snapshots: users cannot create
+	// new ones, but existing snapshots are left untouched. Negative is treated
+	// as 0 (the config validator rejects negatives anyway).
 	Limit int `yaml:"limit"`
 }
 

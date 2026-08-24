@@ -875,10 +875,13 @@ var validSnapName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 // API. Exported for tests and the panel.
 func ValidSnapName(v string) bool { return validSnapName.MatchString(v) }
 
-// SnapshotLimit returns the configured per-container snapshot cap.
+// SnapshotLimit returns the configured per-container snapshot cap. 0 (or a
+// negative value, which the config validator forbids anyway) means snapshots
+// are disabled: users cannot create new ones, but existing snapshots are left
+// untouched. Any positive value is the hard cap.
 func (m *Manager) SnapshotLimit() int {
-	if m.cfg.Snapshots.Limit < 1 {
-		return 1
+	if m.cfg.Snapshots.Limit < 0 {
+		return 0
 	}
 	return m.cfg.Snapshots.Limit
 }
@@ -903,12 +906,16 @@ func (m *Manager) SnapshotCreate(name string) error {
 	if err != nil {
 		return err
 	}
+	limit := m.SnapshotLimit()
+	if limit == 0 {
+		return errors.New("snapshots are disabled")
+	}
 	snaps, err := m.lx.SnapshotList(u.Name)
 	if err != nil {
 		return err
 	}
-	if len(snaps) >= m.SnapshotLimit() {
-		return fmt.Errorf("snapshot limit reached (%d)", m.SnapshotLimit())
+	if len(snaps) >= limit {
+		return fmt.Errorf("snapshot limit reached (%d)", limit)
 	}
 	return m.lx.SnapshotCreate(u.Name, snapName())
 }
