@@ -107,6 +107,11 @@ footer a{color:var(--muted);text-decoration:underline}
 .imglist{display:flex;gap:.45rem;flex-wrap:wrap;margin:.35rem 0 .7rem}
 .imgopt{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--border);border-radius:7px;padding:.3rem .6rem;cursor:pointer}
 .imgopt:has(input:checked){border-color:var(--accent);color:var(--accent)}
+.keyrow{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;margin-bottom:.45rem}
+.keyrow .kact{width:1rem;height:1rem;flex:none;cursor:pointer}
+.keyrow .kname{flex:0 0 9rem;min-width:0}
+.keyrow .kval{flex:1 1 16rem;min-width:0;margin-bottom:0}
+.keyrow .kdel{flex:none}
 .modal h3{margin:0 0 .7rem;font-size:1rem;color:var(--head)}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
@@ -169,6 +174,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
 <button class="btn violet" id="snapBtn">{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</button>
+<button class="btn" id="sshKeysBtn">{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 </div>
@@ -209,7 +215,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <textarea name="script" rows="8" spellcheck="false" id="initScript" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
-<div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button><button class="btn" type="button" id="sshKeyBtn">{{if eq .Lang "zh"}}快速添加 SSH 公钥{{else}}Add SSH key{{end}}</button></div>
+<div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button></div>
 </form>
 </div>
 
@@ -262,15 +268,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 </div>
 </div>
 
-<div class="overlay" id="sshKeyModal">
-<div class="modal">
-<h3>{{if eq .Lang "zh"}}添加 SSH 公钥{{else}}Add SSH public key{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}粘贴你的 SSH 公钥（形如 ssh-ed25519 AAAA... 或 ssh-rsa AAAA...）。确认后会把下面这段追加到初始化脚本开头，重装后 root 即可用该密钥登录：{{else}}Paste your SSH public key (e.g. ssh-ed25519 AAAA... or ssh-rsa AAAA...). On confirm, this snippet is prepended to your init script so root can log in with that key after reinstall:{{end}}</p>
-<pre class="pw-display" style="text-align:left;white-space:pre-wrap;word-break:break-all" id="sshKeySnippet"></pre>
-<div class="frow"><label>{{if eq .Lang "zh"}}公钥{{else}}Public key{{end}}</label><textarea id="sshKeyInput" rows="3" spellcheck="false" placeholder="ssh-ed25519 AAAA..."></textarea></div>
+<div class="overlay" id="sshKeysModal">
+<div class="modal" style="max-width:560px">
+<h3>{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}勾选要启用的密钥，保存后立即写入机器的 ~/.ssh/authorized_keys（仅追加，不会覆盖或删除你手动添加的其他密钥）。保存时只保留纯公钥（去掉尾部注释）；名称留空时自动取密钥的注释作为名称。{{else}}Check the keys to enable; saving writes them into ~/.ssh/authorized_keys immediately (append-only — keys you added by hand are never touched). Only the clean key is stored (trailing comment stripped); an empty name falls back to the key's comment.{{end}}</p>
+<div id="sshKeyList">
+{{range .SSHKeys}}
+<div class="keyrow" data-id="{{.ID}}">
+<input type="checkbox" class="kact"{{if .Active}} checked{{end}}>
+<input type="text" class="kname" value="{{.Name}}" placeholder="name">
+<input type="text" class="kval" value="{{.Key}}" readonly spellcheck="false">
+<button type="button" class="btn danger kdel">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+</div>
+{{end}}
+</div>
+<div class="btnrow"><button type="button" class="btn ok" id="sshKeyAdd">{{if eq .Lang "zh"}}添加公钥{{else}}Add key{{end}}</button></div>
 <div class="actions">
-<button class="btn" type="button" id="sshKeyCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
-<button class="btn accent" type="button" id="sshKeyOk">{{if eq .Lang "zh"}}插入脚本{{else}}Insert into script{{end}}</button>
+<button class="btn" type="button" id="sshKeysClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+<button class="btn accent" type="button" id="sshKeysSave">{{if eq .Lang "zh"}}保存并生效{{else}}Save &amp; apply{{end}}</button>
 </div>
 </div>
 </div>
@@ -440,55 +455,67 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       resetBtn.textContent={{if eq .Lang "zh"}}'重置中...'{{else}}'Resetting...'{{end}};
     });
   }
-  // ---- quick add SSH public key to the init script ----
-  var sshBtn=document.getElementById('sshKeyBtn'),sshModal=document.getElementById('sshKeyModal');
-  if(sshBtn&&sshModal){
-    var sshInput=document.getElementById('sshKeyInput'),sshSnippet=document.getElementById('sshKeySnippet');
-    var sshCancel=document.getElementById('sshKeyCancel'),sshOk=document.getElementById('sshKeyOk');
-    function sshKeySnippetFor(k){
-      return 'mkdir -p /root/.ssh && chmod 700 /root/.ssh\n'+
-             'echo \''+k+'\' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys';
-    }
-    // Parse `type base64 [comment]`: only the type and base64 body are used.
-    // Anything after the body is a comment (e.g. "Generated By Termius") and
-    // is dropped — both in the preview and on insert — so the echo line
-    // always carries just the real key. The body is greedy over the base64
-    // alphabet and stops at the first space, so comments (any characters)
-    // never need to be validated. The body must be a realistic length
-    // (shortest real key is ed25519 at 68 chars; 32 is a safe floor).
-    function sshKeyParts(k){
-      var m=k.trim().match(/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+([A-Za-z0-9+/=]{32,})/);
-      return m?m[1]+' '+m[2]:null;
-    }
-    sshBtn.addEventListener('click',function(){sshInput.value='';sshSnippet.textContent='';sshModal.classList.add('show');sshInput.focus();});
-    sshCancel.addEventListener('click',function(){sshModal.classList.remove('show');});
-    sshModal.addEventListener('click',function(e){if(e.target===sshModal)sshModal.classList.remove('show');});
-    sshInput.addEventListener('input',function(){
-      sshInput.classList.remove('bad');
-      var key=sshKeyParts(sshInput.value);
-      // preview always shows exactly what insert would add: the comment is stripped
-      sshSnippet.textContent=key?sshKeySnippetFor(key):'';
-    });
-    sshOk.addEventListener('click',function(){
-      var k=sshInput.value.trim();
-      var key=sshKeyParts(k);
-      if(!key){sshInput.classList.add('bad');sshInput.focus();return;}
-      var ta=document.getElementById('initScript');
-      var block=sshKeySnippetFor(key)+'\n\n';
-      // insert after the shebang line so the snippet stays valid
-      var m=ta.value.match(/^#![^\n]*\n/);
-      var cur=ta.value;
-      if(cur.indexOf(block)!==-1){
-        sshModal.classList.remove('show');
-        toast({{if eq .Lang "zh"}}'该公钥已在脚本中'{{else}}'This key is already in the script'{{end}},false);
-        return;
+  // ---- SSH key management panel ----
+  var LANG='{{.Lang}}';
+  var keyBtn=document.getElementById('sshKeysBtn'),keyModal=document.getElementById('sshKeysModal');
+  if(keyBtn&&keyModal){
+    var keyList=document.getElementById('sshKeyList');
+    var keyClose=document.getElementById('sshKeysClose');
+    var keySave=document.getElementById('sshKeysSave');
+    function keyRowHTML(id,name,key,existing){
+      var div=document.createElement('div');div.className='keyrow';
+      if(id)div.dataset.id=id;
+      var act=document.createElement('input');act.type='checkbox';act.className='kact';act.checked=true;
+      var nm=document.createElement('input');nm.type='text';nm.className='kname';nm.value=name||'';nm.placeholder='name';
+      var kv=document.createElement('input');kv.type='text';kv.className='kval';kv.value=key||'';kv.placeholder='ssh-ed25519 AAAA...';kv.spellcheck=false;
+      if(existing)kv.readOnly=true;
+      var del=document.createElement('button');del.type='button';del.className='btn danger kdel';
+      del.textContent=(LANG==='zh')?'删除':'Delete';
+      del.addEventListener('click',function(){div.remove();});
+      div.appendChild(act);div.appendChild(nm);div.appendChild(kv);div.appendChild(del);
+      if(!existing){
+        // auto-fill the name from the key's comment when the name is empty
+        kv.addEventListener('input',function(){
+          if(nm.value)return;
+          var m=kv.value.trim().match(/^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+\S+\s+(.+)$/);
+          if(m)nm.value=m[1];
+        });
       }
-      var insertAt=m?m[0].length:0;
-      ta.value=cur.slice(0,insertAt)+block+cur.slice(insertAt);
-      sshModal.classList.remove('show');
-      // Submit the form natively: the handler 302-redirects and the flash
-      // message ("ok: init script saved" / "error: ...") is shown on reload.
-      document.getElementById('initForm').submit();
+      return div;
+    }
+    keyBtn.addEventListener('click',function(){keyModal.classList.add('show');});
+    keyClose.addEventListener('click',function(){keyModal.classList.remove('show');});
+    keyModal.addEventListener('click',function(e){if(e.target===keyModal)keyModal.classList.remove('show');});
+    document.getElementById('sshKeyAdd').addEventListener('click',function(){
+      keyList.appendChild(keyRowHTML(0,'','',false));
+      var i=keyList.lastElementChild.querySelector('.kval');if(i)i.focus();
+    });
+    keySave.addEventListener('click',function(){
+      var keys=[];
+      keyList.querySelectorAll('.keyrow').forEach(function(row){
+        keys.push({
+          id: row.dataset.id?parseInt(row.dataset.id,10):0,
+          name: row.querySelector('.kname').value,
+          key: row.querySelector('.kval').value,
+          active: row.querySelector('.kact').checked
+        });
+      });
+      keySave.classList.add('pending');keySave.disabled=true;
+      fetch(P+'/ssh-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:keys}),credentials:'same-origin'})
+        .then(function(r){return r.json();}).then(function(d){
+          keySave.classList.remove('pending');keySave.disabled=false;
+          if(!d||!d.ok){toast((d&&d.error)||'error',true);return;}
+          keyList.innerHTML='';
+          (d.keys||[]).forEach(function(k){
+            var row=keyRowHTML(k.id,k.name,k.key,true);
+            row.querySelector('.kact').checked=k.active;
+            keyList.appendChild(row);
+          });
+          toast(d.warning||((LANG==='zh')?'密钥已保存并生效':'Keys saved and applied'),false);
+        }).catch(function(){
+          keySave.classList.remove('pending');keySave.disabled=false;
+          toast('error',true);
+        });
     });
   }
 })();
