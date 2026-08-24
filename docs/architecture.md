@@ -259,8 +259,9 @@ afterwards. Expect the published image to be roughly 3-4x the size of
 ## Optional Arch Linux image (`vpsmgr/arch-sshd`)
 
 `90-arch-image.sh` (also NOT part of `install.sh`) builds an Arch Linux image
-from the rolling upstream `images:archlinux/current` — openssh, ca-certificates,
-curl/wget, less, bind-tools, openssh-client, unzip, nano via `pacman -Syu`
+from the rolling upstream `images:archlinux/current` — openssh (both sshd and
+the ssh client on Arch), ca-certificates, curl/wget, less, bind-tools, unzip,
+nano via `pacman -Syu`
 (so the snapshot is current), with pacman caches/logs and the machine-id cleaned
 before publishing and the base deleted afterwards. Because Arch is a rolling
 release the script does NOT skip when the image exists: every run deletes the
