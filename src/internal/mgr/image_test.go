@@ -74,6 +74,17 @@ func TestCollectManagedImages(t *testing.T) {
 				{Alias: "vpsmgr/fedora-sshd", Label: "fedora"},
 			},
 		},
+		{
+			name:         "arch with label and rolling-release desc",
+			defaultAlias: "vpsmgr/debian-sshd",
+			aliases:      []string{"vpsmgr/arch-sshd", "vpsmgr/debian-sshd"},
+			want: []ManagedImage{
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/arch-sshd", Label: "Arch Linux",
+					DescZh: "滚动发行版，持续获取最新软件", DescEn: "Rolling release — always the latest packages"},
+			},
+		},
 	}
 	for _, c := range cases {
 		got := collectManagedImages(c.defaultAlias, c.aliases)

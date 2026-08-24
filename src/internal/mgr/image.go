@@ -20,6 +20,7 @@ var imageLabels = map[string]string{
 	"vpsmgr/alma-sshd":       "Alma 9",
 	"vpsmgr/rocky-sshd":      "Rocky 9",
 	"vpsmgr/opensuse-sshd":   "openSUSE Leap 16",
+	"vpsmgr/arch-sshd":       "Arch Linux",
 }
 
 // imageDesc maps known managed image aliases to a short one-line blurb shown in
@@ -31,6 +32,7 @@ var imageDesc = map[string][2]string{
 	"vpsmgr/alma-sshd":       {"RHEL 复刻版镜像", "RHEL-compatible rebuild"},
 	"vpsmgr/rocky-sshd":      {"RHEL 复刻版镜像", "RHEL-compatible rebuild"},
 	"vpsmgr/opensuse-sshd":   {"SUSE 系发行版", "SUSE-family distro"},
+	"vpsmgr/arch-sshd":       {"滚动发行版，持续获取最新软件", "Rolling release — always the latest packages"},
 }
 
 // collectManagedImages picks the reinstallable images out of a raw alias list:

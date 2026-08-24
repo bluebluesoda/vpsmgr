@@ -256,6 +256,21 @@ machine-id are cleaned before publishing, and the base image is deleted
 afterwards. Expect the published image to be roughly 3-4x the size of
 `vpsmgr/debian-sshd` — Go and Node dominate.
 
+## Optional Arch Linux image (`vpsmgr/arch-sshd`)
+
+`90-arch-image.sh` (also NOT part of `install.sh`) builds an Arch Linux image
+from the rolling upstream `images:archlinux/current` — openssh, ca-certificates,
+curl/wget, less, bind-tools, openssh-client, unzip, nano via `pacman -Syu`
+(so the snapshot is current), with pacman caches/logs and the machine-id cleaned
+before publishing and the base deleted afterwards. Because Arch is a rolling
+release the script does NOT skip when the image exists: every run deletes the
+old `vpsmgr/arch-sshd`, re-pulls the latest upstream base and rebuilds fresh.
+The published image's description records the build's version code
+(`Archlinux<YYMM>`, e.g. `Archlinux2607` for a 2026-07 build), visible via
+`incus image show vpsmgr/arch-sshd`. Networking follows the openSUSE pattern:
+Arch ships systemd-networkd, so the panel's networkd branch configures IPv6 at
+runtime — nothing to bake.
+
 ## Per-container provisioning
 
 `mgr.Provision` runs inside every new or reinstalled container and:
