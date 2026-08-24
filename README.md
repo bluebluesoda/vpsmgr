@@ -20,7 +20,7 @@
 
 推荐使用 Ubuntu 24.04。Ubuntu 22+ / Debian 12+ 均可使用；Debian 需要编译内核模块，安装时间较长。
 
-最低建议：1 核、1.5 GB 内存、15 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
+最低建议：1 核、1 GB 内存、15 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
 
 ```sh
 git clone https://github.com/bluebluesoda/vpsmgr.git
