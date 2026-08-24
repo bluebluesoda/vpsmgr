@@ -581,7 +581,7 @@ func TestImagesEndpoint(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /images = %d, want 200", rr.Code)
 	}
-	for _, want := range []string{"vpsmgr/debian-sshd", "Debian 13", `"default":"vpsmgr/debian-sshd"`} {
+	for _, want := range []string{"vpsmgr/debian-sshd", "Debian 13", `"default":"vpsmgr/debian-sshd"`, `"desc_zh":"轻巧的原味 Debian 13 系统"`, `"desc_en":"Lightweight stock Debian 13"`} {
 		if !strings.Contains(rr.Body.String(), want) {
 			t.Errorf("/images body missing %q: %s", want, rr.Body.String())
 		}
