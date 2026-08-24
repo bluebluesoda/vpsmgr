@@ -115,6 +115,7 @@ footer a{color:var(--muted);text-decoration:underline}
 .imgic svg{display:block;width:28px;height:28px}
 #reDesc{min-height:1.2em;margin-bottom:.6rem;font-size:.86rem}
 .modal-wide{max-width:620px}
+.re-warn{margin-top:.7rem;text-align:center;color:var(--danger);font-weight:600;font-size:.9rem}
 .keyrow{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;margin-bottom:.45rem}
 .keyrow .kact{width:1rem;height:1rem;flex:none;cursor:pointer}
 .keyrow .kname{flex:0 0 9rem;min-width:0}
@@ -434,7 +435,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。{{else}}Deletes all data and rebuilds with the same IP/ports/quota.{{end}}<br><b style="color:var(--danger)">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</b></p>
+<p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。{{else}}Deletes all data and rebuilds with the same IP/ports/quota.{{end}}</p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
@@ -443,6 +444,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>
 </div>
+<div class="re-warn">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</div>
 </form>
 </div>
 </div>
