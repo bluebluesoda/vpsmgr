@@ -512,6 +512,14 @@ func (s *Server) handleLoginAs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	// Impersonation hands the browser the user-panel cookie. Refuse when the
+	// user panel is disabled: a bare "/" cookie path would otherwise be sent to
+	// every request on the host, including the admin panel. (With no URLPath
+	// there is nothing to impersonate into anyway.)
+	if s.cfg.Panel.URLPath == "" {
+		s.redirect(w, r, s.p(""), "error: user panel is disabled")
+		return
+	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	u, err := s.db.GetUserByName(name)
 	if err != nil {

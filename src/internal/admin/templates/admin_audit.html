@@ -83,7 +83,15 @@ var ACT={
   'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'},
   'snapshot.create':{zh:'创建快照',en:'create snapshot'},
   'snapshot.delete':{zh:'删除快照',en:'delete snapshot'},
-  'snapshot.restore':{zh:'恢复快照',en:'restore snapshot'}
+  'snapshot.restore':{zh:'恢复快照',en:'restore snapshot'},
+  'session.login':{zh:'登录',en:'login'},
+  'ssh_keys':{zh:'修改 SSH 密钥',en:'update SSH keys'},
+  'admin.keys':{zh:'修改管理员公钥',en:'update admin public keys'},
+  'init_script':{zh:'保存初始化脚本',en:'save init script'},
+  'notes_reset':{zh:'重置便利贴',en:'reset sticky notes'},
+  'ipv6pool.add':{zh:'添加 IPv6 地址',en:'add IPv6 address'},
+  'ipv6pool.del':{zh:'移除 IPv6 地址',en:'remove IPv6 address'},
+  'bandwidth.reset':{zh:'重置流量统计',en:'reset bandwidth'}
 };
 function actLabel(a){var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);}
 function pad2(n){return (n<10?'0':'')+n;}
@@ -114,7 +122,7 @@ function appendRows(rows){
     time.textContent=fmtTime(r.created_at);
     var actor=document.createElement('td');
     actor.textContent=r.actor;
-    if(r.actor.indexOf('000+')===0){actor.classList.add('sys');}
+    if(r.actor==='000'||r.actor.indexOf('000+')===0){actor.classList.add('sys');}
     var action=document.createElement('td');
     action.textContent=actLabel(r.action);
     tr.appendChild(time);tr.appendChild(actor);tr.appendChild(action);

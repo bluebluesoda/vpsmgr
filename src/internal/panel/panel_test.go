@@ -260,6 +260,15 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 			t.Errorf("overview (v4 on) missing %q", want)
 		}
 	}
+	// The V4/V6 port blocks are click-to-copy and carry the full ssh command.
+	for _, want := range []string{
+		`data-copy="ssh -p 30351 root@203.0.113.5"`,
+		`data-copy="ssh -p 22 root@2001:db8:1::dddd:1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("overview (v4 on) missing click-to-copy %q", want)
+		}
+	}
 	if !strings.Contains(html, `class="help"`) {
 		t.Error("overview missing the (?) help icon on the port block")
 	}
