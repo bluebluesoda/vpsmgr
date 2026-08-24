@@ -67,6 +67,13 @@ const (
 	// container after a reinstall). Bounds the DB row and the panel payload.
 	MaxInitScriptBytes = 64 * 1024
 
+	// MaxNotesPlaintextBytes caps the decrypted sticky-notes JSON, checked on
+	// the client before encryption. MaxNotesBlobBytes caps the stored
+	// (base64) encrypted envelope on the server, leaving room for the GCM tag,
+	// salt and IV plus base64 expansion.
+	MaxNotesPlaintextBytes = 512 * 1024
+	MaxNotesBlobBytes      = 700 * 1024
+
 	// Bandwidth throttle: when a user exceeds their monthly quota, both
 	// directions are limited to ThrottleRate (an Incus NIC limit value, bit/s
 	// with suffix). ThrottleDisplay is what the user panel shows.

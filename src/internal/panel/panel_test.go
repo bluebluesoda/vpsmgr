@@ -1115,3 +1115,186 @@ func TestSSHKeysSave(t *testing.T) {
 		t.Fatalf("invalid save changed stored keys: %d", len(keys))
 	}
 }
+
+// postJSON sends an authenticated JSON POST and returns the response recorder.
+func postJSON(t *testing.T, h http.Handler, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// TestInitScriptSaveJSON exercises the JSON path of /init-script used by the
+// Machine-panel modal: it answers {ok,error} instead of redirecting, and keeps
+// the form POST path (already covered by TestInitScriptSave) untouched.
+func TestInitScriptSaveJSON(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+
+	rr := postJSON(t, h, prefix+"/init-script", `{"script":"#!/bin/bash\necho hi"}`, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("json save = %d, want 200", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, error = %q", resp.Error)
+	}
+	got, _ := d.GetUserByName("alice")
+	if got.InitScript != "#!/bin/bash\necho hi" {
+		t.Errorf("init_script = %q", got.InitScript)
+	}
+
+	// Oversize via JSON is rejected and keeps the stored script.
+	big := strings.Repeat("x", cfg.MaxInitScriptBytes+1)
+	rr = postJSON(t, h, prefix+"/init-script", `{"script":"`+big+`"}`, cookie)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Error("oversize JSON save should fail")
+	}
+	got, _ = d.GetUserByName("alice")
+	if got.InitScript != "#!/bin/bash\necho hi" {
+		t.Errorf("oversize JSON save overwrote init_script: %q", got.InitScript)
+	}
+
+	// No session: redirected to login, nothing saved.
+	rr = postJSON(t, h, prefix+"/init-script", `{"script":"x"}`, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated JSON save = %d, want 302", rr.Code)
+	}
+}
+
+// TestNotesLifecycle covers the sticky-notes endpoints end to end: the blob is
+// opaque to the server, GET returns {has,data}, POST stores it, the oversize
+// cap is enforced with a "notes_full" error, and reset clears everything.
+func TestNotesLifecycle(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	var notesResp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		Has   bool   `json:"has"`
+		Data  string `json:"data"`
+	}
+
+	// Fresh user: no notes.
+	req := httptest.NewRequest(http.MethodGet, prefix+"/notes", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /notes = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if !notesResp.OK || notesResp.Has {
+		t.Fatalf("fresh GET = %+v, want ok + has=false", notesResp)
+	}
+
+	// Save an opaque blob.
+	blob := `{"v":1,"salt":"c2FsdA==","iv":"aXZlYg==","ct":"Y3Q="}`
+	rr = postJSON(t, h, prefix+"/notes", `{"data":`+jsonQuote(blob)+`}`, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /notes = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if !notesResp.OK || !notesResp.Has {
+		t.Fatalf("save response = %+v", notesResp)
+	}
+
+	// GET now returns the stored envelope.
+	req = httptest.NewRequest(http.MethodGet, prefix+"/notes", nil)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if !notesResp.Has || notesResp.Data != blob {
+		t.Fatalf("GET after save = %+v", notesResp)
+	}
+
+	// Oversize body is rejected with notes_full and keeps the old data.
+	big := strings.Repeat("x", cfg.MaxNotesBlobBytes+1)
+	rr = postJSON(t, h, prefix+"/notes", `{"data":`+jsonQuote(big)+`}`, cookie)
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if notesResp.OK || notesResp.Error != "notes_full" {
+		t.Fatalf("oversize save = %+v, want ok=false + notes_full", notesResp)
+	}
+	req = httptest.NewRequest(http.MethodGet, prefix+"/notes", nil)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if notesResp.Data != blob {
+		t.Fatalf("oversize save clobbered data: %+v", notesResp)
+	}
+
+	// Reset clears everything back to the never-enabled state.
+	rr = doReq(t, h, http.MethodPost, prefix+"/notes/reset", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /notes/reset = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &notesResp); err != nil {
+		t.Fatal(err)
+	}
+	if !notesResp.OK || notesResp.Has {
+		t.Fatalf("reset response = %+v, want ok + has=false", notesResp)
+	}
+	stored, err := d.GetStickyNotes(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" {
+		t.Errorf("notes after reset = %q, want empty", stored)
+	}
+
+	// Unauthenticated writes are redirected.
+	rr = postJSON(t, h, prefix+"/notes", `{"data":"x"}`, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated POST /notes = %d, want 302", rr.Code)
+	}
+	rr = doReq(t, h, http.MethodPost, prefix+"/notes/reset", nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated POST /notes/reset = %d, want 302", rr.Code)
+	}
+}
+
+// jsonQuote returns s as a quoted JSON string literal.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

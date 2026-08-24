@@ -112,6 +112,23 @@ footer a{color:var(--muted);text-decoration:underline}
 .keyrow .kname{flex:0 0 9rem;min-width:0}
 .keyrow .kval{flex:1 1 16rem;min-width:0;margin-bottom:0}
 .keyrow .kdel{flex:none}
+.notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
+.notes-center{padding:.35rem 0}
+.notes-center .frow{max-width:340px}
+.notes-main{display:flex;gap:.8rem;align-items:stretch}
+.notes-list{flex:0 0 27%;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--border);padding-right:.7rem}
+.notes-listhead{margin-bottom:.4rem}
+.notes-editor{flex:1 1 auto;min-width:0}
+.notes-editor #notesTitle{margin-bottom:.4rem}
+.notes-editor textarea{margin-bottom:.35rem}
+.notes-item{display:flex;align-items:center;gap:.3rem;padding:.3rem .4rem;border-radius:6px;cursor:grab;font-size:.84rem;border:1px solid transparent;margin-bottom:2px}
+.notes-item .grip{color:var(--muted);font-size:.7rem;flex:none;user-select:none}
+.notes-item .t{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-item .notes-del{flex:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem;line-height:1;padding:0 .2rem}
+.notes-item.blank .t{color:var(--muted)}
+.notes-item.sel{background:var(--accent);color:var(--on-accent);cursor:default}
+.notes-item.sel .grip,.notes-item.sel .notes-del{color:var(--on-accent)}
+.notes-item.dragover{border-color:var(--accent);border-style:dashed}
 .modal h3{margin:0 0 .7rem;font-size:1rem;color:var(--head)}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
@@ -175,6 +192,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
 <button class="btn violet" id="snapBtn">{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</button>
 <button class="btn" id="sshKeysBtn">{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</button>
+<button class="btn" id="initBtn">{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 </div>
@@ -209,14 +227,33 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 
 <div class="card">
-<h2>{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</h2>
-<p class="muted">{{if eq .Lang "zh"}}下次重装系统后将以 root 身份在容器内自动运行此脚本（仅影响你自己的机器）。输出写入容器内 /var/log/vpsmgr-init.log；支持 #!/bin/bash 等 shebang；上限 64 KiB。{{else}}Run automatically as root inside your container after the next reinstall (only affects your own machine). Output is logged to /var/log/vpsmgr-init.log inside the container; shebangs like #!/bin/bash are honored; max 64 KiB.{{end}}</p>
-<form action="{{.Prefix}}/init-script" method="post" id="initForm">
-<textarea name="script" rows="8" spellcheck="false" id="initScript" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
-apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
-apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
-<div class="btnrow" style="margin-bottom:0"><button class="btn accent" type="submit">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button></div>
-</form>
+<h2>{{if eq .Lang "zh"}}便利贴{{else}}Sticky notes{{end}}<span class="muted notes-status" id="notesStatus"></span></h2>
+
+<div id="notesEnable" class="notes-center" hidden>
+<p class="muted">{{if eq .Lang "zh"}}便利贴内容经过端到端加密，服务器和他人无法查看。设置一个密码来启用（与面板登录密码相互独立）。{{else}}Your notes are end-to-end encrypted — neither the server nor anyone else can read them. Set a password to enable (independent of your panel login password).{{end}}</p>
+<button class="btn accent" id="notesEnableBtn">{{if eq .Lang "zh"}}设置密码以启用便利贴{{else}}Set a password to enable notes{{end}}</button>
+</div>
+
+<div id="notesLocked" class="notes-center" hidden>
+<p class="muted">{{if eq .Lang "zh"}}此设备还没有解锁密钥，输入密码解锁便利贴。{{else}}This device has no unlock key yet — enter your password to decrypt your notes.{{end}}</p>
+<div class="frow" style="max-width:340px"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesUnlockPw" type="password" autocomplete="off"></div>
+<div class="btnrow">
+<button class="btn accent" id="notesUnlockBtn">{{if eq .Lang "zh"}}解锁{{else}}Unlock{{end}}</button>
+<button class="btn" id="notesForgotBtn">{{if eq .Lang "zh"}}忘记密码{{else}}Forgot password{{end}}</button>
+</div>
+</div>
+
+<div id="notesMain" class="notes-main" hidden>
+<div class="notes-list">
+<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button></div>
+<div id="notesList"></div>
+</div>
+<div class="notes-editor">
+<input type="text" id="notesTitle" placeholder="{{if eq .Lang "zh"}}标题{{else}}Title{{end}}">
+<textarea id="notesBody" rows="10" spellcheck="false" placeholder="{{if eq .Lang "zh"}}正文内容...{{else}}Note content...{{end}}"></textarea>
+<div class="muted" id="notesSize"></div>
+</div>
+</div>
 </div>
 
 <div class="card chart-card">
@@ -322,6 +359,35 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 </div>
 </div>
 
+<div class="overlay" id="initModal">
+<div class="modal" style="max-width:640px">
+<h3>{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}下次重装系统后将以 root 身份在容器内自动运行此脚本（仅影响你自己的机器）。输出写入容器内 /var/log/vpsmgr-init.log；支持 #!/bin/bash 等 shebang；上限 64 KiB。{{else}}Run automatically as root inside your container after the next reinstall (only affects your own machine). Output is logged to /var/log/vpsmgr-init.log inside the container; shebangs like #!/bin/bash are honored; max 64 KiB.{{end}}</p>
+<textarea id="initScript" rows="8" spellcheck="false" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
+apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
+apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
+<div class="actions">
+<button class="btn" type="button" id="initClose">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+<button class="btn accent" type="button" id="initSave">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+</div>
+</div>
+</div>
+
+<div class="overlay" id="notesEnableModal">
+<div class="modal">
+<h3>{{if eq .Lang "zh"}}设置便利贴密码{{else}}Set notes password{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}此密码只用于加密便利贴内容，不会发送到服务器；请务必牢记，忘记后将无法找回，只能重置全部内容。{{else}}This password only encrypts your notes and is never sent to the server. Keep it safe — if lost, the notes can only be reset.{{end}}</p>
+<form id="notesEnableForm">
+<div class="frow"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesPw" type="password" autocomplete="new-password" required></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="notesPw2" type="password" autocomplete="new-password" required></div>
+<div class="actions">
+<button class="btn" type="button" id="notesEnableCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+<button class="btn accent" type="submit">{{if eq .Lang "zh"}}启用{{else}}Enable{{end}}</button>
+</div>
+</form>
+</div>
+</div>
+
 <div class="overlay" id="reModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
@@ -354,6 +420,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     document.body.appendChild(el);
     setTimeout(function(){el.classList.add('hide');setTimeout(function(){el.remove();},350);},8000);
   }
+  window.toast=toast;
   fetch(P+'/flash',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(!d||!d.msg)return;
     if(d.kind==='modal')showDisp(d.msg);else toast(d.msg,d.msg.indexOf('error:')===0);
@@ -863,6 +930,316 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redraw);
   window.addEventListener('resize',redraw);
+})();
+// Init script editor: opened from the Machine card, saves via JSON so the
+// modal stays open (fetch + toast, no page reload).
+(function(){
+  var P='{{.Prefix}}';
+  var LANG='{{.Lang}}';
+  var btn=document.getElementById('initBtn'), modal=document.getElementById('initModal');
+  if(!btn||!modal)return;
+  var ta=document.getElementById('initScript');
+  var close=document.getElementById('initClose'), save=document.getElementById('initSave');
+  btn.addEventListener('click',function(){modal.classList.add('show');});
+  close.addEventListener('click',function(){modal.classList.remove('show');});
+  modal.addEventListener('click',function(e){if(e.target===modal)modal.classList.remove('show');});
+  save.addEventListener('click',function(){
+    save.classList.add('pending');save.disabled=true;
+    fetch(P+'/init-script',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:ta.value}),credentials:'same-origin'})
+      .then(function(r){return r.json();}).then(function(d){
+        save.classList.remove('pending');save.disabled=false;
+        if(!d||!d.ok){toast((d&&d.error)||'error',true);return;}
+        toast((LANG==='zh')?'初始化脚本已保存':'Init script saved',false);
+      }).catch(function(){
+        save.classList.remove('pending');save.disabled=false;
+        toast('error',true);
+      });
+  });
+})();
+// Sticky notes: end-to-end encrypted in the browser (WebCrypto AES-256-GCM,
+// key derived from a user-chosen password via PBKDF2). The server only ever
+// stores an opaque encrypted envelope; the password is cached locally with a
+// 7-day TTL and never sent anywhere. Three states: enable / locked / unlocked.
+// Edits auto-save 3s after the last change; add/delete/reorder save at once.
+// Plaintext is capped client-side (MaxNotesPlaintext) and the server rejects
+// oversized bodies — both surface as "storage full".
+(function(){
+  var P='{{.Prefix}}';
+  var LANG='{{.Lang}}';
+  var MAX={{.MaxNotesPlaintext}};
+  var LS_KEY='vpsmgr_notes_{{.User.Name}}';
+  var TTL=7*24*3600*1000;
+  function T(zh,en){return (LANG==='zh')?zh:en;}
+  function pad(n){return (n<10?'0':'')+n;}
+  function fmtTS(d){return pad(d.getHours())+':'+pad(d.getMinutes());}
+
+  var enableBox=document.getElementById('notesEnable'),
+      lockedBox=document.getElementById('notesLocked'),
+      mainBox=document.getElementById('notesMain'),
+      statusEl=document.getElementById('notesStatus');
+  if(!enableBox||!lockedBox||!mainBox)return;
+
+  var notes=[], selId=null, key=null, curSalt='', fetchedEnv='', state='boot';
+  var nextId=1, saveTimer=null, dirty=false, dragIdx=-1;
+
+  function setStatus(text,isErr){
+    if(!statusEl)return;
+    statusEl.textContent=text;
+    statusEl.style.color=isErr?'var(--danger)':'var(--muted)';
+  }
+
+  // ---- crypto helpers (all bytes are b64 strings in the envelope) ----
+  function b64enc(buf){var a=new Uint8Array(buf);var s='';for(var i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s);}
+  function b64dec(s){var a=atob(s);var u=new Uint8Array(a.length);for(var i=0;i<a.length;i++)u[i]=a.charCodeAt(i);return u;}
+  function rnd(n){var u=new Uint8Array(n);crypto.getRandomValues(u);return b64enc(u);}
+  function deriveKey(pw,salt){
+    return crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']).then(function(bk){
+      return crypto.subtle.deriveKey({name:'PBKDF2',salt:b64dec(salt),iterations:200000,hash:'SHA-256'},
+        bk,{name:'AES-GCM',length:256},true,['encrypt','decrypt']);
+    });
+  }
+  function encrypt(pt){
+    var iv=b64dec(rnd(12));
+    return crypto.subtle.encrypt({name:'AES-GCM',iv:iv},key,new TextEncoder().encode(pt)).then(function(ct){
+      return JSON.stringify({v:1,salt:curSalt,iv:b64enc(iv),ct:b64enc(new Uint8Array(ct))});
+    });
+  }
+  function decrypt(env){
+    var e=JSON.parse(env);
+    if(e.v!==1||!e.iv||!e.ct)return Promise.reject(new Error('bad envelope'));
+    return crypto.subtle.decrypt({name:'AES-GCM',iv:b64dec(e.iv)},key,b64dec(e.ct)).then(function(pt){
+      return new TextDecoder().decode(pt);
+    });
+  }
+
+  // ---- local key cache: raw AES key + salt + expiry (never sent) ----
+  function storeKey(){
+    return crypto.subtle.exportKey('raw',key).then(function(raw){
+      localStorage.setItem(LS_KEY,JSON.stringify({k:b64enc(raw),salt:curSalt,exp:Date.now()+TTL}));
+    });
+  }
+  function loadCachedKey(){
+    try{
+      var j=JSON.parse(localStorage.getItem(LS_KEY));
+      if(!j||!j.k)return Promise.resolve(null);
+      if(j.exp&&Date.now()>j.exp){localStorage.removeItem(LS_KEY);return Promise.resolve(null);}
+      return crypto.subtle.importKey('raw',b64dec(j.k),{name:'AES-GCM'},false,['encrypt','decrypt'])
+        .then(function(k){curSalt=j.salt||'';return k;})
+        .catch(function(){localStorage.removeItem(LS_KEY);return null;});
+    }catch(e){localStorage.removeItem(LS_KEY);return Promise.resolve(null);}
+  }
+
+  function newNote(){return {id:nextId++,title:'',content:''};}
+  function noteById(id){for(var i=0;i<notes.length;i++)if(notes[i].id===id)return notes[i];return null;}
+  function idxOf(id){for(var i=0;i<notes.length;i++)if(notes[i].id===id)return i;return -1;}
+  function openEnvelope(env){
+    return decrypt(env).then(function(pt){
+      var arr=JSON.parse(pt);
+      notes=Array.isArray(arr)?arr:[];
+      nextId=1;
+      notes.forEach(function(n){if(n.id>=nextId)nextId=n.id+1;});
+      if(!notes.length)notes=[newNote()];
+      selId=notes[0].id;
+    });
+  }
+
+  function showEnable(){state='enable';enableBox.hidden=false;lockedBox.hidden=true;mainBox.hidden=true;}
+  function showLocked(){state='locked';enableBox.hidden=true;lockedBox.hidden=false;mainBox.hidden=true;}
+  function unlocked(){
+    state='unlocked';enableBox.hidden=true;lockedBox.hidden=true;mainBox.hidden=false;
+    render();setStatus(T('已解锁','Unlocked'),false);
+    setTimeout(function(){setStatus('');},1500);
+  }
+
+  function updateSize(){
+    var sz=document.getElementById('notesSize');
+    if(!sz)return;
+    var n=JSON.stringify(notes).length;
+    var kb=Math.ceil(n/1024);
+    sz.textContent=kb+' KiB / '+Math.floor(MAX/1024)+' KiB';
+    sz.style.color=n>MAX?'var(--danger)':'';
+  }
+  function render(){
+    var list=document.getElementById('notesList');
+    list.innerHTML='';
+    notes.forEach(function(n){
+      var it=document.createElement('div');it.className='notes-item'+(n.id===selId?' sel':'')+(n.title?'':' blank');
+      it.draggable=true;
+      var g=document.createElement('span');g.className='grip';g.textContent='≡';
+      var t=document.createElement('span');t.className='t';t.textContent=n.title||T('（无标题）','(untitled)');
+      var x=document.createElement('button');x.type='button';x.className='notes-del';x.textContent='×';
+      x.title=(LANG==='zh')?'删除':'Delete';
+      x.addEventListener('click',function(e){e.stopPropagation();delNote(n.id);});
+      it.appendChild(g);it.appendChild(t);it.appendChild(x);
+      it.addEventListener('click',function(){selectNote(n.id);});
+      it.addEventListener('dragstart',function(){dragIdx=notes.indexOf(n);});
+      it.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';});
+      it.addEventListener('dragenter',function(){it.classList.add('dragover');});
+      it.addEventListener('dragleave',function(){it.classList.remove('dragover');});
+      it.addEventListener('drop',function(e){
+        e.preventDefault();it.classList.remove('dragover');
+        if(dragIdx<0)return;
+        var to=notes.indexOf(n);
+        move(dragIdx,to);dragIdx=-1;render();doSave();
+      });
+      it.addEventListener('dragend',function(){dragIdx=-1;});
+      list.appendChild(it);
+    });
+    var cur=noteById(selId);
+    document.getElementById('notesTitle').value=cur?cur.title:'';
+    document.getElementById('notesBody').value=cur?cur.content:'';
+    updateSize();
+  }
+  function move(from,to){
+    if(from===to)return;
+    var n=notes.splice(from,1)[0];
+    notes.splice(to,0,n);
+  }
+  function selectNote(id){selId=id;render();}
+  function updateListItem(id){
+    var n=noteById(id);if(!n)return;
+    var list=document.getElementById('notesList');
+    for(var i=0;i<list.children.length;i++){
+      if(notes[i].id!==id)continue;
+      var it=list.children[i];
+      it.querySelector('.t').textContent=n.title||T('（无标题）','(untitled)');
+      it.classList.toggle('blank',!n.title);
+      return;
+    }
+  }
+
+  function scheduleSave(){
+    dirty=true;setStatus(T('待保存...','Unsaved…'),false);
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(doSave,3000);
+  }
+  function doSave(force){
+    if(state!=='unlocked')return;
+    clearTimeout(saveTimer);
+    if(!force&&!dirty){return;}
+    dirty=false;
+    var plaintext=JSON.stringify(notes);
+    if(plaintext.length>MAX){
+      setStatus(T('储存空间已满','Storage full'),true);
+      toast(T('储存空间已满：最多 '+Math.floor(MAX/1024)+' KiB','Storage full: max '+Math.floor(MAX/1024)+' KiB'),true);
+      return;
+    }
+    setStatus(T('保存中...','Saving…'),false);
+    encrypt(plaintext).then(function(env){
+      return fetch(P+'/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:env}),credentials:'same-origin'})
+        .then(function(r){return r.json();}).then(function(d){
+          if(!d||!d.ok)throw new Error(d&&d.error);
+          storeKey();
+          setStatus(T('已保存 ','Saved ')+fmtTS(new Date()),false);
+        });
+    }).catch(function(err){
+      var full=(err&&err.message==='notes_full');
+      setStatus(full?T('储存空间已满','Storage full'):T('保存失败','Save failed'),true);
+      toast(full?T('储存空间已满','Storage full'):T('保存失败，请重试','Save failed, please retry'),true);
+    });
+  }
+
+  var titleIn=document.getElementById('notesTitle'), bodyIn=document.getElementById('notesBody');
+  titleIn.addEventListener('input',function(){
+    var cur=noteById(selId);if(!cur)return;
+    cur.title=titleIn.value;updateListItem(cur.id);scheduleSave();
+  });
+  bodyIn.addEventListener('input',function(){
+    var cur=noteById(selId);if(!cur)return;
+    cur.content=bodyIn.value;scheduleSave();
+  });
+
+  document.getElementById('notesAdd').addEventListener('click',function(){
+    var n=newNote();notes.push(n);selId=n.id;render();doSave();
+  });
+  function delNote(id){
+    if(notes.length<=1){
+      notes=[newNote()];selId=notes[0].id;render();doSave();return;
+    }
+    var i=idxOf(id);notes.splice(i,1);
+    if(selId===id)selId=notes[Math.min(i,notes.length-1)].id;
+    render();doSave();
+  }
+
+  // ---- enable / unlock / reset ----
+  document.getElementById('notesEnableBtn').addEventListener('click',function(){
+    document.getElementById('notesEnableModal').classList.add('show');
+    document.getElementById('notesPw').focus();
+  });
+  document.getElementById('notesEnableCancel').addEventListener('click',function(){
+    document.getElementById('notesEnableModal').classList.remove('show');
+  });
+  document.getElementById('notesEnableForm').addEventListener('submit',function(e){
+    e.preventDefault();
+    var a=document.getElementById('notesPw'),b=document.getElementById('notesPw2');
+    if(!a.value||a.value!==b.value){toast(T('两次输入的密码不一致','Passwords do not match'),true);return;}
+    var pw=a.value;
+    var saveBtn=this.querySelector('[type=submit]');
+    saveBtn.disabled=true;
+    curSalt=rnd(16);
+    deriveKey(pw,curSalt).then(function(k){
+      key=k;notes=[newNote()];selId=notes[0].id;dirty=true;
+      state='unlocked';
+      return doSave(true);
+    }).then(function(){
+      saveBtn.disabled=false;
+      document.getElementById('notesEnableModal').classList.remove('show');
+      a.value='';b.value='';
+      unlocked();
+      toast(T('便利贴已启用','Notes enabled'),false);
+    }).catch(function(){
+      saveBtn.disabled=false;
+      toast(T('启用失败','Enable failed'),true);
+    });
+  });
+
+  var unlockBtn=document.getElementById('notesUnlockBtn');
+  function tryUnlock(){
+    var inp=document.getElementById('notesUnlockPw');
+    var pw=inp.value;if(!pw)return;
+    var salt='';
+    try{salt=JSON.parse(fetchedEnv).salt;}catch(e){toast(T('数据异常','Bad data'),true);return;}
+    unlockBtn.classList.add('pending');unlockBtn.disabled=true;
+    deriveKey(pw,salt).then(function(k){
+      key=k;curSalt=salt;
+      return openEnvelope(fetchedEnv);
+    }).then(function(){
+      unlockBtn.classList.remove('pending');unlockBtn.disabled=false;
+      inp.value='';
+      storeKey();
+      unlocked();
+    }).catch(function(){
+      unlockBtn.classList.remove('pending');unlockBtn.disabled=false;
+      toast(T('密码错误','Wrong password'),true);
+    });
+  }
+  unlockBtn.addEventListener('click',tryUnlock);
+  document.getElementById('notesUnlockPw').addEventListener('keydown',function(e){
+    if(e.key==='Enter')tryUnlock();
+  });
+  document.getElementById('notesForgotBtn').addEventListener('click',function(){
+    var msg=T('是否重置所有便利贴内容？（重置后无法恢复）','Reset all sticky notes? This cannot be undone.');
+    if(!confirm(msg))return;
+    fetch(P+'/notes/reset',{method:'POST',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      if(!d||!d.ok){toast('error',true);return;}
+      key=null;curSalt='';notes=[];localStorage.removeItem(LS_KEY);
+      showEnable();
+      toast(T('便利贴已重置','Notes reset'),false);
+    }).catch(function(){toast('error',true);});
+  });
+
+  // ---- boot: load the envelope and pick the state ----
+  fetch(P+'/notes',{method:'GET',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok||!d.has){showEnable();return;}
+    fetchedEnv=d.data;
+    loadCachedKey().then(function(ck){
+      if(ck){key=ck;
+        openEnvelope(fetchedEnv).then(unlocked).catch(function(){
+          key=null;localStorage.removeItem(LS_KEY);showLocked();
+        });
+      }else showLocked();
+    });
+  }).catch(function(){showEnable();});
 })();
 </script>
 </body>

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/pw"
@@ -315,17 +317,49 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 // handleInitScript saves the current user's custom init script (run inside
 // their container after a reinstall). It always operates on the session's own
 // user — the form carries no name, so no one can edit another user's script.
+// The form POST (page reload) is kept for compatibility; the machine panel
+// uses a JSON POST that answers with {ok,error} so the modal can stay open.
 func (s *Server) handleInitScript(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	jsonReq := strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")
+	var script string
+	if jsonReq {
+		var req struct {
+			Script string `json:"script"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeInitScriptJSON(w, false, "bad request")
+			return
+		}
+		script = req.Script
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		script = r.FormValue("script")
+	}
+	if err := s.mgr.SetInitScript(u.Name, script); err != nil {
+		if jsonReq {
+			writeInitScriptJSON(w, false, err.Error())
+		} else {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+		}
 		return
 	}
-	if err := s.mgr.SetInitScript(u.Name, r.FormValue("script")); err != nil {
-		s.redirect(w, r, s.p(""), "error: "+err.Error())
-		return
+	if jsonReq {
+		writeInitScriptJSON(w, true, "")
+	} else {
+		s.redirect(w, r, s.p(""), "ok: init script saved")
 	}
-	s.redirect(w, r, s.p(""), "ok: init script saved")
+}
+
+func writeInitScriptJSON(w http.ResponseWriter, ok bool, errMsg string) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}{ok, errMsg})
 }
 
 // handleImages returns the OS images available for reinstall. It is fetched
@@ -463,4 +497,56 @@ func writeSSHKeys(w http.ResponseWriter, ok bool, errMsg, warn string, keys []db
 		Warning string      `json:"warning,omitempty"`
 		Keys    []sshKeyRow `json:"keys"`
 	}{ok, errMsg, warn, rows})
+}
+
+// handleNotes serves the user's sticky-notes blob. GET returns the stored
+// encrypted envelope (empty = never enabled or reset); POST stores a new
+// envelope. The payload is opaque to the server — encryption happens in the
+// browser — so the only validation is the size cap.
+func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if r.Method == http.MethodGet {
+		data, _ := s.db.GetStickyNotes(u.ID)
+		writeNotesJSON(w, true, "", data != "", data)
+		return
+	}
+	var req struct {
+		Data string `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeNotesJSON(w, false, "bad request", false, "")
+		return
+	}
+	if len(req.Data) > cfg.MaxNotesBlobBytes {
+		writeNotesJSON(w, false, "notes_full", true, "")
+		return
+	}
+	if err := s.db.SetStickyNotes(u.ID, req.Data); err != nil {
+		writeNotesJSON(w, false, "storage error", true, "")
+		return
+	}
+	writeNotesJSON(w, true, "", true, req.Data)
+}
+
+// handleNotesReset clears the sticky-notes blob, returning the account to the
+// never-enabled state (used by the "forgot password" flow after the user
+// confirms — the encrypted content becomes unrecoverable).
+func (s *Server) handleNotesReset(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := s.db.SetStickyNotes(u.ID, ""); err != nil {
+		writeNotesJSON(w, false, "storage error", true, "")
+		return
+	}
+	_ = s.db.AddAuditLog(u.Name, "notes_reset")
+	writeNotesJSON(w, true, "", false, "")
+}
+
+func writeNotesJSON(w http.ResponseWriter, ok bool, errMsg string, has bool, data string) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+		Has   bool   `json:"has"`
+		Data  string `json:"data"`
+	}{ok, errMsg, has, data})
 }

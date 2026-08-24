@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 8
+const schemaVersion = 9
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -194,6 +194,15 @@ var migrations = []struct {
 			key TEXT NOT NULL,
 			active INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL
+		)`,
+	}},
+	// v9: per-user sticky notes. One opaque row per user holding the whole
+	// encrypted envelope as a single TEXT blob (the panel encrypts client-side;
+	// the server never sees plaintext). Empty string = never enabled / reset.
+	{9, []string{
+		`CREATE TABLE IF NOT EXISTS sticky_notes(
+			user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			data TEXT NOT NULL DEFAULT ''
 		)`,
 	}},
 }
