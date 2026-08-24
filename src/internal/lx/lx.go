@@ -802,13 +802,18 @@ type ImageInfo struct {
 
 // ImageAliasesWithDesc is ImageAliases plus each alias's image description, so
 // callers can surface build-time metadata (like the rolling snapshot version)
-// in the reinstall dialog. Same single /1.0/images?recursion=1 call.
+// in the reinstall dialog. Same single /1.0/images?recursion=1 call. The
+// description set by `incus publish ... description=<v>` lands in the image's
+// properties map (that is what `incus image show` prints as `description:`),
+// so it is read from properties, not the top-level object.
 func (c *Client) ImageAliasesWithDesc() ([]ImageInfo, error) {
 	var images []struct {
 		Aliases []struct {
 			Name string `json:"name"`
 		} `json:"aliases"`
-		Description string `json:"description"`
+		Properties struct {
+			Description string `json:"description"`
+		} `json:"properties"`
 	}
 	if err := c.get("/1.0/images?recursion=1", &images); err != nil {
 		return nil, err
@@ -816,7 +821,7 @@ func (c *Client) ImageAliasesWithDesc() ([]ImageInfo, error) {
 	var out []ImageInfo
 	for _, img := range images {
 		for _, a := range img.Aliases {
-			out = append(out, ImageInfo{Alias: a.Name, Description: img.Description})
+			out = append(out, ImageInfo{Alias: a.Name, Description: img.Properties.Description})
 		}
 	}
 	return out, nil
