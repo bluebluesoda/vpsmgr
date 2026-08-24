@@ -119,7 +119,7 @@ footer a{color:var(--muted);text-decoration:underline}
 .notes-cover .muted{margin:0;max-width:460px}
 .notes-main{display:flex;gap:.8rem;align-items:stretch}
 .notes-list{flex:0 0 28%;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--border);padding-right:.7rem}
-.notes-listhead{margin-bottom:.4rem}
+.notes-listhead{display:flex;gap:.4rem;margin-bottom:.4rem}
 .notes-editor{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
 .notes-editor textarea{flex:1 1 auto;min-height:240px;margin-bottom:.35rem}
 .notes-toolbar{display:flex;align-items:center;gap:.5rem}
@@ -246,7 +246,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div id="notesMain" class="notes-main" hidden>
 <div class="notes-list">
-<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button></div>
+<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button><button class="btn" id="notesLock">{{if eq .Lang "zh"}}锁定{{else}}Lock{{end}}</button></div>
 <div id="notesList"></div>
 </div>
 <div class="notes-editor">
@@ -1109,6 +1109,21 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var n=notes.splice(from,1)[0];
     notes.splice(to,0,n);
   }
+  // Untitled notes get a title derived from the first line of their content
+  // (trimmed, max 15 chars) right before a save; an existing title is kept.
+  function autoTitle(){
+    notes.forEach(function(n,i){
+      if(n.title)return;
+      var line=(n.content||'').split('\n')[0].trim();
+      if(!line)return;
+      n.title=line.slice(0,15);
+      var list=document.getElementById('notesList');
+      if(list&&list.children[i]){
+        var inp=list.children[i].querySelector('input.ntitle');
+        if(inp)inp.value=n.title;
+      }
+    });
+  }
   function selectNote(id){
     selId=id;
     var list=document.getElementById('notesList');
@@ -1126,6 +1141,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     clearTimeout(saveTimer);
     if(!force&&!dirty)return Promise.resolve();
     dirty=false;
+    autoTitle();
+    updateSize();
     var plaintext=JSON.stringify(notes);
     if(plaintext.length>MAX){
       setStatus(T('储存空间已满','Storage full'),true);
@@ -1199,6 +1216,19 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(delArmed){delNote(selId);return;}
     delArmed=true;delBtn.classList.add('danger');delBtn.textContent=T('确认删除？','Confirm delete?');
     delTimer=setTimeout(disarmDel,3000);
+  });
+
+  // Lock: drop the local key cache and return to the password prompt. Any
+  // pending edits are flushed first so nothing is lost.
+  document.getElementById('notesLock').addEventListener('click',function(){
+    function doLock(){
+      key=null;curSalt='';notes=[];selId=null;dirty=false;
+      localStorage.removeItem(LS_KEY);
+      clearTimeout(saveTimer);
+      showLocked();
+      toast(T('已锁定','Locked'),false);
+    }
+    if(dirty)doSave(true).then(doLock);else doLock();
   });
 
   // ---- enable / unlock / reset ----
