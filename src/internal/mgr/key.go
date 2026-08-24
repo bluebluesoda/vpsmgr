@@ -27,14 +27,18 @@ func ParsePublicKey(s string) (clean, comment string, ok bool) {
 	return m[1] + " " + m[2], strings.TrimSpace(m[3]), true
 }
 
-// AdminKeyMarker is appended as a trailing comment to an operator key line when
-// it is written into a user's ~/.ssh/authorized_keys. SSH ignores anything
-// after the key body, so it never affects login; it exists so the user can
-// recognize and find admin-injected keys on their machine even after the
-// operator deletes the key from the panel (the DB grant is gone, but the
-// authorized_keys line remains). It is a plain ASCII token — never localized —
-// so the file stays clean and re-applies deduplicate reliably.
-const AdminKeyMarker = "from-admin"
+// UserKeyMarker is appended as a trailing comment to a user's own panel key
+// line written into ~/.ssh/authorized_keys. SSH ignores anything after the key
+// body, so it never affects login; it lets the panel identify and remove the
+// lines it manages (so unchecking/deleting a key actually revokes it) without
+// ever touching keys the user added by hand. A single ASCII token (no spaces)
+// is easy to grep and safe to embed in the sync script.
+const UserKeyMarker = "Vpsmgr-User"
+
+// AdminKeyMarker is the marker for operator keys the user has activated. Like
+// UserKeyMarker it is a fixed ASCII comment, so the panel can purge a revoked
+// admin key line even after forgetting its content.
+const AdminKeyMarker = "Vpsmgr-Operator"
 
 // SSHKeyInput is one key row submitted by the panel. ID > 0 updates an
 // existing key; ID == 0 adds a new one.
@@ -225,21 +229,21 @@ func (m *Manager) GrantedAdminKeys(name string) ([]db.AdminKey, error) {
 	return m.db.GrantedAdminKeys(u.ID)
 }
 
-// ApplySSHKeys syncs the container's ~/.ssh/authorized_keys. The two kinds of
-// keys behave differently, deliberately:
+// ApplySSHKeys syncs the container's ~/.ssh/authorized_keys. Every line the
+// panel writes carries a marker — the user's own active keys use UserKeyMarker,
+// the operator keys the user activated use AdminKeyMarker — so the whole
+// panel-managed set can be dropped and rebuilt on every save. Consequently:
 //
-//   - adminKeys (the operator keys this user activated) are FULLY SYNCED. Every
-//     line carrying the AdminKeyMarker is dropped, then the activated keys are
-//     re-appended with the marker. So an admin key the user unchecks — or one
-//     the operator has since deleted — is removed from the machine, while an
-//     activated one is present exactly once. Stale admin lines never linger.
-//   - userKeys (the user's own active panel keys) are APPEND-only: added if
-//     missing, never removed. A key the user added by hand and never put in the
-//     panel is untouched, because there is no marker to identify it.
+//   - a key the user unchecks or deletes (own key) or revokes (admin grant) is
+//     removed from the machine, because its marked line is dropped and not
+//     re-added; and
+//   - a key the user added by hand and never put in the panel has no marker, so
+//     it is never touched.
 //
 // The script embeds each key in single quotes; ParsePublicKey guarantees the
 // stored keys contain only the type name, a space and base64 characters, and
-// AdminKeyMarker is a fixed ASCII token, so no quoting can be escaped.
+// both markers are fixed ASCII comments (no quote/backslash/slash/newline), so
+// no quoting can be escaped.
 func (m *Manager) ApplySSHKeys(name string, userKeys []string, adminKeys []db.AdminKey) error {
 	_, err := m.lx.ExecSH(name, applySSHKeysScript(userKeys, adminKeys))
 	return err
@@ -255,25 +259,28 @@ func applySSHKeysScript(userKeys []string, adminKeys []db.AdminKey) string {
 	b.WriteString("AUTH=/root/.ssh/authorized_keys\n")
 	b.WriteString("touch \"$AUTH\"\n")
 	b.WriteString("chmod 600 \"$AUTH\"\n")
-	// Drop every admin-managed line (those ending with the marker) first, then
-	// re-add the ones that are still activated. This makes admin keys a clean
-	// sync: unactivated/deleted ones are removed, activated ones present once.
+	// Drop every panel-managed line first (the user's own keys and the
+	// operator's keys both carry a marker), then re-add the ones that are still
+	// active/granted. A deactivated or deleted key is thus removed; keys added
+	// by hand (no marker) are never touched.
+	b.WriteString("sed -i '/ " + UserKeyMarker + "$/d' \"$AUTH\"\n")
 	b.WriteString("sed -i '/ " + AdminKeyMarker + "$/d' \"$AUTH\"\n")
-	for _, k := range adminKeys {
-		line := k.Key + " " + AdminKeyMarker
+	// Re-add the user's own active keys with their marker.
+	for _, k := range userKeys {
+		line := k + " " + UserKeyMarker
 		b.WriteString("grep -qxF -- '")
 		b.WriteString(line)
 		b.WriteString("' \"$AUTH\" 2>/dev/null || printf '%s\\n' '")
 		b.WriteString(line)
 		b.WriteString("' >> \"$AUTH\"\n")
 	}
-	// The user's own active keys are append-only (added if missing, never
-	// removed).
-	for _, k := range userKeys {
+	// Re-add the granted admin keys with their marker.
+	for _, k := range adminKeys {
+		line := k.Key + " " + AdminKeyMarker
 		b.WriteString("grep -qxF -- '")
-		b.WriteString(k)
+		b.WriteString(line)
 		b.WriteString("' \"$AUTH\" 2>/dev/null || printf '%s\\n' '")
-		b.WriteString(k)
+		b.WriteString(line)
 		b.WriteString("' >> \"$AUTH\"\n")
 	}
 	return b.String()

@@ -504,12 +504,13 @@ func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "ssh_keys")
-	// Apply the selection immediately. Admin keys are fully synced (activated
-	// ones written with the AdminKeyMarker, stale/unactivated ones removed), so
-	// this runs even when nothing is active — deactivating an admin key must
-	// purge it from the machine. The user's own keys stay append-only. Best-
-	// effort: keys persist in the DB either way, so a save must not fail just
-	// because the container is stopped or unreachable.
+	// Apply the selection immediately. Both the user's own keys and the
+	// operator's keys are fully synced by marker (activated ones written with
+	// their marker, stale/deactivated ones removed), so this runs even when
+	// nothing is active — deactivating a key must purge it from the machine.
+	// Keys the user added by hand (no marker) are never touched. Best-effort:
+	// keys persist in the DB either way, so a save must not fail just because
+	// the container is stopped or unreachable.
 	warn := ""
 	var userActive []string
 	for _, k := range keys {

@@ -131,22 +131,26 @@ func TestApplySSHKeysScriptSync(t *testing.T) {
 	admin := []db.AdminKey{{Key: ed25519Key}}
 	script := applySSHKeysScript(user, admin)
 
-	// Every admin-managed line (carrying the marker) is dropped first, so a
-	// key the user unchecks or the operator deletes no longer lingers.
-	if !strings.Contains(script, "sed -i '/ "+AdminKeyMarker+"$/d' \"$AUTH\"") {
-		t.Errorf("script missing stale-admin-line removal:\n%s", script)
+	// Every panel-managed line is dropped first (both markers), so a key the
+	// user unchecks/deletes no longer lingers.
+	if !strings.Contains(script, "sed -i '/ "+UserKeyMarker+"$/d' \"$AUTH\"") {
+		t.Errorf("script missing user-key removal:\n%s", script)
 	}
-	// The activated admin key is re-appended with the marker.
+	if !strings.Contains(script, "sed -i '/ "+AdminKeyMarker+"$/d' \"$AUTH\"") {
+		t.Errorf("script missing admin-key removal:\n%s", script)
+	}
+	// The activated admin key is re-appended with its marker.
 	wantAdmin := ed25519Key + " " + AdminKeyMarker
 	if !strings.Contains(script, "printf '%s\\n' '"+wantAdmin+"'") {
 		t.Errorf("script missing activated admin key:\n%s", script)
 	}
-	// The user's own key is appended WITHOUT the marker.
-	if !strings.Contains(script, "printf '%s\\n' '"+user[0]+"'") {
-		t.Errorf("script missing user key:\n%s", script)
+	// The user's own active key is re-appended with ITS marker.
+	wantUser := user[0] + " " + UserKeyMarker
+	if !strings.Contains(script, "printf '%s\\n' '"+wantUser+"'") {
+		t.Errorf("script missing user key (marked):\n%s", script)
 	}
-	if strings.Contains(script, "printf '%s\\n' '"+user[0]+" "+AdminKeyMarker) {
-		t.Error("user's own key must not carry the admin marker")
+	if strings.Contains(script, "printf '%s\\n' '"+user[0]+"'") {
+		t.Error("user's own key must carry the user marker (not be unmarked)")
 	}
 
 	// A non-activated admin key (absent from adminKeys) must NOT be appended —
@@ -155,22 +159,65 @@ func TestApplySSHKeysScriptSync(t *testing.T) {
 	if strings.Contains(scriptEmpty, ed25519Key) {
 		t.Errorf("script should not append a non-activated admin key:\n%s", scriptEmpty)
 	}
-	// But the sed removal line is still there, so a previously injected copy
+	// But the sed removal lines are still there, so a previously injected copy
 	// of that key gets purged on save.
 	if !strings.Contains(scriptEmpty, "sed -i '/ "+AdminKeyMarker+"$/d'") {
 		t.Errorf("script must still purge stale admin lines:\n%s", scriptEmpty)
 	}
 }
 
-// TestAdminKeyMarkerSafe guards the injection-safety invariant: the marker is
-// embedded inside single quotes in a shell script (see applySSHKeysScript) and
-// inside a sed address, so it must contain no single quote, backslash, newline
-// or slash that could break out.
-func TestAdminKeyMarkerSafe(t *testing.T) {
-	if AdminKeyMarker == "" {
-		t.Fatal("AdminKeyMarker must not be empty")
+// TestApplySSHKeysScriptSameKeyBothRoles covers the tricky case where the SAME
+// public key is simultaneously a user's own active key AND a granted admin key.
+// They are written as two independent marked lines (user marker vs admin
+// marker), so the key is effective regardless of which role activated it —
+// there is no ordering bug that could make it ineffective.
+func TestApplySSHKeysScriptSameKeyBothRoles(t *testing.T) {
+	// Case A: same key is the user's own active key AND a granted admin key.
+	both := applySSHKeysScript([]string{ed25519Key}, []db.AdminKey{{Key: ed25519Key}})
+	if !strings.Contains(both, "printf '%s\\n' '"+ed25519Key+" "+UserKeyMarker+"'") {
+		t.Errorf("user's own copy must carry the user marker:\n%s", both)
 	}
-	if strings.ContainsAny(AdminKeyMarker, "'\\\n/") {
-		t.Errorf("AdminKeyMarker %q contains shell-breaking characters", AdminKeyMarker)
+	if !strings.Contains(both, "printf '%s\\n' '"+ed25519Key+" "+AdminKeyMarker+"'") {
+		t.Errorf("granted admin copy must carry the admin marker:\n%s", both)
+	}
+
+	// Case B: same key only active as the user's OWN key (admin copy not
+	// granted) -> only the user-marked line is appended.
+	ownOnly := applySSHKeysScript([]string{ed25519Key}, nil)
+	if !strings.Contains(ownOnly, "printf '%s\\n' '"+ed25519Key+" "+UserKeyMarker+"'") {
+		t.Errorf("user-active-only key must be appended:\n%s", ownOnly)
+	}
+	if strings.Contains(ownOnly, ed25519Key+" "+AdminKeyMarker) {
+		t.Errorf("user-active-only must not append an admin-marked line:\n%s", ownOnly)
+	}
+
+	// Case C: same key only active as a GRANTED admin key (not in the user's
+	// own list) -> only the admin-marked line is appended; SSH ignores the
+	// comment so it still authorizes the key.
+	grantOnly := applySSHKeysScript(nil, []db.AdminKey{{Key: ed25519Key}})
+	if !strings.Contains(grantOnly, "printf '%s\\n' '"+ed25519Key+" "+AdminKeyMarker+"'") {
+		t.Errorf("grant-only key must be appended marked:\n%s", grantOnly)
+	}
+	if strings.Contains(grantOnly, "printf '%s\\n' '"+ed25519Key+"'") {
+		t.Errorf("grant-only must not append an unmarked user line:\n%s", grantOnly)
+	}
+}
+
+// TestKeyMarkersSafe guards the injection-safety invariant: both markers are
+// embedded inside single quotes in a shell script (see applySSHKeysScript) and
+// inside sed addresses, so each must contain no single quote, backslash,
+// newline or slash that could break out. They must also be distinct (and not
+// end-of-line equivalent) so purging one never removes the other.
+func TestKeyMarkersSafe(t *testing.T) {
+	for _, m := range []string{UserKeyMarker, AdminKeyMarker} {
+		if m == "" {
+			t.Fatal("markers must not be empty")
+		}
+		if strings.ContainsAny(m, "'\\\n/") {
+			t.Errorf("marker %q contains shell-breaking characters", m)
+		}
+	}
+	if UserKeyMarker == AdminKeyMarker {
+		t.Fatal("user and admin markers must be distinct")
 	}
 }
