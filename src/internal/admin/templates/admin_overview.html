@@ -89,6 +89,18 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
 a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 @media (prefers-color-scheme: dark) { a.copy.copied { background: #123a24; border-color: #14532d; color: #86efac; } }
 .lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+.keyrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.keyrow .kact{width:16px;height:16px;flex:none;cursor:pointer}
+.keyrow .kname{flex:0 0 150px;min-width:0;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;color:inherit}
+@media (prefers-color-scheme: dark){.keyrow .kname{background:#15171b;border-color:#3a3f47}}
+.keyrow .kval{flex:1 1 220px;min-width:0;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#fff;color:inherit}
+@media (prefers-color-scheme: dark){.keyrow .kval{background:#15171b;border-color:#3a3f47}}
+.keyrow .kdel{border-color:#fca5a5;color:#b91c1c}
+@media (prefers-color-scheme: dark){.keyrow .kdel{color:#f87171}}
+.keys-empty{color:#9ca3af;font-size:13px;margin-bottom:10px}
+.toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:200;background:#166534;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.2);opacity:1;transition:opacity .3s}
+.toast.err{background:#991b1b}
+.toast.hide{opacity:0}
 </style>
 </head>
 <body>
@@ -98,6 +110,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <a href="{{.Prefix}}/domains" class="btn">{{if eq .Lang "zh"}}域名管理{{else}}Domains{{end}}</a>
     {{if .IPv6PoolMode}}<a href="{{.Prefix}}/ipv6pool" class="btn">{{if eq .Lang "zh"}}IPv6 池{{else}}IPv6 pool{{end}}</a>{{end}}
     <a href="{{.Prefix}}/audit" class="btn">{{if eq .Lang "zh"}}审计日志{{else}}Audit{{end}}</a>
+    <button class="btn" id="keysBtn">{{if eq .Lang "zh"}}公钥管理{{else}}SSH keys{{end}}</button>
     <span class="lang"><a href="{{.Prefix}}/?lang=zh">中文</a><a href="{{.Prefix}}/?lang=en">EN</a></span>
     <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
   </div>
@@ -272,6 +285,30 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   </div>
 </div>
 
+<!-- ssh keys modal -->
+<div class="overlay" id="keysModal">
+  <div class="modal" style="width:min(600px,94vw)">
+    <h3>{{if eq .Lang "zh"}}SSH 公钥管理{{else}}SSH public keys{{end}}</h3>
+    <div style="color:#6b7280;font-size:12px;margin-bottom:12px">{{if eq .Lang "zh"}}管理员自己的公钥库，目前仅作存储，不会注入到任何容器。保存时只保留纯公钥（去掉尾部注释）；名称留空时自动取密钥注释作为名称。{{else}}The operator's own key store — storage only for now, not injected into any container. Only the clean key is saved (trailing comment stripped); an empty name falls back to the key's comment.{{end}}</div>
+    <div id="keyList">
+    {{range .AdminKeys}}
+      <div class="keyrow" data-id="{{.ID}}">
+        <input type="checkbox" class="kact"{{if .Active}} checked{{end}}>
+        <input type="text" class="kname" value="{{.Name}}" placeholder="name">
+        <input type="text" class="kval" value="{{.Key}}" readonly spellcheck="false">
+        <button type="button" class="btn kdel">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+      </div>
+    {{end}}
+    </div>
+    <div class="keys-empty" id="keyEmpty"{{if .AdminKeys}} style="display:none"{{end}}>{{if eq .Lang "zh"}}还没有公钥{{else}}No keys yet{{end}}</div>
+    <div style="margin:12px 0"><button type="button" class="btn" id="keyAdd">{{if eq .Lang "zh"}}添加公钥{{else}}Add key{{end}}</button></div>
+    <div class="foot">
+      <button id="keyClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+      <button class="primary" id="keySave">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+    </div>
+  </div>
+</div>
+
 
 
 <script>
@@ -424,6 +461,80 @@ function del(name){
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
   if (j.msg) { if (j.kind === 'modal') openModal(j.msg); else alert(j.msg); }
 });
+// Admin SSH-key management panel: floating modal, no page switch. Same
+// full-set save contract as the user panel (id > 0 updates, 0 adds, missing
+// rows are deleted), with the comment-stripping and name auto-fill helpers.
+(function(){
+  var LANG = "{{.Lang}}";
+  var btn = document.getElementById('keysBtn'), modal = document.getElementById('keysModal');
+  if (!btn || !modal) return;
+  var list = document.getElementById('keyList'), empty = document.getElementById('keyEmpty');
+  var close = document.getElementById('keyClose'), save = document.getElementById('keySave');
+  function toast(msg, isErr){
+    var el = document.createElement('div'); el.className = 'toast' + (isErr ? ' err' : '');
+    el.textContent = msg; document.body.appendChild(el);
+    setTimeout(function(){ el.classList.add('hide'); setTimeout(function(){ el.remove(); }, 300); }, 4000);
+  }
+  function syncEmpty(){ if (empty) empty.style.display = list.children.length ? 'none' : ''; }
+  function keyRowHTML(id, name, key, existing){
+    var div = document.createElement('div'); div.className = 'keyrow';
+    if (id) div.dataset.id = id;
+    var act = document.createElement('input'); act.type = 'checkbox'; act.className = 'kact'; act.checked = true;
+    var nm = document.createElement('input'); nm.type = 'text'; nm.className = 'kname'; nm.value = name || ''; nm.placeholder = 'name';
+    var kv = document.createElement('input'); kv.type = 'text'; kv.className = 'kval'; kv.value = key || ''; kv.placeholder = 'ssh-ed25519 AAAA...'; kv.spellcheck = false;
+    if (existing) kv.readOnly = true;
+    var del = document.createElement('button'); del.type = 'button'; del.className = 'btn kdel';
+    del.textContent = (LANG === 'zh') ? '删除' : 'Delete';
+    del.addEventListener('click', function(){ div.remove(); syncEmpty(); });
+    div.appendChild(act); div.appendChild(nm); div.appendChild(kv); div.appendChild(del);
+    if (!existing){
+      // auto-fill the name from the key's comment when the name is empty
+      kv.addEventListener('input', function(){
+        if (nm.value) return;
+        var m = kv.value.trim().match(/^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519|sk-ecdsa-sha2-nistp256|ssh-dss)\s+\S+\s+(.+)$/);
+        if (m) nm.value = m[1];
+      });
+    }
+    return div;
+  }
+  btn.addEventListener('click', function(){ modal.classList.add('open'); });
+  close.addEventListener('click', function(){ modal.classList.remove('open'); });
+  modal.addEventListener('click', function(e){ if (e.target === modal) modal.classList.remove('open'); });
+  document.getElementById('keyAdd').addEventListener('click', function(){
+    list.appendChild(keyRowHTML(0, '', '', false));
+    var kv = list.lastElementChild.querySelector('.kval'); if (kv) kv.focus();
+    syncEmpty();
+  });
+  save.addEventListener('click', function(){
+    var keys = [];
+    list.querySelectorAll('.keyrow').forEach(function(row){
+      keys.push({
+        id: row.dataset.id ? parseInt(row.dataset.id, 10) : 0,
+        name: row.querySelector('.kname').value,
+        key: row.querySelector('.kval').value,
+        active: row.querySelector('.kact').checked
+      });
+    });
+    save.disabled = true; save.classList.add('busy');
+    fetch(P + '/keys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({keys: keys}), credentials:'same-origin'})
+      .then(function(r){ return r.json(); }).then(function(d){
+        save.disabled = false; save.classList.remove('busy');
+        if (!d || !d.ok) { toast((d && d.error) || 'error', true); return; }
+        list.innerHTML = '';
+        (d.keys || []).forEach(function(k){
+          var row = keyRowHTML(k.id, k.name, k.key, true);
+          row.querySelector('.kact').checked = k.active;
+          list.appendChild(row);
+        });
+        syncEmpty();
+        toast(LANG === 'zh' ? '已保存' : 'Saved');
+      }).catch(function(){
+        save.disabled = false; save.classList.remove('busy');
+        toast('error', true);
+      });
+  });
+  syncEmpty();
+})();
 </script>
 </body>
 </html>
