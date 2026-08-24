@@ -920,16 +920,27 @@ func TestSnapshotRoutesRegistered(t *testing.T) {
 	}
 }
 
-// TestSnapshotLimitClamped checks the config-driven cap is clamped to >= 1.
-func TestSnapshotLimitClamped(t *testing.T) {
+// TestSnapshotLimitSemantics checks the config-driven snapshot cap: default is
+// 1, a positive value is the cap, and 0 (or negative) disables snapshots.
+func TestSnapshotLimitSemantics(t *testing.T) {
 	srv, _ := newTestServer(t)
 	if got := srv.mgr.SnapshotLimit(); got != 1 {
 		t.Fatalf("SnapshotLimit() = %d, want 1 (default)", got)
 	}
-	// A zero/negative config value is treated as 1.
+	// A positive value is the hard cap.
+	srv.cfg.Snapshots.Limit = 5
+	if got := srv.mgr.SnapshotLimit(); got != 5 {
+		t.Fatalf("SnapshotLimit() with 5 = %d, want 5", got)
+	}
+	// 0 disables snapshots (no new snapshots, existing ones untouched).
 	srv.cfg.Snapshots.Limit = 0
-	if got := srv.mgr.SnapshotLimit(); got != 1 {
-		t.Fatalf("SnapshotLimit() with 0 = %d, want 1", got)
+	if got := srv.mgr.SnapshotLimit(); got != 0 {
+		t.Fatalf("SnapshotLimit() with 0 = %d, want 0 (disabled)", got)
+	}
+	// A negative value (shouldn't pass config validation) is treated as disabled.
+	srv.cfg.Snapshots.Limit = -1
+	if got := srv.mgr.SnapshotLimit(); got != 0 {
+		t.Fatalf("SnapshotLimit() with -1 = %d, want 0 (disabled)", got)
 	}
 }
 
