@@ -242,6 +242,20 @@ base image deleted after publishing. Leap 16 ships systemd-networkd by default,
 so its IPv6 is configured at runtime by the panel's standard networkd branch
 (static /128 + `fe80::1` gateway), unlike the RHEL-family nmcli path.
 
+## Optional Debian dev image (`vpsmgr/debian-dev-sshd`)
+
+`80-debian-dev-image.sh` (also NOT part of `install.sh`) builds a heavy dev
+toolchain image on top of `images:debian/13` — the universal sshd/tooling set
+from `50-image.sh`, plus `python3`/`pip`/`venv`, `git`, `sqlite3`, `ripgrep`,
+`jq`, `gh`, `sshpass` (all `apt-get --no-install-recommends`), Go 1.26.7
+(arch-aware manual install, SHA-256 verified, `/usr/local/go` +
+`/etc/profile.d/go.sh`) and nvm v0.40.7 + Node.js 24 (baked into `/root/.nvm`,
+`/etc/profile.d/nodejs.sh`). Same hygiene as `50-image.sh`: the eth0 IPv6
+on-link fix is baked, apt lists/archives, logs, nvm/npm caches and the
+machine-id are cleaned before publishing, and the base image is deleted
+afterwards. Expect the published image to be roughly 3-4x the size of
+`vpsmgr/debian-sshd` — Go and Node dominate.
+
 ## Per-container provisioning
 
 `mgr.Provision` runs inside every new or reinstalled container and:

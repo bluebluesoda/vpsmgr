@@ -65,7 +65,7 @@ from the latest release, falling back to a local build.
 
 ```
 install.sh / uninstall.sh / build.sh   # lifecycle + local build
-scripts/   00-check 10-incus 20-network 30-traefik 40-panel 50-image
+scripts/   00-check 10-incus 20-network 30-traefik 40-panel 50-image 60-rhel 70-opensuse 80-debian-dev
 configs/   reference configs (traefik / systemd / sudoers)
 docs/      this documentation
 src/       Go source (single binary: CLI + panel)
