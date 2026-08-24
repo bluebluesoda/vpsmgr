@@ -368,11 +368,18 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.SSHKeys = append(d.SSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
 	}
 	// The operator's public keys, surfaced read-only in the SSH-key panel. A
-	// user must see them (names + contents) to decide whether to trust them,
-	// but never edits them here.
+	// user must see them (names + contents) to decide which to authorize, but
+	// never edits them here. Active on these rows means "this user has already
+	// activated it" (a checked grant), not the admin's own store flag.
 	if akeys, err := s.db.ListAdminKeys(); err == nil {
+		granted := map[int64]bool{}
+		if gk, err := s.db.GrantedAdminKeys(u.ID); err == nil {
+			for _, k := range gk {
+				granted[k.ID] = true
+			}
+		}
 		for _, k := range akeys {
-			d.AdminSSHKeys = append(d.AdminSSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+			d.AdminSSHKeys = append(d.AdminSSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: granted[k.ID]})
 		}
 	}
 	return d

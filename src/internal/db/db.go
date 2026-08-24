@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 9
+const schemaVersion = 10
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -204,6 +204,22 @@ var migrations = []struct {
 			user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 			data TEXT NOT NULL DEFAULT ''
 		)`,
+	}},
+	// v10: per-user grants of the operator's admin keys. A row means "this
+	// user has activated this admin key" — its content is then written into the
+	// user's authorized_keys (admin SSH access to that machine). Kept separate
+	// from ssh_keys so the user's own list and the admin's store stay
+	// independent; UNIQUE(user_id, admin_key_id) makes a grant one-per-pair and
+	// both FKs cascade so a deleted user or admin key drops its grants.
+	{10, []string{
+		`CREATE TABLE IF NOT EXISTS admin_key_grants(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			admin_key_id INTEGER NOT NULL REFERENCES admin_keys(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			UNIQUE(user_id, admin_key_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_key_grants_user ON admin_key_grants(user_id)`,
 	}},
 }
 

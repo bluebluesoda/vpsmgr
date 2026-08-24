@@ -1140,11 +1140,16 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			fmt.Printf("  ! warn: init script: %v (container still recreated)\n", err)
 		}
 	}
-	// Active SSH keys (if any): write them into the fresh container. Same
-	// best-effort contract — keys persist in the DB and apply on the next save.
-	if active, err := m.ActiveKeys(u.Name); err == nil && len(active) > 0 {
-		if err := m.ApplySSHKeys(u.Name, active); err != nil {
-			fmt.Printf("  ! warn: ssh keys: %v (container still recreated)\n", err)
+	// Active SSH keys (if any): write them into the fresh container, including
+	// the operator keys this user has activated, so admin access survives a
+	// reinstall. Same best-effort contract — keys persist in the DB and apply
+	// on the next save.
+	if active, err := m.ActiveKeys(u.Name); err == nil {
+		admin, _ := m.GrantedAdminKeys(u.Name)
+		if len(active) > 0 || len(admin) > 0 {
+			if err := m.ApplySSHKeys(u.Name, active, admin); err != nil {
+				fmt.Printf("  ! warn: ssh keys: %v (container still recreated)\n", err)
+			}
 		}
 	}
 	// The reinstall is complete: back to ready. Also drop any in-memory

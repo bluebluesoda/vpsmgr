@@ -289,11 +289,10 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 <div class="overlay" id="keysModal">
   <div class="modal" style="width:min(600px,94vw)">
     <h3>{{if eq .Lang "zh"}}SSH 公钥管理{{else}}SSH public keys{{end}}</h3>
-    <div style="color:#6b7280;font-size:12px;margin-bottom:12px">{{if eq .Lang "zh"}}管理员自己的公钥库，目前仅作存储，不会注入到任何容器。{{else}}The operator's own key store — storage only for now, not injected into any container.{{end}}</div>
+    <div style="color:#6b7280;font-size:12px;margin-bottom:12px">{{if eq .Lang "zh"}}管理员自己的公钥库。用户可在自己的面板中勾选激活这些公钥，激活后管理员即可 SSH 登录该用户的机器。删除某把公钥后，会在用户下次保存密钥时从该用户的机器上移除。{{else}}The operator's own key store. Users can activate these keys from their panel, after which the operator can SSH into that machine. Deleting a key removes it from a machine the next time that user saves their keys.{{end}}</div>
     <div id="keyList">
     {{range .AdminKeys}}
       <div class="keyrow" data-id="{{.ID}}">
-        <input type="checkbox" class="kact"{{if .Active}} checked{{end}}>
         <input type="text" class="kname" value="{{.Name}}" placeholder="name">
         <input type="text" class="kval" value="{{.Key}}" readonly spellcheck="false">
         <button type="button" class="btn kdel">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
@@ -479,14 +478,13 @@ fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(fu
   function keyRowHTML(id, name, key, existing){
     var div = document.createElement('div'); div.className = 'keyrow';
     if (id) div.dataset.id = id;
-    var act = document.createElement('input'); act.type = 'checkbox'; act.className = 'kact'; act.checked = true;
     var nm = document.createElement('input'); nm.type = 'text'; nm.className = 'kname'; nm.value = name || ''; nm.placeholder = 'name';
     var kv = document.createElement('input'); kv.type = 'text'; kv.className = 'kval'; kv.value = key || ''; kv.placeholder = 'ssh-ed25519 AAAA...'; kv.spellcheck = false;
     if (existing) kv.readOnly = true;
     var del = document.createElement('button'); del.type = 'button'; del.className = 'btn kdel';
     del.textContent = (LANG === 'zh') ? '删除' : 'Delete';
     del.addEventListener('click', function(){ div.remove(); syncEmpty(); });
-    div.appendChild(act); div.appendChild(nm); div.appendChild(kv); div.appendChild(del);
+    div.appendChild(nm); div.appendChild(kv); div.appendChild(del);
     if (!existing){
       // auto-fill the name from the key's comment when the name is empty
       kv.addEventListener('input', function(){
@@ -511,8 +509,7 @@ fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(fu
       keys.push({
         id: row.dataset.id ? parseInt(row.dataset.id, 10) : 0,
         name: row.querySelector('.kname').value,
-        key: row.querySelector('.kval').value,
-        active: row.querySelector('.kact').checked
+        key: row.querySelector('.kval').value
       });
     });
     save.disabled = true; save.classList.add('busy');
@@ -522,9 +519,7 @@ fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(fu
         if (!d || !d.ok) { toast((d && d.error) || 'error', true); return; }
         list.innerHTML = '';
         (d.keys || []).forEach(function(k){
-          var row = keyRowHTML(k.id, k.name, k.key, true);
-          row.querySelector('.kact').checked = k.active;
-          list.appendChild(row);
+          list.appendChild(keyRowHTML(k.id, k.name, k.key, true));
         });
         syncEmpty();
         toast(LANG === 'zh' ? '已保存' : 'Saved');

@@ -684,4 +684,9 @@ func TestAdminKeysSave(t *testing.T) {
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "keysModal") {
 		t.Fatalf("overview missing key modal (code %d)", rr.Code)
 	}
+	// Admin keys have no per-key "active" checkbox anymore — every saved key is
+	// visible to users. The CSS references kact, so match the rendered form.
+	if strings.Contains(rr.Body.String(), `class="kact"`) {
+		t.Error("admin key rows should no longer render an active checkbox")
+	}
 }

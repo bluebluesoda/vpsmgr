@@ -27,6 +27,15 @@ func ParsePublicKey(s string) (clean, comment string, ok bool) {
 	return m[1] + " " + m[2], strings.TrimSpace(m[3]), true
 }
 
+// AdminKeyMarker is appended as a trailing comment to an operator key line when
+// it is written into a user's ~/.ssh/authorized_keys. SSH ignores anything
+// after the key body, so it never affects login; it exists so the user can
+// recognize and find admin-injected keys on their machine even after the
+// operator deletes the key from the panel (the DB grant is gone, but the
+// authorized_keys line remains). It is a plain ASCII token — never localized —
+// so the file stays clean and re-applies deduplicate reliably.
+const AdminKeyMarker = "from-admin"
+
 // SSHKeyInput is one key row submitted by the panel. ID > 0 updates an
 // existing key; ID == 0 adds a new one.
 type SSHKeyInput struct {
@@ -116,9 +125,10 @@ func (m *Manager) ActiveKeys(name string) ([]string, error) {
 
 // SaveAdminKeys reconciles the operator's own key store from the admin panel:
 // same semantics as SaveSSHKeys (ID updates, ID 0 adds, missing rows deleted,
-// clean storage, duplicate rejection) against the admin_keys table. Admin keys
-// are not injected into any container yet — they are pure storage until a
-// later feature uses them.
+// clean storage, duplicate rejection) against the admin_keys table. Every key
+// the operator keeps is active (visible to every user) — there is no per-key
+// "active" toggle in the admin panel, so the flag is always stored true. Keys
+// are not injected into any container by themselves; a user opts in per key.
 func (m *Manager) SaveAdminKeys(in []SSHKeyInput) ([]db.AdminKey, error) {
 	existing, err := m.db.ListAdminKeys()
 	if err != nil {
@@ -146,11 +156,11 @@ func (m *Manager) SaveAdminKeys(in []SSHKeyInput) ([]db.AdminKey, error) {
 		}
 		if k.ID > 0 {
 			kept[k.ID] = true
-			if err := m.db.UpdateAdminKey(k.ID, nm, clean, k.Active); err != nil {
+			if err := m.db.UpdateAdminKey(k.ID, nm, clean, true); err != nil {
 				return nil, err
 			}
 		} else {
-			toAdd = append(toAdd, pending{nm, clean, k.Active})
+			toAdd = append(toAdd, pending{nm, clean, true})
 		}
 	}
 	for _, e := range existing {
@@ -173,20 +183,71 @@ func (m *Manager) ListAdminKeys() ([]db.AdminKey, error) {
 	return m.db.ListAdminKeys()
 }
 
-// ApplySSHKeys writes the given (clean) keys into the container's
-// ~/.ssh/authorized_keys. The rules are deliberate:
-//   - the directory is created only if missing (mkdir -p is a no-op otherwise)
-//   - writes are APPEND-only — an existing file is never overwritten
-//   - a key already present as an exact line is not appended again
-//   - any other key the user added by hand stays untouched
+// SaveAdminKeyGrants reconciles which of the operator's keys this user has
+// authorized (checked in the SSH-key panel). Only IDs of keys that actually
+// exist are kept — a stale or unknown ID is dropped, never granted. Returns
+// the resulting live grant list (joined key contents) so the panel can
+// re-render and the caller can apply.
+func (m *Manager) SaveAdminKeyGrants(name string, ids []int64) ([]db.AdminKey, error) {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return nil, err
+	}
+	valid := map[int64]bool{}
+	if keys, err := m.db.ListAdminKeys(); err != nil {
+		return nil, err
+	} else {
+		for _, k := range keys {
+			valid[k.ID] = true
+		}
+	}
+	seen := map[int64]bool{}
+	var clean []int64
+	for _, id := range ids {
+		if id > 0 && valid[id] && !seen[id] {
+			seen[id] = true
+			clean = append(clean, id)
+		}
+	}
+	if err := m.db.SetAdminKeyGrants(u.ID, clean); err != nil {
+		return nil, err
+	}
+	return m.db.GrantedAdminKeys(u.ID)
+}
+
+// GrantedAdminKeys returns the operator keys this user has activated, with
+// their live contents (for syncing into the container's authorized_keys).
+func (m *Manager) GrantedAdminKeys(name string) ([]db.AdminKey, error) {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return m.db.GrantedAdminKeys(u.ID)
+}
+
+// ApplySSHKeys syncs the container's ~/.ssh/authorized_keys. The two kinds of
+// keys behave differently, deliberately:
+//
+//   - adminKeys (the operator keys this user activated) are FULLY SYNCED. Every
+//     line carrying the AdminKeyMarker is dropped, then the activated keys are
+//     re-appended with the marker. So an admin key the user unchecks — or one
+//     the operator has since deleted — is removed from the machine, while an
+//     activated one is present exactly once. Stale admin lines never linger.
+//   - userKeys (the user's own active panel keys) are APPEND-only: added if
+//     missing, never removed. A key the user added by hand and never put in the
+//     panel is untouched, because there is no marker to identify it.
 //
 // The script embeds each key in single quotes; ParsePublicKey guarantees the
-// stored keys contain only the type name, a space and base64 characters, so
-// no quoting can be escaped.
-func (m *Manager) ApplySSHKeys(name string, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
+// stored keys contain only the type name, a space and base64 characters, and
+// AdminKeyMarker is a fixed ASCII token, so no quoting can be escaped.
+func (m *Manager) ApplySSHKeys(name string, userKeys []string, adminKeys []db.AdminKey) error {
+	_, err := m.lx.ExecSH(name, applySSHKeysScript(userKeys, adminKeys))
+	return err
+}
+
+// applySSHKeysScript renders the shell script that syncs authorized_keys. It
+// is a pure string builder so the sync logic can be unit-tested without Incus.
+func applySSHKeysScript(userKeys []string, adminKeys []db.AdminKey) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("mkdir -p /root/.ssh\n")
@@ -194,13 +255,26 @@ func (m *Manager) ApplySSHKeys(name string, keys []string) error {
 	b.WriteString("AUTH=/root/.ssh/authorized_keys\n")
 	b.WriteString("touch \"$AUTH\"\n")
 	b.WriteString("chmod 600 \"$AUTH\"\n")
-	for _, k := range keys {
+	// Drop every admin-managed line (those ending with the marker) first, then
+	// re-add the ones that are still activated. This makes admin keys a clean
+	// sync: unactivated/deleted ones are removed, activated ones present once.
+	b.WriteString("sed -i '/ " + AdminKeyMarker + "$/d' \"$AUTH\"\n")
+	for _, k := range adminKeys {
+		line := k.Key + " " + AdminKeyMarker
+		b.WriteString("grep -qxF -- '")
+		b.WriteString(line)
+		b.WriteString("' \"$AUTH\" 2>/dev/null || printf '%s\\n' '")
+		b.WriteString(line)
+		b.WriteString("' >> \"$AUTH\"\n")
+	}
+	// The user's own active keys are append-only (added if missing, never
+	// removed).
+	for _, k := range userKeys {
 		b.WriteString("grep -qxF -- '")
 		b.WriteString(k)
 		b.WriteString("' \"$AUTH\" 2>/dev/null || printf '%s\\n' '")
 		b.WriteString(k)
 		b.WriteString("' >> \"$AUTH\"\n")
 	}
-	_, err := m.lx.ExecSH(name, b.String())
-	return err
+	return b.String()
 }

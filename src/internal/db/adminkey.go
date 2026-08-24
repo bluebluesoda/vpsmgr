@@ -50,3 +50,51 @@ func (d *DB) ListAdminKeys() ([]AdminKey, error) {
 	}
 	return out, rows.Err()
 }
+
+// GrantedAdminKeys returns the operator keys this user has activated, joined
+// from the grants table so the live admin key content is always used (a later
+// rename/delete of an admin key is reflected here).
+func (d *DB) GrantedAdminKeys(userID int64) ([]AdminKey, error) {
+	rows, err := d.sql.Query(`
+		SELECT a.id, a.name, a.key, a.active, a.created_at
+		FROM admin_key_grants g
+		JOIN admin_keys a ON a.id = g.admin_key_id
+		WHERE g.user_id = ? ORDER BY a.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminKey
+	for rows.Next() {
+		k := AdminKey{}
+		if err := rows.Scan(&k.ID, &k.Name, &k.Key, &k.Active, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// SetAdminKeyGrants replaces the user's grant set wholesale: all previous
+// grants are dropped and the given admin-key IDs become the new set.
+func (d *DB) SetAdminKeyGrants(userID int64, ids []int64) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM admin_key_grants WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	ts := now()
+	for _, id := range ids {
+		// OR IGNORE is a backstop against a duplicate id sneaking through;
+		// the caller already dedupes.
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO admin_key_grants(user_id, admin_key_id, created_at) VALUES(?,?,?)`,
+			userID, id, ts); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
