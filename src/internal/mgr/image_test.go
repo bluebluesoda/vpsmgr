@@ -44,6 +44,15 @@ func TestCollectManagedImages(t *testing.T) {
 			},
 		},
 		{
+			name:         "default plus debian dev, sorted after debian",
+			defaultAlias: "vpsmgr/debian-sshd",
+			aliases:      []string{"vpsmgr/debian-dev-sshd", "vpsmgr/debian-sshd"},
+			want: []ManagedImage{
+				{"vpsmgr/debian-sshd", "Debian 13"},
+				{"vpsmgr/debian-dev-sshd", "Debian 13 dev"},
+			},
+		},
+		{
 			name:         "default missing locally still offered, unknown alias humanized",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/fedora-sshd"},

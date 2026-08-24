@@ -78,8 +78,9 @@ Keep the top-level READMEs concise; technical detail belongs in `docs/`
   binary) and warn about the branch. `--update` re-downloads the latest
   prebuilt release over an existing binary and must keep it untouched on
   download failure (no fallback rebuild).
-- Image builds (`50-image.sh`, `60-rhel-image.sh`) must stay slim (apt/dnf
-  clean) and delete the base image after publishing. `60-rhel-image.sh` is
+- Image builds (`50-image.sh`, `60-rhel-image.sh`, `80-debian-dev-image.sh`)
+  must stay slim (apt/dnf clean) and delete the base image after publishing.
+  `60-rhel-image.sh`, `70-opensuse-image.sh` and `80-debian-dev-image.sh` are
   optional and must never be part of `install.sh` (small boxes stay lean).
 - Never add cgo or force C compilation.
 - The panel service is `vps.service` (restart via `systemctl restart vps`).
