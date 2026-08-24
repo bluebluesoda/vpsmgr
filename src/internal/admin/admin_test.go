@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -599,5 +600,88 @@ func TestBlockedDomainsSaveAllValid(t *testing.T) {
 	}
 	if strings.Contains(rr.Body.String(), "skipped") {
 		t.Errorf("unexpected skip banner: %s", rr.Body.String())
+	}
+}
+
+// TestAdminKeysSave exercises the admin SSH-key management endpoint: an
+// authenticated JSON save persists the operator's key store (comment stripped,
+// name fallback), and an invalid key fails without changing stored keys.
+func TestAdminKeysSave(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// Save a key with a comment and no name: stored clean, name from comment.
+	body := `{"keys":[{"id":0,"name":"","key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusbogusX ops-host","active":true}]}`
+	req := httptest.NewRequest(http.MethodPost, prefix+"/keys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		Keys  []struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			Key    string `json:"key"`
+			Active bool   `json:"active"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v (%s)", err, rr.Body.String())
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, error = %q", resp.Error)
+	}
+	if len(resp.Keys) != 1 {
+		t.Fatalf("keys = %d, want 1", len(resp.Keys))
+	}
+	if resp.Keys[0].Name != "ops-host" {
+		t.Errorf("name = %q, want comment fallback", resp.Keys[0].Name)
+	}
+	if strings.Contains(resp.Keys[0].Key, "ops-host") {
+		t.Errorf("key not cleaned: %q", resp.Keys[0].Key)
+	}
+	if resp.Keys[0].ID == 0 {
+		t.Error("new key should carry a real id")
+	}
+
+	// Unauthenticated POST is redirected, not saved.
+	rr = doReq(t, h, http.MethodPost, prefix+"/keys", nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated save = %d, want 302", rr.Code)
+	}
+
+	// An invalid key fails the save and changes nothing.
+	body = `{"keys":[{"id":0,"name":"bad","key":"not-a-key","active":true}]}`
+	req = httptest.NewRequest(http.MethodPost, prefix+"/keys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Error("invalid key should fail the save")
+	}
+	keys, err := srv.db.ListAdminKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("invalid save changed stored keys: %d", len(keys))
+	}
+
+	// The overview page renders the key row for the management panel.
+	rr = doReq(t, h, http.MethodGet, prefix+"/", nil, cookie)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "keysModal") {
+		t.Fatalf("overview missing key modal (code %d)", rr.Code)
 	}
 }

@@ -43,6 +43,16 @@ type pageData struct {
 	PoolFree     []string
 	PoolUsed     int
 	PoolTotal    int
+	// AdminKeys is the operator's own SSH-key store (management panel only).
+	AdminKeys []sshKeyRow
+}
+
+// sshKeyRow is one public key shown in the admin SSH-key management panel.
+type sshKeyRow struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Key    string `json:"key"` // clean "type base64" (comment stripped)
+	Active bool   `json:"active"`
 }
 
 // hostView carries host memory/swap/pool/uptime numbers for the overview cards.
@@ -120,6 +130,11 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		d.PoolFree = s.mgr.FreePoolIPv6List()
 		if total, used, err := s.mgr.IPv6PoolUsage(); err == nil {
 			d.PoolUsed, d.PoolTotal = used, total
+		}
+	}
+	if keys, err := s.mgr.ListAdminKeys(); err == nil {
+		for _, k := range keys {
+			d.AdminKeys = append(d.AdminKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
 		}
 	}
 	return d
@@ -818,4 +833,38 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		More  bool           `json:"more"`
 		Total int            `json:"total"`
 	}{out, offset+len(rows) < total, total})
+}
+
+// handleAdminKeys reconciles the operator's SSH-key store from the management
+// panel. The body is a JSON array of key rows (ID > 0 updates, ID == 0 adds,
+// missing rows are deleted), same contract as the user panel's /ssh-keys.
+// Returns the fresh key list so the panel can re-render without a reload.
+func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keys []mgr.SSHKeyInput `json:"keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAdminKeys(w, false, "", nil)
+		return
+	}
+	keys, err := s.mgr.SaveAdminKeys(req.Keys)
+	if err != nil {
+		writeAdminKeys(w, false, err.Error(), nil)
+		return
+	}
+	_ = s.db.AddAuditLog("000", "admin.keys")
+	writeAdminKeys(w, true, "", keys)
+}
+
+func writeAdminKeys(w http.ResponseWriter, ok bool, errMsg string, keys []db.AdminKey) {
+	rows := make([]sshKeyRow, 0, len(keys))
+	for _, k := range keys {
+		rows = append(rows, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		OK    bool        `json:"ok"`
+		Error string      `json:"error,omitempty"`
+		Keys  []sshKeyRow `json:"keys"`
+	}{ok, errMsg, rows})
 }

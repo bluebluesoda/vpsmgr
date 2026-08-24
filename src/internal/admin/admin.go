@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.handlePower)))
 	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
+	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

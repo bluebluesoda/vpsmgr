@@ -114,6 +114,65 @@ func (m *Manager) ActiveKeys(name string) ([]string, error) {
 	return out, nil
 }
 
+// SaveAdminKeys reconciles the operator's own key store from the admin panel:
+// same semantics as SaveSSHKeys (ID updates, ID 0 adds, missing rows deleted,
+// clean storage, duplicate rejection) against the admin_keys table. Admin keys
+// are not injected into any container yet — they are pure storage until a
+// later feature uses them.
+func (m *Manager) SaveAdminKeys(in []SSHKeyInput) ([]db.AdminKey, error) {
+	existing, err := m.db.ListAdminKeys()
+	if err != nil {
+		return nil, err
+	}
+	type pending struct{ name, key string; active bool }
+	seen := map[string]bool{}
+	kept := map[int64]bool{}
+	var toAdd []pending
+	for _, k := range in {
+		clean, comment, ok := ParsePublicKey(k.Key)
+		if !ok {
+			return nil, fmt.Errorf("not a valid SSH public key")
+		}
+		if seen[clean] {
+			return nil, fmt.Errorf("this SSH key is already added")
+		}
+		seen[clean] = true
+		nm := strings.TrimSpace(k.Name)
+		if nm == "" {
+			nm = comment
+		}
+		if nm == "" {
+			nm = "key"
+		}
+		if k.ID > 0 {
+			kept[k.ID] = true
+			if err := m.db.UpdateAdminKey(k.ID, nm, clean, k.Active); err != nil {
+				return nil, err
+			}
+		} else {
+			toAdd = append(toAdd, pending{nm, clean, k.Active})
+		}
+	}
+	for _, e := range existing {
+		if !kept[e.ID] {
+			if err := m.db.DeleteAdminKey(e.ID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, k := range toAdd {
+		if _, err := m.db.AddAdminKey(k.name, k.key, k.active); err != nil {
+			return nil, err
+		}
+	}
+	return m.db.ListAdminKeys()
+}
+
+// ListAdminKeys returns the operator's stored keys.
+func (m *Manager) ListAdminKeys() ([]db.AdminKey, error) {
+	return m.db.ListAdminKeys()
+}
+
 // ApplySSHKeys writes the given (clean) keys into the container's
 // ~/.ssh/authorized_keys. The rules are deliberate:
 //   - the directory is created only if missing (mkdir -p is a no-op otherwise)
