@@ -113,21 +113,22 @@ footer a{color:var(--muted);text-decoration:underline}
 .keyrow .kval{flex:1 1 16rem;min-width:0;margin-bottom:0}
 .keyrow .kdel{flex:none}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
-.notes-center{padding:.35rem 0}
-.notes-center .frow{max-width:340px}
+.notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
+.notes-cover .frow{max-width:340px}
+.notes-cover .muted{margin:0;max-width:460px}
 .notes-main{display:flex;gap:.8rem;align-items:stretch}
-.notes-list{flex:0 0 27%;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--border);padding-right:.7rem}
+.notes-list{flex:0 0 28%;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--border);padding-right:.7rem}
 .notes-listhead{margin-bottom:.4rem}
-.notes-editor{flex:1 1 auto;min-width:0}
-.notes-editor #notesTitle{margin-bottom:.4rem}
-.notes-editor textarea{margin-bottom:.35rem}
-.notes-item{display:flex;align-items:center;gap:.3rem;padding:.3rem .4rem;border-radius:6px;cursor:grab;font-size:.84rem;border:1px solid transparent;margin-bottom:2px}
+.notes-editor{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+.notes-editor textarea{flex:1 1 auto;min-height:240px;margin-bottom:.35rem}
+.notes-toolbar{display:flex;align-items:center;gap:.5rem}
+.notes-toolbtns{display:flex;gap:.4rem;margin-left:auto}
+.notes-item{display:flex;align-items:center;gap:.3rem;padding:.32rem .4rem;border-radius:6px;cursor:grab;font-size:.84rem;border:1px solid transparent;margin-bottom:2px}
 .notes-item .grip{color:var(--muted);font-size:.7rem;flex:none;user-select:none}
-.notes-item .t{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.notes-item .notes-del{flex:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem;line-height:1;padding:0 .2rem}
-.notes-item.blank .t{color:var(--muted)}
+.notes-item input.ntitle{flex:1 1 auto;min-width:0;background:none;border:none;color:inherit;font:inherit;padding:.1rem 0;outline:none}
+.notes-item input.ntitle::placeholder{color:var(--muted)}
 .notes-item.sel{background:var(--accent);color:var(--on-accent);cursor:default}
-.notes-item.sel .grip,.notes-item.sel .notes-del{color:var(--on-accent)}
+.notes-item.sel .grip{color:var(--on-accent)}
 .notes-item.dragover{border-color:var(--accent);border-style:dashed}
 .modal h3{margin:0 0 .7rem;font-size:1rem;color:var(--head)}
 .modal .muted{margin:0 0 .8rem}
@@ -229,13 +230,12 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}便利贴{{else}}Sticky notes{{end}}<span class="muted notes-status" id="notesStatus"></span></h2>
 
-<div id="notesEnable" class="notes-center" hidden>
-<p class="muted">{{if eq .Lang "zh"}}便利贴内容经过端到端加密，服务器和他人无法查看。设置一个密码来启用（与面板登录密码相互独立）。{{else}}Your notes are end-to-end encrypted — neither the server nor anyone else can read them. Set a password to enable (independent of your panel login password).{{end}}</p>
+<div id="notesEnable" class="notes-cover" hidden>
 <button class="btn accent" id="notesEnableBtn">{{if eq .Lang "zh"}}设置密码以启用便利贴{{else}}Set a password to enable notes{{end}}</button>
 </div>
 
-<div id="notesLocked" class="notes-center" hidden>
-<p class="muted">{{if eq .Lang "zh"}}此设备还没有解锁密钥，输入密码解锁便利贴。{{else}}This device has no unlock key yet — enter your password to decrypt your notes.{{end}}</p>
+<div id="notesLocked" class="notes-cover" hidden>
+<p class="muted">{{if eq .Lang "zh"}}此设备还没有解锁密钥，输入密码解锁便利贴。{{else}}This device has no unlock key — enter your password to decrypt your notes.{{end}}</p>
 <div class="frow" style="max-width:340px"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesUnlockPw" type="password" autocomplete="off"></div>
 <div class="btnrow">
 <button class="btn accent" id="notesUnlockBtn">{{if eq .Lang "zh"}}解锁{{else}}Unlock{{end}}</button>
@@ -249,9 +249,14 @@ footer a{color:var(--muted);text-decoration:underline}
 <div id="notesList"></div>
 </div>
 <div class="notes-editor">
-<input type="text" id="notesTitle" placeholder="{{if eq .Lang "zh"}}标题{{else}}Title{{end}}">
-<textarea id="notesBody" rows="10" spellcheck="false" placeholder="{{if eq .Lang "zh"}}正文内容...{{else}}Note content...{{end}}"></textarea>
-<div class="muted" id="notesSize"></div>
+<textarea id="notesBody" rows="12" spellcheck="false" placeholder="{{if eq .Lang "zh"}}正文内容...{{else}}Note content...{{end}}"></textarea>
+<div class="notes-toolbar">
+<span class="muted" id="notesSize"></span>
+<span class="notes-toolbtns">
+<button class="btn" id="notesManualSave">{{if eq .Lang "zh"}}手动保存{{else}}Save now{{end}}</button>
+<button class="btn danger" id="notesDelete">{{if eq .Lang "zh"}}删除{{else}}Delete{{end}}</button>
+</span>
+</div>
 </div>
 </div>
 </div>
@@ -308,7 +313,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="sshKeysModal">
 <div class="modal" style="max-width:560px">
 <h3>{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}勾选要启用的密钥，保存后立即写入机器的 ~/.ssh/authorized_keys（仅追加，不会覆盖或删除你手动添加的其他密钥）。保存时只保留纯公钥（去掉尾部注释）；名称留空时自动取密钥的注释作为名称。{{else}}Check the keys to enable; saving writes them into ~/.ssh/authorized_keys immediately (append-only — keys you added by hand are never touched). Only the clean key is stored (trailing comment stripped); an empty name falls back to the key's comment.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}勾选要启用的密钥，保存后立即写入机器的 ~/.ssh/authorized_keys（仅追加，不会覆盖或删除你手动添加的其他密钥）。{{else}}Check the keys to enable; saving writes them into ~/.ssh/authorized_keys immediately (append-only — keys you added by hand are never touched).{{end}}</p>
 <div id="sshKeyList">
 {{range .SSHKeys}}
 <div class="keyrow" data-id="{{.ID}}">
@@ -960,9 +965,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 // key derived from a user-chosen password via PBKDF2). The server only ever
 // stores an opaque encrypted envelope; the password is cached locally with a
 // 7-day TTL and never sent anywhere. Three states: enable / locked / unlocked.
-// Edits auto-save 3s after the last change; add/delete/reorder save at once.
+// Titles are edited inline in the list tabs; edits auto-save 3s after the last
+// change, with a manual save button and a two-step delete in the editor bar.
 // Plaintext is capped client-side (MaxNotesPlaintext) and the server rejects
-// oversized bodies — both surface as "storage full".
+// oversized bodies — both surface as a clear red "storage full" status.
 (function(){
   var P='{{.Prefix}}';
   var LANG='{{.Lang}}';
@@ -1047,7 +1053,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   function showLocked(){state='locked';enableBox.hidden=true;lockedBox.hidden=false;mainBox.hidden=true;}
   function unlocked(){
     state='unlocked';enableBox.hidden=true;lockedBox.hidden=true;mainBox.hidden=false;
-    render();setStatus(T('已解锁','Unlocked'),false);
+    renderList();renderEditor();setStatus(T('已解锁','Unlocked'),false);
     setTimeout(function(){setStatus('');},1500);
   }
 
@@ -1059,20 +1065,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     sz.textContent=kb+' KiB / '+Math.floor(MAX/1024)+' KiB';
     sz.style.color=n>MAX?'var(--danger)':'';
   }
-  function render(){
+  function renderList(){
     var list=document.getElementById('notesList');
     list.innerHTML='';
     notes.forEach(function(n){
-      var it=document.createElement('div');it.className='notes-item'+(n.id===selId?' sel':'')+(n.title?'':' blank');
+      var it=document.createElement('div');it.className='notes-item'+(n.id===selId?' sel':'');
       it.draggable=true;
       var g=document.createElement('span');g.className='grip';g.textContent='≡';
-      var t=document.createElement('span');t.className='t';t.textContent=n.title||T('（无标题）','(untitled)');
-      var x=document.createElement('button');x.type='button';x.className='notes-del';x.textContent='×';
-      x.title=(LANG==='zh')?'删除':'Delete';
-      x.addEventListener('click',function(e){e.stopPropagation();delNote(n.id);});
-      it.appendChild(g);it.appendChild(t);it.appendChild(x);
+      var inp=document.createElement('input');inp.type='text';inp.className='ntitle';
+      inp.value=n.title;inp.placeholder=T('（无标题）','(untitled)');inp.spellcheck=false;
+      inp.addEventListener('click',function(e){e.stopPropagation();selectNote(n.id);});
+      inp.addEventListener('input',function(){n.title=inp.value;scheduleSave();});
+      inp.addEventListener('keydown',function(e){if(e.key==='Escape')inp.blur();});
+      it.appendChild(g);it.appendChild(inp);
       it.addEventListener('click',function(){selectNote(n.id);});
-      it.addEventListener('dragstart',function(){dragIdx=notes.indexOf(n);});
+      it.addEventListener('dragstart',function(e){
+        if(e.target.tagName==='INPUT'){e.preventDefault();return;}
+        dragIdx=notes.indexOf(n);
+      });
       it.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';});
       it.addEventListener('dragenter',function(){it.classList.add('dragover');});
       it.addEventListener('dragleave',function(){it.classList.remove('dragover');});
@@ -1080,52 +1090,49 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         e.preventDefault();it.classList.remove('dragover');
         if(dragIdx<0)return;
         var to=notes.indexOf(n);
-        move(dragIdx,to);dragIdx=-1;render();doSave();
+        move(dragIdx,to);dragIdx=-1;renderList();renderEditor();doSave();
       });
       it.addEventListener('dragend',function(){dragIdx=-1;});
       list.appendChild(it);
     });
+  }
+  function renderEditor(){
     var cur=noteById(selId);
-    document.getElementById('notesTitle').value=cur?cur.title:'';
     document.getElementById('notesBody').value=cur?cur.content:'';
     updateSize();
+    disarmDel();
+    document.getElementById('notesDelete').disabled=!cur||notes.length<=1;
   }
   function move(from,to){
     if(from===to)return;
     var n=notes.splice(from,1)[0];
     notes.splice(to,0,n);
   }
-  function selectNote(id){selId=id;render();}
-  function updateListItem(id){
-    var n=noteById(id);if(!n)return;
+  function selectNote(id){
+    selId=id;
     var list=document.getElementById('notesList');
-    for(var i=0;i<list.children.length;i++){
-      if(notes[i].id!==id)continue;
-      var it=list.children[i];
-      it.querySelector('.t').textContent=n.title||T('（无标题）','(untitled)');
-      it.classList.toggle('blank',!n.title);
-      return;
-    }
+    for(var i=0;i<list.children.length;i++)list.children[i].classList.toggle('sel',notes[i].id===id);
+    renderEditor();
   }
 
   function scheduleSave(){
     dirty=true;setStatus(T('待保存...','Unsaved…'),false);
     clearTimeout(saveTimer);
-    saveTimer=setTimeout(doSave,3000);
+    saveTimer=setTimeout(function(){doSave();},3000);
   }
   function doSave(force){
-    if(state!=='unlocked')return;
+    if(state!=='unlocked')return Promise.resolve();
     clearTimeout(saveTimer);
-    if(!force&&!dirty){return;}
+    if(!force&&!dirty)return Promise.resolve();
     dirty=false;
     var plaintext=JSON.stringify(notes);
     if(plaintext.length>MAX){
       setStatus(T('储存空间已满','Storage full'),true);
       toast(T('储存空间已满：最多 '+Math.floor(MAX/1024)+' KiB','Storage full: max '+Math.floor(MAX/1024)+' KiB'),true);
-      return;
+      return Promise.resolve();
     }
     setStatus(T('保存中...','Saving…'),false);
-    encrypt(plaintext).then(function(env){
+    return encrypt(plaintext).then(function(env){
       return fetch(P+'/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:env}),credentials:'same-origin'})
         .then(function(r){return r.json();}).then(function(d){
           if(!d||!d.ok)throw new Error(d&&d.error);
@@ -1133,33 +1140,65 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
           setStatus(T('已保存 ','Saved ')+fmtTS(new Date()),false);
         });
     }).catch(function(err){
-      var full=(err&&err.message==='notes_full');
-      setStatus(full?T('储存空间已满','Storage full'):T('保存失败','Save failed'),true);
-      toast(full?T('储存空间已满','Storage full'):T('保存失败，请重试','Save failed, please retry'),true);
+      var msg=err&&err.message;
+      if(msg==='notes_full'){
+        setStatus(T('储存空间已满','Storage full'),true);
+        toast(T('储存空间已满','Storage full'),true);
+      }else if(!msg||err instanceof TypeError){
+        setStatus(T('保存失败，网络连接问题','Save failed - network problem'),true);
+        toast(T('保存失败，网络连接问题','Save failed - network problem'),true);
+      }else{
+        setStatus(T('保存失败','Save failed'),true);
+        toast(T('保存失败，请重试','Save failed, please retry'),true);
+      }
     });
   }
 
-  var titleIn=document.getElementById('notesTitle'), bodyIn=document.getElementById('notesBody');
-  titleIn.addEventListener('input',function(){
-    var cur=noteById(selId);if(!cur)return;
-    cur.title=titleIn.value;updateListItem(cur.id);scheduleSave();
-  });
+  var bodyIn=document.getElementById('notesBody');
   bodyIn.addEventListener('input',function(){
     var cur=noteById(selId);if(!cur)return;
     cur.content=bodyIn.value;scheduleSave();
   });
 
   document.getElementById('notesAdd').addEventListener('click',function(){
-    var n=newNote();notes.push(n);selId=n.id;render();doSave();
+    var n=newNote();notes.push(n);selId=n.id;
+    renderList();renderEditor();doSave();
+    var it=document.getElementById('notesList').lastElementChild;
+    if(it){var i=it.querySelector('input.ntitle');if(i)i.focus();}
   });
   function delNote(id){
-    if(notes.length<=1){
-      notes=[newNote()];selId=notes[0].id;render();doSave();return;
-    }
+    if(notes.length<=1)return;
     var i=idxOf(id);notes.splice(i,1);
     if(selId===id)selId=notes[Math.min(i,notes.length-1)].id;
-    render();doSave();
+    renderList();renderEditor();doSave();
   }
+
+  // Manual save forces a save immediately (autosave still fires 3s after the
+  // last edit). The button pauses while the request is in flight.
+  var manualBtn=document.getElementById('notesManualSave');
+  manualBtn.addEventListener('click',function(){
+    if(manualBtn.disabled)return;
+    manualBtn.disabled=true;
+    var old=manualBtn.textContent;
+    manualBtn.textContent=T('保存中...','Saving…');
+    doSave(true).then(function(){
+      manualBtn.disabled=false;manualBtn.textContent=old;
+    });
+  });
+
+  // Delete requires a second click to confirm; it arms for 3s and disarms on
+  // selection change. Disabled while a single note is left (nothing to delete).
+  var delBtn=document.getElementById('notesDelete'), delArmed=false, delTimer=null;
+  function disarmDel(){
+    delArmed=false;delBtn.classList.remove('danger');delBtn.textContent=T('删除','Delete');
+    clearTimeout(delTimer);
+  }
+  delBtn.addEventListener('click',function(){
+    if(delBtn.disabled)return;
+    if(delArmed){delNote(selId);return;}
+    delArmed=true;delBtn.classList.add('danger');delBtn.textContent=T('确认删除？','Confirm delete?');
+    delTimer=setTimeout(disarmDel,3000);
+  });
 
   // ---- enable / unlock / reset ----
   document.getElementById('notesEnableBtn').addEventListener('click',function(){
@@ -1180,6 +1219,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     deriveKey(pw,curSalt).then(function(k){
       key=k;notes=[newNote()];selId=notes[0].id;dirty=true;
       state='unlocked';
+      storeKey();
       return doSave(true);
     }).then(function(){
       saveBtn.disabled=false;

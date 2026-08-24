@@ -289,7 +289,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 <div class="overlay" id="keysModal">
   <div class="modal" style="width:min(600px,94vw)">
     <h3>{{if eq .Lang "zh"}}SSH 公钥管理{{else}}SSH public keys{{end}}</h3>
-    <div style="color:#6b7280;font-size:12px;margin-bottom:12px">{{if eq .Lang "zh"}}管理员自己的公钥库，目前仅作存储，不会注入到任何容器。保存时只保留纯公钥（去掉尾部注释）；名称留空时自动取密钥注释作为名称。{{else}}The operator's own key store — storage only for now, not injected into any container. Only the clean key is saved (trailing comment stripped); an empty name falls back to the key's comment.{{end}}</div>
+    <div style="color:#6b7280;font-size:12px;margin-bottom:12px">{{if eq .Lang "zh"}}管理员自己的公钥库，目前仅作存储，不会注入到任何容器。{{else}}The operator's own key store — storage only for now, not injected into any container.{{end}}</div>
     <div id="keyList">
     {{range .AdminKeys}}
       <div class="keyrow" data-id="{{.ID}}">
