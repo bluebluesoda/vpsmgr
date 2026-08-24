@@ -276,8 +276,8 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="notes-toolbar">
 <span class="muted" id="notesSize"></span>
 <span class="notes-toolbtns">
-<button class="btn accent" id="notesSaveLock">{{if eq .Lang "zh"}}保存并锁定{{else}}Save &amp; lock{{end}}</button>
-<button class="btn" id="notesManualSave">{{if eq .Lang "zh"}}手动保存{{else}}Save now{{end}}</button>
+<button class="btn" id="notesSaveLock">{{if eq .Lang "zh"}}保存并锁定{{else}}Save &amp; lock{{end}}</button>
+<button class="btn accent" id="notesManualSave">{{if eq .Lang "zh"}}手动保存{{else}}Save now{{end}}</button>
 <button class="btn danger" id="notesDelete">{{if eq .Lang "zh"}}删除{{else}}Delete{{end}}</button>
 </span>
 </div>
@@ -1285,9 +1285,14 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     setStatus(T('保存中...','Saving…'),false);
     return encrypt(plaintext).then(function(env){
       return fetch(P+'/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:env}),credentials:'same-origin'})
-        .then(function(r){return r.json();}).then(function(d){
+        .then(function(r){return r.json();})        .then(function(d){
           if(!d||!d.ok)throw new Error(d&&d.error);
           storeKey();
+          // Keep the in-memory envelope in sync with the server so a later
+          // unlock (after lock) uses the freshly saved envelope, not the stale
+          // one from page load — otherwise a password change would only take
+          // effect after a reload.
+          fetchedEnv=env;
           setStatus(T('已保存 ','Saved ')+fmtTS(new Date()),false);
           return true;
         });
