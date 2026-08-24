@@ -80,25 +80,31 @@ if incus launch "$BASE_ALIAS" "$NAME"; then
     incus delete --force "$NAME" >/dev/null 2>&1 || true
     incus image delete "$BASE_ALIAS" >/dev/null 2>&1 || true
   elif incus exec "$NAME" -- sh -c 'set -e
-# universal user tooling (same idea as the Debian image): openssh for sshd,
+# universal user tooling (same idea as the Debian image): openssh provides
+# both sshd AND the ssh client on Arch (there is no openssh-client package),
 # curl/wget need ca-certificates or HTTPS fails, bind-tools is dig/nslookup.
 # base-devel is left out to keep the image slim. pacman is retried: the mirror
-# can flap right after boot. -Syu upgrades the rolling base to current first.
+# can flap right after boot. -Syu upgrades the rolling base to current first;
+# --needed skips reinstalling packages the base already has.
 for attempt in 1 2 3; do
-  pacman -Syu --noconfirm openssh ca-certificates curl wget less bind-tools openssh-client unzip nano \
+  pacman -Syu --needed --noconfirm openssh ca-certificates curl wget less bind-tools unzip nano \
     && break
   sleep 5
 done
+# apt-autoremove equivalent: drop packages nothing depends on anymore (after a
+# -Syu a rolling base can leave orphans). Never fails the build on its own.
+if orphans=$(pacman -Qtdq 2>/dev/null); then
+  pacman -Rns --noconfirm $orphans 2>/dev/null || true
+fi
 # hard gate: never publish an image without sshd baked in (mgr.Provision does
 # NOT rewrite sshd config for vpsmgr/* images)
 command -v sshd >/dev/null || { echo "sshd install failed" >&2; exit 1; }
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable sshd
-# slim the published image: drop pacman caches and logs. Without this the
-# rolling -Syu alone would balloon the image past a usable size.
-pacman -Scc --noconfirm 2>/dev/null || true
-rm -rf /var/cache/pacman/pkg/* /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
+# slim the published image: drop pacman caches (packages + sync dbs), logs.
+# A bare rm avoids the pacman -Scc interactive prompts in a non-tty exec.
+rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
 # A machine-id baked into the image would be shared by every container:
 # systemd-networkd derives its DHCPv6 DUID from it, so two containers look
 # like the same DHCPv6 client and dnsmasq lease renewals break (the global
@@ -109,7 +115,7 @@ rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
 # systemd-networkd, so the panel networkd branch applies) — nothing to bake.
 '; then
     incus stop "$NAME" --timeout=30 || true
-    if incus publish "$NAME" --alias "$IMAGE" --description "$VER"; then
+    if incus publish "$NAME" --alias "$IMAGE" "description=$VER"; then
       incus delete --force "$NAME" || true
       # keep only the modified image — the base was a build intermediate
       if incus image delete "$BASE_ALIAS" >/dev/null 2>&1; then
