@@ -109,11 +109,12 @@ footer a{color:var(--muted);text-decoration:underline}
 .overlay.show{display:flex}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
 .imglist{display:flex;gap:.45rem;flex-wrap:wrap;margin:.35rem 0 .7rem}
-.imgopt{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--border);border-radius:7px;padding:.3rem .6rem;cursor:pointer}
+.imgopt{display:inline-flex;align-items:center;gap:.55rem;border:1px solid var(--border);border-radius:9px;padding:.45rem .8rem;cursor:pointer;font-size:.95rem}
 .imgopt:has(input:checked){border-color:var(--accent);color:var(--accent)}
 .imgic{display:inline-flex;align-items:center;flex:none}
-.imgic svg{display:block}
-#reDesc{min-height:1.2em;margin-bottom:.6rem;font-size:.84rem}
+.imgic svg{display:block;width:28px;height:28px}
+#reDesc{min-height:1.2em;margin-bottom:.6rem;font-size:.86rem}
+.modal-wide{max-width:620px}
 .keyrow{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;margin-bottom:.45rem}
 .keyrow .kact{width:1rem;height:1rem;flex:none;cursor:pointer}
 .keyrow .kname{flex:0 0 9rem;min-width:0}
@@ -431,7 +432,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 </div>
 
 <div class="overlay" id="reModal">
-<div class="modal">
+<div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
 <p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。{{else}}Deletes all data and rebuilds with the same IP/ports/quota.{{end}}<br><b style="color:var(--danger)">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</b></p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
@@ -499,9 +500,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   function imgIcon(alias){
     var svg={
       'vpsmgr/debian-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#d70a53"/><g fill="#fff">'
-        +'<circle cx="8" cy="6.4" r="1.5"/><circle cx="9.6" cy="7.2" r="1.8"/><circle cx="10" cy="9" r="2"/><circle cx="8.7" cy="10.5" r="2.2"/><circle cx="6.7" cy="10.1" r="2.4"/><circle cx="5.9" cy="8.5" r="2.5"/><circle cx="6.9" cy="7.2" r="2.6"/>'
-        +'</g></svg>',
+        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#d70a53"/>'
+        +'<path d="M 8.5,8.0 L 8.53,8.03 L 8.56,8.06 L 8.59,8.1 L 8.62,8.14 L 8.64,8.18 L 8.66,8.23 L 8.67,8.28 L 8.69,8.33 L 8.7,8.38 L 8.7,8.44 L 8.7,8.5 L 8.7,8.55 L 8.69,8.61 L 8.68,8.68 L 8.66,8.74 L 8.64,8.8 L 8.62,8.86 L 8.58,8.92 L 8.55,8.98 L 8.51,9.04 L 8.46,9.1 L 8.41,9.15 L 8.35,9.2 L 8.29,9.25 L 8.23,9.3 L 8.16,9.34 L 8.09,9.38 L 8.01,9.42 L 7.93,9.45 L 7.84,9.48 L 7.76,9.5 L 7.67,9.51 L 7.57,9.52 L 7.48,9.53 L 7.38,9.53 L 7.28,9.52 L 7.19,9.51 L 7.09,9.49 L 6.99,9.46 L 6.88,9.43 L 6.79,9.39 L 6.69,9.34 L 6.59,9.29 L 6.49,9.23 L 6.4,9.16 L 6.31,9.09 L 6.23,9.01 L 6.14,8.92 L 6.06,8.83 L 5.99,8.73 L 5.92,8.63 L 5.86,8.52 L 5.8,8.4 L 5.75,8.28 L 5.7,8.16 L 5.66,8.03 L 5.63,7.9 L 5.61,7.77 L 5.59,7.63 L 5.59,7.49 L 5.59,7.34 L 5.6,7.2 L 5.62,7.06 L 5.64,6.91 L 5.68,6.77 L 5.72,6.62 L 5.78,6.48 L 5.84,6.33 L 5.91,6.2 L 5.99,6.06 L 6.08,5.93 L 6.18,5.8 L 6.28,5.67 L 6.4,5.55 L 6.52,5.44 L 6.65,5.33 L 6.79,5.23 L 6.93,5.14 L 7.09,5.05 L 7.24,4.97 L 7.41,4.9 L 7.58,4.84 L 7.75,4.79 L 7.93,4.75 L 8.11,4.72 L 8.3,4.69 L 8.49,4.68 L 8.68,4.68 L 8.87,4.7 L 9.07,4.72 L 9.26,4.75 L 9.45,4.8 L 9.64,4.86 L 9.83,4.92 L 10.02,5.0 L 10.2,5.1 L 10.38,5.2 L 10.56,5.31 L 10.73,5.44 L 10.89,5.57 L 11.05,5.72 L 11.2,5.87 L 11.34,6.04 L 11.48,6.21 L 11.6,6.4 L 11.72,6.59 L 11.82,6.79 L 11.91,7.0 L 12.0,7.21 L 12.07,7.43 L 12.12,7.65 L 12.17,7.88 L 12.2,8.12 L 12.22,8.35 L 12.23,8.59 L 12.22,8.84 L 12.2,9.08 L 12.16,9.32 L 12.11,9.56 L 12.05,9.8 L 11.97,10.04 L 11.88,10.28 L 11.77,10.51 L 11.65,10.73 L 11.52,10.96 L 11.38,11.17 L 11.22,11.38 L 11.04,11.58 L 10.86,11.77 L 10.66,11.95 L 10.45,12.12 L 10.24,12.28 L 10.01,12.43 L 9.77,12.56 L 9.52,12.68 L 9.27,12.79 L 9.0,12.89 L 8.73,12.97 L 8.46,13.04 L 8.18,13.09 L 7.89,13.12 L 7.6,13.14 L 7.31,13.14 L 7.02,13.13 L 6.73,13.1 L 6.44,13.05 L 6.15,12.98 L 5.86,12.9 L 5.57,12.81 L 5.29,12.69 L 5.02,12.56 L 4.75,12.41 L 4.48,12.25 L 4.23,12.07 L 3.99,11.88 L 3.75,11.67 L 3.53,11.44 L 3.31,11.21 L 3.11,10.96 L 2.93,10.7 L 2.76,10.42 L 2.6,10.14 L 2.46,9.84 L 2.33,9.54 L 2.22,9.23 L 2.13,8.91 L 2.05,8.58 L 2.0,8.25 L 1.96,7.92 L 1.94,7.58 L 1.94,7.23 L 1.96,6.89 L 2.0,6.55 L 2.06,6.21 L 2.14,5.87 L 2.24,5.53 L 2.36,5.2 L 2.49,4.87 L 2.65,4.55 L 2.82,4.24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
+        +'</svg>',
       'vpsmgr/debian-dev-sshd':
         '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#ec4899"/><g fill="#fff">'
         +'<rect x="4.6" y="3.6" width="6.8" height="3" rx="1"/><rect x="7.4" y="6.2" width="1.6" height="7.2" rx="0.8"/>'
