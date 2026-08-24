@@ -159,7 +159,8 @@ type pageData struct {
 	Snapshots        []snapshotRow
 	SnapshotLimit    int // configured per-container snapshot cap (for display)
 	SSHKeys            []sshKeyRow
-	MaxNotesPlaintext  int // sticky-notes plaintext byte cap (client-side check)
+	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
+	MaxNotesPlaintext  int         // sticky-notes plaintext byte cap (client-side check)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -365,6 +366,14 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	keys, _ := s.db.ListSSHKeys(u.ID)
 	for _, k := range keys {
 		d.SSHKeys = append(d.SSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+	}
+	// The operator's public keys, surfaced read-only in the SSH-key panel. A
+	// user must see them (names + contents) to decide whether to trust them,
+	// but never edits them here.
+	if akeys, err := s.db.ListAdminKeys(); err == nil {
+		for _, k := range akeys {
+			d.AdminSSHKeys = append(d.AdminSSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+		}
 	}
 	return d
 }

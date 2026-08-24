@@ -112,6 +112,11 @@ footer a{color:var(--muted);text-decoration:underline}
 .keyrow .kname{flex:0 0 9rem;min-width:0}
 .keyrow .kval{flex:1 1 16rem;min-width:0;margin-bottom:0}
 .keyrow .kdel{flex:none}
+.keylink{background:none;border:none;padding:0;color:var(--accent);cursor:pointer;font-family:inherit;font-size:.8rem;text-decoration:underline}
+.keylink:hover{filter:brightness(1.15)}
+.adminkeys{margin-top:.5rem;border-top:1px dashed var(--border);padding-top:.55rem}
+.adminkeys .kname{font-weight:600;font-size:.84rem;color:var(--text)}
+.adminkeys-warn{margin:.45rem 0 .6rem}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
 .notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
 .notes-cover[hidden],.notes-main[hidden]{display:none}
@@ -326,6 +331,20 @@ footer a{color:var(--muted);text-decoration:underline}
 {{end}}
 </div>
 <div class="btnrow"><button type="button" class="btn ok" id="sshKeyAdd">{{if eq .Lang "zh"}}添加公钥{{else}}Add key{{end}}</button></div>
+{{if .AdminSSHKeys}}
+<div class="adminkeys">
+<button type="button" class="keylink" id="adminKeysToggle">{{if eq .Lang "zh"}}展开来自管理员的公钥{{else}}Show the administrator's public keys{{end}}</button>
+<div id="adminKeysList" hidden>
+<div class="err adminkeys-warn">{{if eq .Lang "zh"}}激活以下公钥则授权管理员登录你的机器{{else}}Activating the keys below authorizes the administrator to log in to your machine{{end}}</div>
+{{range .AdminSSHKeys}}
+<div class="keyrow">
+<span class="kname">{{.Name}}</span>
+<input type="text" class="kval" value="{{.Key}}" readonly spellcheck="false">
+</div>
+{{end}}
+</div>
+</div>
+{{end}}
 <div class="actions">
 <button class="btn" type="button" id="sshKeysClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
 <button class="btn accent" type="button" id="sshKeysSave">{{if eq .Lang "zh"}}保存并生效{{else}}Save &amp; apply{{end}}</button>
@@ -590,6 +609,21 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
           toast('error',true);
         });
     });
+    // Admin-keys disclosure: the operator's stored public keys are shown
+    // read-only below the user's own list. Purely informational — expanding
+    // never touches them and they are not part of the save payload.
+    var adminToggle=document.getElementById('adminKeysToggle');
+    if(adminToggle){
+      var adminList=document.getElementById('adminKeysList');
+      var adminOpen=false;
+      adminToggle.addEventListener('click',function(){
+        adminOpen=!adminOpen;
+        adminList.hidden=!adminOpen;
+        adminToggle.textContent=(LANG==='zh')
+          ?(adminOpen?'收起来自管理员的公钥':'展开来自管理员的公钥')
+          :(adminOpen?'Hide the administrator\'s public keys':'Show the administrator\'s public keys');
+      });
+    }
   }
 })();
 // (?) help icons: click toggles the floating tooltip; click elsewhere or
