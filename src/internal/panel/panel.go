@@ -160,6 +160,8 @@ type pageData struct {
 	SnapshotLimit    int // configured per-container snapshot cap (for display)
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
+	Impersonated       bool        // operator "log in as user": show a banner
+	AdminPrefix        string      // admin panel path, for the banner's return link
 	MaxNotesPlaintext  int         // sticky-notes plaintext byte cap (client-side check)
 }
 

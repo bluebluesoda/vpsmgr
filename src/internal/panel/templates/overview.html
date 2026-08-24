@@ -68,6 +68,10 @@ input.bad{border-color:var(--danger);outline:1px solid var(--danger)}
 .frow label{flex:0 0 4.2rem}
 label{font-size:.84rem;color:var(--muted)}
 .err{background:var(--err-bg);color:var(--err-fg);border:1px solid var(--danger);padding:.5rem .7rem;border-radius:8px;margin-bottom:.8rem;font-size:.87rem;word-break:break-all}
+.impbanner{background:var(--violet-bg);color:var(--violet-fg);border:1px solid var(--violet-border);padding:.55rem .8rem;border-radius:8px;margin-bottom:.8rem;font-size:.87rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.impbanner b{color:var(--violet-fg)}
+.impbanner .impback{margin-left:auto}
+.impbanner a{color:var(--accent);text-decoration:underline;font-weight:600}
 a{color:var(--accent);text-decoration:none}
 .domtable{width:100%;border-collapse:collapse;font-size:.85rem;margin:.2rem 0 .6rem}
 .domtable th,.domtable td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -161,6 +165,13 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 </div>
 {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+{{if .Impersonated}}
+<div class="impbanner">
+<b>{{if eq .Lang "zh"}}管理员代客登录中{{else}}Operator is logged in as you{{end}}</b>
+<span class="muted" style="color:inherit">{{if eq .Lang "zh"}}当前会话由管理员以你的身份建立。{{else}}This session was opened by the administrator acting as you.{{end}}</span>
+<span class="impback"><a href="{{.AdminPrefix}}">{{if eq .Lang "zh"}}返回管理员面板{{else}}Back to admin panel{{end}}</a></span>
+</div>
+{{end}}
 
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>

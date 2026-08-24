@@ -226,6 +226,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
               <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary" title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
             </div>
@@ -256,6 +257,10 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <div class="body" id="modalBody"></div>
     <div class="foot">
       <a class="copy" id="modalCopy" onclick="copyModal()">{{if eq .Lang "zh"}}复制{{else}}Copy{{end}}</a>
+      <form action="{{.Prefix}}/login-as" method="post" id="loginAsForm" class="inline" hidden>
+        <input type="hidden" name="name" id="loginAsName">
+        <button class="primary" type="submit">{{if eq .Lang "zh"}}以此身份登录{{else}}Log in as this user{{end}}</button>
+      </form>
       <button onclick="closeModal()">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
     </div>
   </div>
@@ -316,7 +321,10 @@ var COPY_OK = {{if eq .Lang "zh"}}"已复制 ✓"{{else}}"Copied ✓"{{end}};
 var COPY_LBL = {{if eq .Lang "zh"}}"复制"{{else}}"Copy"{{end}};
 var CREATE_ING = {{if eq .Lang "zh"}}"创建中…"{{else}}"Creating…"{{end}};
 function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
-function closeModal(){ document.getElementById('modal').classList.remove('open'); }
+function closeModal(){ document.getElementById('modal').classList.remove('open'); hideLoginAs(); }
+// The "log in as this user" button appears only in the post-create modal.
+function showLoginAs(name){ var f = document.getElementById('loginAsForm'); if(!f) return; document.getElementById('loginAsName').value = name || ''; f.hidden = !name; }
+function hideLoginAs(){ var f = document.getElementById('loginAsForm'); if(f) f.hidden = true; }
 function copyModal(){
   var b = document.getElementById('modalBody');
   var done = function(){
@@ -458,7 +466,11 @@ function del(name){
 })();
 // consume flash banner once
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
-  if (j.msg) { if (j.kind === 'modal') openModal(j.msg); else alert(j.msg); }
+  if (j.msg) {
+    if (j.kind === 'modal') { openModal(j.msg); }
+    else if (j.kind === 'user_created') { openModal(j.msg); showLoginAs(j.data); }
+    else { alert(j.msg); }
+  }
 });
 // Admin SSH-key management panel: floating modal, no page switch. Same
 // full-set save contract as the user panel (id > 0 updates, 0 adds, missing

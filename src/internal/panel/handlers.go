@@ -18,7 +18,13 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 type ctxKey int
 
-const userKey ctxKey = 0
+const (
+	userKey ctxKey = 0
+	// impersonatedKey marks a session created by the operator ("log in as
+	// user"). When set, audit events are attributed "000+<user>" and the panel
+	// shows a "logged in as" banner.
+	impersonatedKey ctxKey = 1
+)
 
 // loginDummyHash is compared against when the username is unknown so that a
 // login attempt takes the same time whether or not the account exists,
@@ -60,14 +66,33 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			s.redirect(w, r, s.p("/login"), "")
 			return
 		}
-		u, err := s.db.SessionUser(c.Value)
+		u, imp, err := s.db.SessionWithFlag(c.Value)
 		if err != nil {
 			s.clearSessionCookie(w)
 			s.redirect(w, r, s.p("/login"), "")
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+		ctx := context.WithValue(r.Context(), userKey, u)
+		ctx = context.WithValue(ctx, impersonatedKey, imp)
+		next(w, r.WithContext(ctx))
 	}
+}
+
+// isImpersonated reports whether the current session was created by the
+// operator ("log in as user").
+func (s *Server) isImpersonated(r *http.Request) bool {
+	v, _ := r.Context().Value(impersonatedKey).(bool)
+	return v
+}
+
+// auditActor returns the actor name for an audit event: the plain username for
+// a user's own action, or "000+<username>" when the operator is acting as that
+// user (impersonation). Mirrors the admin panel's "000+" convention.
+func (s *Server) auditActor(r *http.Request, name string) string {
+	if s.isImpersonated(r) {
+		return "000+" + name
+	}
+	return name
 }
 
 // requirePost rejects everything but POST so no state-changing action can be
@@ -146,6 +171,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			sess, err := s.db.CreateSession(u.ID, s.cfg.Panel.SessionDays)
 			if err == nil {
 				s.setSessionCookie(w, sess.Token)
+				_ = s.db.AddAuditLog(u.Name, "session.login")
 				s.redirect(w, r, s.p(""), "")
 				return
 			}
@@ -166,7 +192,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
-	s.render(w, r, "overview.html", s.buildData(u, "", ""))
+	d := s.buildData(u, "", "")
+	d.Impersonated = s.isImpersonated(r)
+	d.AdminPrefix = "/" + s.cfg.Panel.AdminPath
+	s.render(w, r, "overview.html", d)
 }
 
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +209,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.Power(u.Name, action); err != nil {
 		msg = "error: " + err.Error()
 	} else {
-		_ = s.db.AddAuditLog(u.Name, "power."+action)
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "power."+action)
 		msg = "ok: " + action
 	}
 	s.redirect(w, r, s.p(""), msg)
@@ -201,7 +230,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "reinstall")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "reinstall")
 	s.redirectModal(w, r, s.p(""), s.t(r, "reinstall_done", pass))
 }
 
@@ -231,7 +260,7 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "passwd.change")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "passwd.change")
 	s.redirect(w, r, s.p(""), "ok: panel password changed")
 }
 
@@ -244,7 +273,7 @@ func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "reset_root_password")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "reset_root_password")
 	s.redirectModal(w, r, s.p(""), s.t(r, "new_root_password", pass))
 }
 
@@ -259,7 +288,7 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain added")
 }
 
@@ -296,7 +325,7 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "ok: no changes")
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain settings saved")
 }
 
@@ -310,7 +339,7 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain removed")
 }
 
@@ -347,6 +376,7 @@ func (s *Server) handleInitScript(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "init_script")
 	if jsonReq {
 		writeInitScriptJSON(w, true, "")
 	} else {
@@ -404,7 +434,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.SnapshotCreate(u.Name); err != nil {
 		msg = "error: " + err.Error()
 	} else {
-		_ = s.db.AddAuditLog(u.Name, "snapshot.create")
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.create")
 		msg = "ok: snapshot created"
 	}
 	s.redirect(w, r, s.p(""), msg)
@@ -422,7 +452,7 @@ func (s *Server) handleSnapshotDel(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.SnapshotDelete(u.Name, name); err != nil {
 		msg = "error: " + err.Error()
 	} else {
-		_ = s.db.AddAuditLog(u.Name, "snapshot.delete")
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.delete")
 		msg = "ok: snapshot deleted"
 	}
 	s.redirect(w, r, s.p(""), msg)
@@ -441,7 +471,7 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.SnapshotRestore(u.Name, name); err != nil {
 		msg = "error: " + err.Error()
 	} else {
-		_ = s.db.AddAuditLog(u.Name, "snapshot.restore")
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.restore")
 		msg = "ok: snapshot restored"
 	}
 	s.redirect(w, r, s.p(""), msg)
@@ -473,7 +503,7 @@ func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 		writeSSHKeys(w, false, err.Error(), "", nil, nil)
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "ssh_keys")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "ssh_keys")
 	// Apply the selection immediately. Admin keys are fully synced (activated
 	// ones written with the AdminKeyMarker, stale/unactivated ones removed), so
 	// this runs even when nothing is active — deactivating an admin key must
@@ -550,7 +580,7 @@ func (s *Server) handleNotesReset(w http.ResponseWriter, r *http.Request) {
 		writeNotesJSON(w, false, "storage error", true, "")
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "notes_reset")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "notes_reset")
 	writeNotesJSON(w, true, "", false, "")
 }
 

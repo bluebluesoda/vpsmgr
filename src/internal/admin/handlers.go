@@ -277,6 +277,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.setSessionCookie(w, token)
+		_ = s.db.AddAuditLog("000", "session.login")
 		s.redirect(w, r, s.p(""), "")
 		return
 	}
@@ -306,12 +307,13 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusUnauthorized)
 		return
 	}
-	msg, kind, _ := s.flash.Pop(c.Value)
+	msg, kind, data, _ := s.flash.Pop(c.Value)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
 		Msg  string `json:"msg"`
 		Kind string `json:"kind"`
-	}{msg, kind})
+		Data string `json:"data"`
+	}{msg, kind, data})
 }
 
 // handleUserAdd creates a user with the CLI's Add logic and shows the full
@@ -358,7 +360,8 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	cred := "user:      " + res.User.Name +
 		"\npassword:  " + res.Password +
 		"\npanel:     " + s.cfg.PanelURL("/"+s.cfg.Panel.URLPath)
-	s.redirectModal(w, r, s.p(""), cred)
+	// Carry the username as flash data so the modal can offer "log in as".
+	s.redirectModalData(w, r, s.p(""), cred, res.User.Name)
 }
 
 func (s *Server) handleUserDel(w http.ResponseWriter, r *http.Request) {
@@ -495,6 +498,46 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.AddAuditLog("000", "admin.passwd")
 	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
+}
+
+// handleLoginAs ("log in as user" / impersonation) creates a user-panel
+// session for the given username and hands the browser its cookie, dropping the
+// operator straight into that user's panel — regardless of the user's password.
+// The admin's own session cookie is separate and untouched, so returning to the
+// admin panel works normally; impersonating another user later simply replaces
+// the user-panel cookie. The session is flagged impersonated, so the user
+// panel attributes its audit events "000+<user>" and shows a banner.
+func (s *Server) handleLoginAs(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	u, err := s.db.GetUserByName(name)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: user not found")
+		return
+	}
+	sess, err := s.db.CreateImpersonatedSession(u.ID, s.cfg.Panel.SessionDays)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	// Set the user panel's own session cookie (same name, path and flags as a
+	// real login) so the browser becomes that user. Only the user-panel cookie
+	// is written here; the admin cookie is left alone.
+	userPrefix := "/" + s.cfg.Panel.URLPath
+	http.SetCookie(w, &http.Cookie{
+		Name:     "vpsmgr_session",
+		Value:    sess.Token,
+		Path:     userPrefix,
+		MaxAge:   s.cfg.Panel.SessionDays * 86400,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	_ = s.db.AddAuditLog("000+"+u.Name, "session.login")
+	http.Redirect(w, r, userPrefix+"/", http.StatusFound)
 }
 
 // parseMem parses a memory string ("512" or "1G") into MiB, mirroring the CLI.
@@ -750,6 +793,7 @@ func (s *Server) handleIPv6PoolAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/ipv6pool"), "ok: no new addresses")
 		return
 	}
+	_ = s.db.AddAuditLog("000", "ipv6pool.add")
 	s.redirect(w, r, s.p("/ipv6pool"), s.t(r, "pool_added", len(added)))
 }
 
@@ -764,6 +808,7 @@ func (s *Server) handleIPv6PoolDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/ipv6pool"), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000", "ipv6pool.del")
 	s.redirect(w, r, s.p("/ipv6pool"), s.t(r, "pool_removed", addr))
 }
 

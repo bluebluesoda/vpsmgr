@@ -797,8 +797,16 @@ func TestDomainAddLogsAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Actor != "alice" || rows[0].Action != "domain_update" {
-		t.Errorf("audit rows = %+v", rows)
+	// The login also writes a session.login row; assert the domain_update row
+	// is present (and attributed to the acting user).
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "alice" && r.Action == "domain_update" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want a domain_update row for alice", rows)
 	}
 }
 
@@ -890,13 +898,16 @@ func TestSnapshotRoutesRegistered(t *testing.T) {
 		t.Fatalf("POST /snapshot-restore = %d, want 302", rr.Code)
 	}
 
-	// No audit rows: all snapshot calls failed before any successful action.
+	// No audit rows for the snapshot ops: every snapshot call failed before
+	// any successful action (the login row is expected).
 	rows, err := d.ListAuditLog(0, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Errorf("audit rows = %+v, want none (all snapshot ops failed)", rows)
+	for _, r := range rows {
+		if strings.HasPrefix(r.Action, "snapshot.") {
+			t.Errorf("failed snapshot op wrote an audit row: %+v", r)
+		}
 	}
 }
 
@@ -1426,4 +1437,89 @@ func TestNotesLifecycle(t *testing.T) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// TestUserLoginWritesAudit verifies a successful user login records a
+// session.login audit event (newly added audit coverage).
+func TestUserLoginWritesAudit(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	rr := doReq(t, h, http.MethodPost, prefix+"/login",
+		url.Values{"username": {"alice"}, "password": {"pw"}}, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login = %d, want 302", rr.Code)
+	}
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "alice" && r.Action == "session.login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want alice session.login", rows)
+	}
+}
+
+// TestImpersonatedSessionAuditActor verifies that a user-panel action carried
+// out under an operator-created session is attributed "000+<user>" (not the
+// user's own name).
+func TestImpersonatedSessionAuditActor(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := d.CreateImpersonatedSession(u.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: "vpsmgr_session", Value: sess.Token, Path: prefix}
+
+	rr := postJSON(t, h, prefix+"/init-script", `{"script":"#!/bin/bash\necho hi"}`, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("init-script save = %d, want 200", rr.Code)
+	}
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Action == "init_script" && r.Actor == "000+alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want init_script attributed 000+alice", rows)
+	}
+}
+
+// TestOverviewImpersonationBanner verifies the "logged in as" banner renders
+// only when the session is impersonated, with a link back to the admin panel.
+func TestOverviewImpersonationBanner(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User: &db.User{Name: "alice"}, Prefix: "/" + testSecret,
+		Impersonated: true, AdminPrefix: "/Adm1n", Lang: langZh,
+	})
+	for _, want := range []string{"管理员代客登录中", "返回管理员面板", "/Adm1n"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("impersonated overview missing %q", want)
+		}
+	}
+
+	plain := srv.renderToString(t, "overview.html", pageData{
+		User: &db.User{Name: "alice"}, Prefix: "/" + testSecret,
+	})
+	for _, absent := range []string{`class="impbanner"`, "管理员代客登录中"} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("normal overview should not render %q", absent)
+		}
+	}
 }
