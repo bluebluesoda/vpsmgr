@@ -80,22 +80,11 @@ if incus launch "$BASE_ALIAS" "$NAME"; then
 # universal user tooling (same idea as the Debian image): openssh provides
 # both sshd AND the ssh client on Arch (there is no openssh-client package),
 # curl/wget need ca-certificates or HTTPS fails, bind-tools is dig/nslookup.
-# base-devel is left out to keep the image slim.
-# The minimal base image ships a single-default mirror list, so give pacman a
-# few reliable servers — it falls back automatically when one is slow or down
-# (a lone slow mirror otherwise aborts the whole build with "too slow"). The
-# official geo server redirects to a nearby mirror.
-cat > /etc/pacman.d/mirrorlist <<'EOF'
-Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
-Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
-Server = https://archlinux.mirror.constant.com/$repo/os/$arch
-EOF
-# pacman is retried: the mirror can still flap right after boot. -Syu upgrades
-# the rolling base to current first; --needed skips reinstalling packages the
-# base already has; --disable-download-timeout lets a slow-but-alive mirror
-# finish instead of aborting on the "less than 1 byte/sec" check.
+# base-devel is left out to keep the image slim. pacman is retried: the mirror
+# can flap right after boot. -Syu upgrades the rolling base to current first;
+# --needed skips reinstalling packages the base already has.
 for attempt in 1 2 3; do
-  pacman -Syu --needed --disable-download-timeout --noconfirm openssh ca-certificates curl wget less bind-tools unzip nano \
+  pacman -Syu --needed --noconfirm openssh ca-certificates curl wget less bind-tools unzip nano \
     && break
   sleep 5
 done
