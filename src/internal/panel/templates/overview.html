@@ -268,7 +268,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div id="notesMain" class="notes-main" hidden>
 <div class="notes-list">
-<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button><button class="btn" id="notesLock">{{if eq .Lang "zh"}}锁定{{else}}Lock{{end}}</button><button class="btn" id="notesExport">{{if eq .Lang "zh"}}导出{{else}}Export{{end}}</button></div>
+<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button><button class="btn" id="notesChangePw">{{if eq .Lang "zh"}}修改密码{{else}}Change password{{end}}</button><button class="btn" id="notesExport">{{if eq .Lang "zh"}}导出{{else}}Export{{end}}</button></div>
 <div id="notesList"></div>
 </div>
 <div class="notes-editor">
@@ -276,6 +276,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="notes-toolbar">
 <span class="muted" id="notesSize"></span>
 <span class="notes-toolbtns">
+<button class="btn accent" id="notesSaveLock">{{if eq .Lang "zh"}}保存并锁定{{else}}Save &amp; lock{{end}}</button>
 <button class="btn" id="notesManualSave">{{if eq .Lang "zh"}}手动保存{{else}}Save now{{end}}</button>
 <button class="btn danger" id="notesDelete">{{if eq .Lang "zh"}}删除{{else}}Delete{{end}}</button>
 </span>
@@ -420,13 +421,28 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="notesEnableModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}设置便利贴密码{{else}}Set notes password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}密码仅本地加密、不上传；遗忘无法找回，只能重置。{{else}}Encrypted locally, never uploaded; if lost, notes can only be reset.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}密码仅本地加密、不上传；遗忘无法找回，只能清空便利贴数据。{{else}}Encrypted locally, never uploaded; if lost, the notes can only be cleared.{{end}}</p>
 <form id="notesEnableForm">
 <div class="frow"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesPw" type="password" autocomplete="new-password" required></div>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="notesPw2" type="password" autocomplete="new-password" required></div>
 <div class="actions">
 <button class="btn" type="button" id="notesEnableCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn accent" type="submit">{{if eq .Lang "zh"}}启用{{else}}Enable{{end}}</button>
+</div>
+</form>
+</div>
+</div>
+
+<div class="overlay" id="notesChangePwModal">
+<div class="modal">
+<h3>{{if eq .Lang "zh"}}修改便利贴密码{{else}}Change notes password{{end}}</h3>
+<p class="muted">{{if eq .Lang "zh"}}密码仅本地加密、不上传；遗忘无法找回，只能清空便利贴数据。{{else}}Encrypted locally, never uploaded; if lost, the notes can only be cleared.{{end}}</p>
+<form id="notesChangePwForm">
+<div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="notesCpw" type="password" autocomplete="new-password" required></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="notesCpw2" type="password" autocomplete="new-password" required></div>
+<div class="actions">
+<button class="btn" type="button" id="notesChangePwCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+<button class="btn accent" type="submit">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
 </div>
 </form>
 </div>
@@ -1254,9 +1270,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     saveTimer=setTimeout(function(){doSave();},3000);
   }
   function doSave(force){
-    if(state!=='unlocked')return Promise.resolve();
+    if(state!=='unlocked')return Promise.resolve(true);
     clearTimeout(saveTimer);
-    if(!force&&!dirty)return Promise.resolve();
+    if(!force&&!dirty)return Promise.resolve(true);
     dirty=false;
     autoTitle();
     updateSize();
@@ -1264,7 +1280,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(plaintext.length>MAX){
       setStatus(T('储存空间已满','Storage full'),true);
       toast(T('储存空间已满：最多 '+Math.floor(MAX/1024)+' KiB','Storage full: max '+Math.floor(MAX/1024)+' KiB'),true);
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     setStatus(T('保存中...','Saving…'),false);
     return encrypt(plaintext).then(function(env){
@@ -1273,6 +1289,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
           if(!d||!d.ok)throw new Error(d&&d.error);
           storeKey();
           setStatus(T('已保存 ','Saved ')+fmtTS(new Date()),false);
+          return true;
         });
     }).catch(function(err){
       var msg=err&&err.message;
@@ -1286,6 +1303,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         setStatus(T('保存失败','Save failed'),true);
         toast(T('保存失败，请重试','Save failed, please retry'),true);
       }
+      return false;
     });
   }
 
@@ -1412,9 +1430,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     toast(T('已导出 '+raw.notes.length+' 个便利贴','Exported '+raw.notes.length+' notes'),false);
   });
 
-  // Lock: drop the local key cache and return to the password prompt. Any
-  // pending edits are flushed first so nothing is lost.
-  document.getElementById('notesLock').addEventListener('click',function(){
+  // Save & lock: flush the latest data to the server first (verified), then
+  // drop the local key cache and return to the password prompt.
+  document.getElementById('notesSaveLock').addEventListener('click',function(){
     function doLock(){
       key=null;curSalt='';notes=[];selId=null;dirty=false;
       localStorage.removeItem(LS_KEY);
@@ -1422,7 +1440,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       showLocked();
       toast(T('已锁定','Locked'),false);
     }
-    if(dirty)doSave(true).then(doLock);else doLock();
+    doSave(true).then(function(ok){
+      if(ok)doLock();else toast(T('保存失败，未锁定','Save failed - not locked'),true);
+    });
   });
 
   // ---- enable / unlock / reset ----
@@ -1455,6 +1475,42 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     }).catch(function(){
       saveBtn.disabled=false;
       toast(T('启用失败','Enable failed'),true);
+    });
+  });
+
+  // Change password: derive a fresh key from the new password + a new salt and
+  // re-encrypt the in-memory notes, persisting the new envelope. On failure the
+  // old key/salt are restored so nothing is lost.
+  document.getElementById('notesChangePw').addEventListener('click',function(){
+    document.getElementById('notesChangePwModal').classList.add('show');
+    document.getElementById('notesCpw').focus();
+  });
+  document.getElementById('notesChangePwCancel').addEventListener('click',function(){
+    document.getElementById('notesChangePwModal').classList.remove('show');
+  });
+  document.getElementById('notesChangePwForm').addEventListener('submit',function(e){
+    e.preventDefault();
+    var a=document.getElementById('notesCpw'),b=document.getElementById('notesCpw2');
+    if(!a.value||a.value!==b.value){toast(T('两次输入的密码不一致','Passwords do not match'),true);return;}
+    var saveBtn=this.querySelector('[type=submit]');
+    saveBtn.disabled=true;
+    var newSalt=rnd(16);
+    deriveKey(a.value,newSalt).then(function(newKey){
+      var oldKey=key,oldSalt=curSalt;
+      key=newKey;curSalt=newSalt;
+      return doSave(true).then(function(ok){
+        if(!ok){key=oldKey;curSalt=oldSalt;return false;}
+        return true;
+      });
+    }).then(function(ok){
+      saveBtn.disabled=false;
+      if(!ok){toast(T('修改密码失败','Change failed'),true);return;}
+      document.getElementById('notesChangePwModal').classList.remove('show');
+      a.value='';b.value='';
+      toast(T('密码已修改','Password changed'),false);
+    }).catch(function(){
+      saveBtn.disabled=false;
+      toast(T('修改密码失败','Change failed'),true);
     });
   });
 
