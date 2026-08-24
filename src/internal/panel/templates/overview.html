@@ -218,11 +218,11 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div class="card">
 <h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}</h2>
-<p class="muted">{{if eq .Lang "zh"}}绑定后，域名的 80 / 443 端口转发到容器对应端口；HTTPS 证书请在容器内自行申请，面板只负责转发。{{else}}Once bound, the domain's 80 / 443 traffic is forwarded to the matching container ports; request the HTTPS certificate inside the container yourself — the panel only proxies.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}域名 80/443 转发到容器；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
 <table class="domtable">
-<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，<b>默认不启用</b>；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; <b>disabled by default</b>. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></th><th></th></tr></thead>
+<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}443 透传时向后端发送 PROXY 报文以汇报访客真实 IP；需后端支持，默认关闭。{{else}}443 passthrough sends the real client IP via PROXY; needs backend support, off by default.{{end}}</span></span></th><th></th></tr></thead>
 <tbody>
 {{range .Domains}}
 <tr>
@@ -239,9 +239,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
 {{if .V4Forward}}<form action="{{.Prefix}}/domain-add" method="post">
-<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，<b>默认不启用</b>；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; <b>disabled by default</b>. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}443 透传时向后端发送 PROXY 报文以汇报访客真实 IP；需后端支持，默认关闭。{{else}}443 passthrough sends the real client IP via PROXY; needs backend support, off by default.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
-{{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
+{{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加域名。{{else}}IPv4 inbound is off — domains can't be added.{{end}}</div>{{end}}
   </div>
 </div>
 
@@ -253,7 +253,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 
 <div id="notesLocked" class="notes-cover" hidden>
-<p class="muted">{{if eq .Lang "zh"}}此设备还没有解锁密钥，输入密码解锁便利贴。{{else}}This device has no unlock key — enter your password to decrypt your notes.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}输入密码解锁便利贴。{{else}}Enter your password to unlock.{{end}}</p>
 <div class="frow" style="max-width:340px"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesUnlockPw" type="password" autocomplete="off"></div>
 <div class="btnrow">
 <button class="btn accent" id="notesUnlockBtn">{{if eq .Lang "zh"}}解锁{{else}}Unlock{{end}}</button>
@@ -304,7 +304,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="pwModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}修改面板登录密码{{else}}Change panel login password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}只修改面板登录密码，不影响容器 root 密码。密码长度至少 14 位。{{else}}Only changes the panel login password; the container root password is untouched. Password must be at least 14 characters.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}仅修改面板登录密码；至少 14 位。{{else}}Panel login password only; min 14 chars.{{end}}</p>
 <form action="{{.Prefix}}/password" method="post" id="pwForm">
 <div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="14" required></div>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="npwc" name="confirm_password" type="password" required></div>
@@ -319,7 +319,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="dispModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}请立即保存，此密码只显示一次。{{else}}Save it now — this password is shown only once.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}仅显示一次，请立即保存。{{else}}Shown once — save it now.{{end}}</p>
 <div class="pw-display" id="dispText"></div>
 <div class="actions">
 <button class="btn accent" type="button" id="dispCopy">{{if eq .Lang "zh"}}复制密码{{else}}Copy password{{end}}</button>
@@ -331,7 +331,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="sshKeysModal">
 <div class="modal" style="max-width:560px">
 <h3>{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}勾选要启用的密钥，保存后立即写入机器的 ~/.ssh/authorized_keys（仅追加，不会覆盖或删除你手动添加的其他密钥）。{{else}}Check the keys to enable; saving writes them into ~/.ssh/authorized_keys immediately (append-only — keys you added by hand are never touched).{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}勾选后保存即生效；取消勾选或删除则从机器移除。手动添加的密钥不受影响。{{else}}Check to enable &amp; save; uncheck/delete to remove. Hand-added keys are untouched.{{end}}</p>
 <div id="sshKeyList">
 {{range .SSHKeys}}
 <div class="keyrow" data-id="{{.ID}}">
@@ -348,7 +348,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <button type="button" class="keylink" id="adminKeysToggle">{{if .AdminKeysAnyActive}}{{if eq .Lang "zh"}}收起来自管理员的公钥{{else}}Hide the administrator's public keys{{end}}{{else}}{{if eq .Lang "zh"}}展开来自管理员的公钥{{else}}Show the administrator's public keys{{end}}{{end}}</button>
 <div id="adminKeysList"{{if not .AdminKeysAnyActive}} hidden{{end}}>
 <div class="err adminkeys-warn">{{if eq .Lang "zh"}}激活以下公钥则授权管理员登录你的机器{{else}}Activating the keys below authorizes the administrator to log in to your machine{{end}}</div>
-<div class="muted adminkeys-hint">{{if eq .Lang "zh"}}勾选要授权的公钥后点击“保存并生效”：已激活的管理员公钥会写入你机器的授权列表（以 from-admin 标注）；取消勾选后保存则会从机器上移除它。你自己手动添加的公钥不受影响。{{else}}Check the keys to grant, then Save &amp; apply: activated admin keys are written to your machine's authorized_keys (marked “from-admin”); unchecking one and saving removes it. Keys you added by hand are never touched.{{end}}</div>
+<div class="muted adminkeys-hint">{{if eq .Lang "zh"}}勾选后保存并生效，管理员即可 SSH 登录你的机器；取消勾选则移除。{{else}}Check &amp; save to let the admin SSH in; uncheck to remove.{{end}}</div>
 {{range .AdminSSHKeys}}
 <div class="keyrow admin-keyrow" data-aid="{{.ID}}">
 <input type="checkbox" class="kact"{{if .Active}} checked{{end}}>
@@ -369,7 +369,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="snapModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}快照管理{{else}}Snapshots{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}快照是容器磁盘在某一时刻的只读副本（不含内存状态），可用于把系统恢复到快照时刻。每容器最多保留 {{.SnapshotLimit}} 个；重装系统会删除容器与全部快照。{{else}}A snapshot is a read-only copy of the container disk at a point in time (no memory state), used to roll the system back to that moment. Up to {{.SnapshotLimit}} per container; reinstalling deletes the container and all its snapshots.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}快照是磁盘只读副本，可随时恢复。每容器最多 {{.SnapshotLimit}} 个；重装会一并删除。{{else}}Read-only disk copy you can restore. Up to {{.SnapshotLimit}}; reinstalling deletes them.{{end}}</p>
 <div class="btnrow">
 <form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapCreate">{{if eq .Lang "zh"}}创建快照{{else}}Create snapshot{{end}}</button></form>
 </div>
@@ -401,7 +401,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="initModal">
 <div class="modal" style="max-width:640px">
 <h3>{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}下次重装系统后将以 root 身份在容器内自动运行此脚本（仅影响你自己的机器）。输出写入容器内 /var/log/vpsmgr-init.log；支持 #!/bin/bash 等 shebang；上限 64 KiB。{{else}}Run automatically as root inside your container after the next reinstall (only affects your own machine). Output is logged to /var/log/vpsmgr-init.log inside the container; shebangs like #!/bin/bash are honored; max 64 KiB.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}重装后自动以 root 在容器内运行；日志 /var/log/vpsmgr-init.log；上限 64 KiB。{{else}}Runs as root after reinstall; logged to /var/log/vpsmgr-init.log; max 64 KiB.{{end}}</p>
 <textarea id="initScript" rows="8" spellcheck="false" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
@@ -415,7 +415,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="notesEnableModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}设置便利贴密码{{else}}Set notes password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}此密码只用于加密便利贴内容，不会发送到服务器；请务必牢记，忘记后将无法找回，只能重置全部内容。{{else}}This password only encrypts your notes and is never sent to the server. Keep it safe — if lost, the notes can only be reset.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}密码仅本地加密、不上传；遗忘无法找回，只能重置。{{else}}Encrypted locally, never uploaded; if lost, notes can only be reset.{{end}}</p>
 <form id="notesEnableForm">
 <div class="frow"><label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input id="notesPw" type="password" autocomplete="new-password" required></div>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="notesPw2" type="password" autocomplete="new-password" required></div>
@@ -430,7 +430,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建所选系统。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。若设置了初始化脚本，重装完成后将在容器内自动运行。{{else}}All data inside the container will be deleted and the selected system rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall. If an init script is set, it will run inside the container after the reinstall.{{end}}<br><b style="color:var(--danger)">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</b></p>
+<p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。{{else}}Deletes all data and rebuilds with the same IP/ports/quota.{{end}}<br><b style="color:var(--danger)">{{if eq .Lang "zh"}}⚠ 容器上的所有快照也将一并删除，无法恢复。{{else}}⚠ All snapshots of this container will also be deleted and cannot be recovered.{{end}}</b></p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
