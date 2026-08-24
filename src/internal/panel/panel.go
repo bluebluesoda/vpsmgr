@@ -160,6 +160,7 @@ type pageData struct {
 	SnapshotLimit    int // configured per-container snapshot cap (for display)
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
+	AdminKeysAnyActive bool        // at least one admin key is granted: expand the disclosure by default
 	Impersonated       bool        // operator "log in as user": show a banner
 	AdminPrefix        string      // admin panel path, for the banner's return link
 	MaxNotesPlaintext  int         // sticky-notes plaintext byte cap (client-side check)
@@ -381,7 +382,11 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 			}
 		}
 		for _, k := range akeys {
-			d.AdminSSHKeys = append(d.AdminSSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: granted[k.ID]})
+			granted := granted[k.ID]
+			d.AdminSSHKeys = append(d.AdminSSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: granted})
+			if granted {
+				d.AdminKeysAnyActive = true
+			}
 		}
 	}
 	return d

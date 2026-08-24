@@ -345,8 +345,8 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="btnrow"><button type="button" class="btn ok" id="sshKeyAdd">{{if eq .Lang "zh"}}添加公钥{{else}}Add key{{end}}</button></div>
 {{if .AdminSSHKeys}}
 <div class="adminkeys">
-<button type="button" class="keylink" id="adminKeysToggle">{{if eq .Lang "zh"}}展开来自管理员的公钥{{else}}Show the administrator's public keys{{end}}</button>
-<div id="adminKeysList" hidden>
+<button type="button" class="keylink" id="adminKeysToggle">{{if .AdminKeysAnyActive}}{{if eq .Lang "zh"}}收起来自管理员的公钥{{else}}Hide the administrator's public keys{{end}}{{else}}{{if eq .Lang "zh"}}展开来自管理员的公钥{{else}}Show the administrator's public keys{{end}}{{end}}</button>
+<div id="adminKeysList"{{if not .AdminKeysAnyActive}} hidden{{end}}>
 <div class="err adminkeys-warn">{{if eq .Lang "zh"}}激活以下公钥则授权管理员登录你的机器{{else}}Activating the keys below authorizes the administrator to log in to your machine{{end}}</div>
 <div class="muted adminkeys-hint">{{if eq .Lang "zh"}}勾选要授权的公钥后点击“保存并生效”：已激活的管理员公钥会写入你机器的授权列表（以 from-admin 标注）；取消勾选后保存则会从机器上移除它。你自己手动添加的公钥不受影响。{{else}}Check the keys to grant, then Save &amp; apply: activated admin keys are written to your machine's authorized_keys (marked “from-admin”); unchecking one and saving removes it. Keys you added by hand are never touched.{{end}}</div>
 {{range .AdminSSHKeys}}
@@ -646,7 +646,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var adminToggle=document.getElementById('adminKeysToggle');
     if(adminToggle){
       var adminList=document.getElementById('adminKeysList');
-      var adminOpen=false;
+      // Default open when any admin key is already granted (the template
+      // omits the hidden attribute in that case).
+      var adminOpen=!adminList.hidden;
       adminToggle.addEventListener('click',function(){
         adminOpen=!adminOpen;
         adminList.hidden=!adminOpen;

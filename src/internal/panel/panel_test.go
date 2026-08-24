@@ -1230,9 +1230,10 @@ func TestOverviewAdminKeysDisclosure(t *testing.T) {
 			{ID: 1, Name: "ops", Key: k1, Active: true},  // already granted
 			{ID: 2, Name: "ci", Key: k2, Active: false},   // not granted
 		},
+		AdminKeysAnyActive: true, // one key granted -> default expanded
 	})
 	for _, want := range []string{
-		`id="adminKeysToggle"`, "展开来自管理员的公钥",
+		`id="adminKeysToggle"`, "收起来自管理员的公钥",
 		"激活以下公钥则授权管理员登录你的机器",
 		`data-aid="1"`, `data-aid="2"`, `class="keyrow admin-keyrow"`,
 	} {
@@ -1240,12 +1241,35 @@ func TestOverviewAdminKeysDisclosure(t *testing.T) {
 			t.Errorf("overview missing %q", want)
 		}
 	}
+	// Granted keys default the disclosure to EXPANDED: no hidden attribute.
+	if !strings.Contains(html, `id="adminKeysList">`) {
+		t.Error("granted admin keys should render the list expanded (no hidden)")
+	}
+	if strings.Contains(html, `id="adminKeysList" hidden`) {
+		t.Error("granted admin keys must not render the list hidden")
+	}
 	// Exactly one granted (checked) row and one plain row.
 	if n := strings.Count(html, `class="kact" checked>`); n != 1 {
 		t.Errorf("checked admin rows = %d, want 1", n)
 	}
 	if n := strings.Count(html, `class="kact">`); n != 1 {
 		t.Errorf("unchecked admin rows = %d, want 1", n)
+	}
+
+	// No granted keys -> default COLLAPSED: list hidden, button shows expand.
+	collapsed := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+		Lang:   langZh,
+		AdminSSHKeys: []sshKeyRow{
+			{ID: 1, Name: "ops", Key: k1, Active: false},
+		},
+	})
+	if !strings.Contains(collapsed, `id="adminKeysList" hidden`) {
+		t.Error("no granted admin keys should default the list to hidden")
+	}
+	if !strings.Contains(collapsed, "展开来自管理员的公钥") {
+		t.Error("collapsed disclosure should show the expand label")
 	}
 
 	// Without operator keys the disclosure block is not rendered at all. The
