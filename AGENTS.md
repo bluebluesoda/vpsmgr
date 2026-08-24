@@ -79,9 +79,11 @@ Keep the top-level READMEs concise; technical detail belongs in `docs/`
   prebuilt release over an existing binary and must keep it untouched on
   download failure (no fallback rebuild).
 - Image builds (`50-image.sh`, `60-rhel-image.sh`, `80-debian-dev-image.sh`)
-  must stay slim (apt/dnf clean) and delete the base image after publishing.
-  `60-rhel-image.sh`, `70-opensuse-image.sh` and `80-debian-dev-image.sh` are
-  optional and must never be part of `install.sh` (small boxes stay lean).
+  must stay slim (apt/dnf/pacman clean) and delete the base image after
+  publishing. `60-rhel-image.sh`, `70-opensuse-image.sh`, `80-debian-dev-image.sh`
+  and `90-arch-image.sh` are optional and must never be part of `install.sh`
+  (small boxes stay lean). `90-arch-image.sh` is a rolling rebuild: it deletes
+  the existing image and re-pulls upstream on every run.
 - Never add cgo or force C compilation.
 - The panel service is `vps.service` (restart via `systemctl restart vps`).
   Do not reintroduce `vpsmgr-*.service` names on the host. (The in-container
