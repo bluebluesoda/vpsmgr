@@ -268,7 +268,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div id="notesMain" class="notes-main" hidden>
 <div class="notes-list">
-<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button><button class="btn" id="notesLock">{{if eq .Lang "zh"}}锁定{{else}}Lock{{end}}</button></div>
+<div class="notes-listhead"><button class="btn ok" id="notesAdd">{{if eq .Lang "zh"}}＋ 添加{{else}}＋ Add{{end}}</button><button class="btn" id="notesLock">{{if eq .Lang "zh"}}锁定{{else}}Lock{{end}}</button><button class="btn" id="notesExport">{{if eq .Lang "zh"}}导出{{else}}Export{{end}}</button></div>
 <div id="notesList"></div>
 </div>
 <div class="notes-editor">
@@ -1333,6 +1333,83 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(delArmed){delNote(selId);return;}
     delArmed=true;delBtn.classList.add('danger');delBtn.textContent=T('确认删除？','Confirm delete?');
     delTimer=setTimeout(disarmDel,3000);
+  });
+
+  // Export: bundle every note into a self-contained ZIP (STORE, no compression
+  // — text notes are small) of one .txt per note, downloaded as
+  // yyyy-mm-dd-hh-mm-ss-notes.zip. A tiny hand-written ZIP writer avoids any
+  // dependency and keeps the strict CSP happy (no external assets).
+  var CRC_TABLE=(function(){var t=new Uint32Array(256);for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
+  function crc32(b){var c=0xFFFFFFFF;for(var i=0;i<b.length;i++)c=CRC_TABLE[(c^b[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+  function u16(v){return [v&0xFF,(v>>>8)&0xFF];}
+  function u32(v){return [v&0xFF,(v>>>8)&0xFF,(v>>>16)&0xFF,(v>>>24)&0xFF];}
+  function buildZip(files){
+    var chunks=[],cds=[],offset=0,enc=new TextEncoder();
+    files.forEach(function(f){
+      var name=enc.encode(f.name),crc=crc32(f.data);
+      var local=new Uint8Array(30+name.length+f.data.length);
+      local.set([0x50,0x4b,0x03,0x04],0);
+      local.set(u16(20),4);local.set(u16(0x0800),6);local.set(u16(0),8);
+      local.set(u16(0),10);local.set(u16(0),12);local.set(u32(crc),14);
+      local.set(u32(f.data.length),18);local.set(u32(f.data.length),22);
+      local.set(u16(name.length),26);local.set(u16(0),28);
+      local.set(name,30);local.set(f.data,30+name.length);
+      chunks.push(local);
+      var cde=new Uint8Array(46+name.length);
+      cde.set([0x50,0x4b,0x01,0x02],0);
+      cde.set(u16(20),4);cde.set(u16(20),6);cde.set(u16(0x0800),8);cde.set(u16(0),10);
+      cde.set(u16(0),12);cde.set(u16(0),14);cde.set(u32(crc),16);
+      cde.set(u32(f.data.length),20);cde.set(u32(f.data.length),24);
+      cde.set(u16(name.length),28);cde.set(u16(0),30);cde.set(u16(0),32);
+      cde.set(u16(0),34);cde.set(u16(0),36);cde.set(u32(0),38);cde.set(u32(offset),42);
+      cde.set(name,46);
+      cds.push(cde);
+      offset+=local.length;
+    });
+    var cdSize=0;cds.forEach(function(c){cdSize+=c.length;});
+    var out=new Uint8Array(offset+cdSize+22),pos=0;
+    chunks.forEach(function(c){out.set(c,pos);pos+=c.length;});
+    var cdStart=pos;
+    cds.forEach(function(c){out.set(c,pos);pos+=c.length;});
+    out.set([0x50,0x4b,0x05,0x06],pos);
+    out.set(u16(0),pos+4);out.set(u16(0),pos+6);
+    out.set(u16(files.length),pos+8);out.set(u16(files.length),pos+10);
+    out.set(u32(cdSize),pos+12);out.set(u32(cdStart),pos+16);out.set(u16(0),pos+20);
+    return out;
+  }
+  function safeNoteName(note){
+    var t=(note.title||'').trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'-').replace(/[.\s]+$/,'').slice(0,60);
+    if(!t)t='note-'+(note.id||'x');
+    return t+'.txt';
+  }
+  document.getElementById('notesExport').addEventListener('click',function(){
+    if(state!=='unlocked')return;
+    var enc=new TextEncoder();
+    // raw.json (decrypted, versioned) so the set can be re-imported later.
+    var raw={v:1,notes:[]};
+    (notes||[]).forEach(function(n){raw.notes.push({title:n.title||'',content:n.content||''});});
+    var files=[{name:'raw.json',data:enc.encode(JSON.stringify(raw,null,2))}];
+    // One .txt per note.
+    (notes||[]).forEach(function(n){
+      var txt=(n.title&&n.title.trim()?n.title.trim()+'\n\n':'')+(n.content||'');
+      if(!txt.trim())return;
+      files.push({name:safeNoteName(n),data:enc.encode(txt)});
+    });
+    var used={};
+    files.forEach(function(f){
+      var base=f.name,i=2;
+      while(used[f.name]){f.name=base.replace(/\.txt$/,'')+'-'+i+'.txt';i++;}
+      used[f.name]=true;
+    });
+    var d=new Date(),pad=function(x){return (x<10?'0':'')+x;};
+    var fname=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'-'+
+      pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())+'-notes.zip';
+    var blob=new Blob([buildZip(files)],{type:'application/zip'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=fname;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
+    toast(T('已导出 '+raw.notes.length+' 个便利贴','Exported '+raw.notes.length+' notes'),false);
   });
 
   // Lock: drop the local key cache and return to the password prompt. Any
