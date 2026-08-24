@@ -86,6 +86,7 @@ func tr(l, key string, args ...any) string {
 		"err_pass_mismatch": {"两次输入的密码不一致", "The two passwords do not match"},
 		"new_root_password": {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
 		"reinstall_done":    {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
+		"ssh_keys_apply_warn": {"容器当前不可达，密钥已保存，将在下次重装后写入。", "Container unreachable — keys saved and will be applied on the next reinstall."},
 	}
 	pair, ok := m[key]
 	if !ok {

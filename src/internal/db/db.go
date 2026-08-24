@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 6
+const schemaVersion = 7
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -168,6 +168,20 @@ var migrations = []struct {
 			PRIMARY KEY(user_id, sample_minute)
 		) WITHOUT ROWID`,
 		`CREATE INDEX resource_samples_time ON resource_samples(sample_minute)`,
+	}},
+	// v7: per-user SSH public keys managed from the panel. Keys are stored
+	// clean (type + base64 body, comment stripped); `active` decides which are
+	// written into ~/.ssh/authorized_keys. Cascades away with the user.
+	{7, []string{
+		`CREATE TABLE IF NOT EXISTS ssh_keys(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			key TEXT NOT NULL,
+			active INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ssh_keys_user ON ssh_keys(user_id)`,
 	}},
 }
 

@@ -412,3 +412,55 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	s.redirect(w, r, s.p(""), msg)
 }
+
+// handleSSHKeys reconciles the user's SSH-key set from the management panel
+// and applies the active selection to the running container. The body is a
+// JSON array of key rows (ID > 0 updates, ID == 0 adds, missing rows are
+// deleted). Returns the fresh key list so the panel can re-render without a
+// page reload.
+func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	var req struct {
+		Keys []mgr.SSHKeyInput `json:"keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeSSHKeys(w, false, "", "", nil)
+		return
+	}
+	keys, err := s.mgr.SaveSSHKeys(u.Name, req.Keys)
+	if err != nil {
+		writeSSHKeys(w, false, err.Error(), "", nil)
+		return
+	}
+	_ = s.db.AddAuditLog(u.Name, "ssh_keys")
+	// Apply the active selection immediately. Best-effort: keys persist in the
+	// DB either way and reach the container on the next reinstall, so a save
+	// must not fail just because the container is stopped or unreachable.
+	warn := ""
+	var active []string
+	for _, k := range keys {
+		if k.Active {
+			active = append(active, k.Key)
+		}
+	}
+	if len(active) > 0 {
+		if err := s.mgr.ApplySSHKeys(u.Name, active); err != nil {
+			warn = s.t(r, "ssh_keys_apply_warn")
+		}
+	}
+	writeSSHKeys(w, true, "", warn, keys)
+}
+
+func writeSSHKeys(w http.ResponseWriter, ok bool, errMsg, warn string, keys []db.SSHKey) {
+	rows := make([]sshKeyRow, 0, len(keys))
+	for _, k := range keys {
+		rows = append(rows, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		OK      bool        `json:"ok"`
+		Error   string      `json:"error,omitempty"`
+		Warning string      `json:"warning,omitempty"`
+		Keys    []sshKeyRow `json:"keys"`
+	}{ok, errMsg, warn, rows})
+}

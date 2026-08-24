@@ -116,6 +116,14 @@ type snapshotRow struct {
 	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
 }
 
+// sshKeyRow is one public key shown in the SSH-key management panel.
+type sshKeyRow struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Key    string `json:"key"` // clean "type base64" (comment stripped)
+	Active bool   `json:"active"`
+}
+
 type pageData struct {
 	Title            string
 	User             *db.User
@@ -150,6 +158,7 @@ type pageData struct {
 	IPv6Block        string // the /112 block the container owns (informational)
 	Snapshots        []snapshotRow
 	SnapshotLimit    int // configured per-container snapshot cap (for display)
+	SSHKeys          []sshKeyRow
 }
 
 func (s *Server) Handler() http.Handler {
@@ -170,6 +179,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requirePost(s.handleSnapshot)))
 	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))
 	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requirePost(s.handleSnapshotRestore)))
+	mux.HandleFunc("/ssh-keys", s.requireAuth(s.requirePost(s.handleSSHKeys)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,5 +358,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		}
 	}
 	d.SnapshotLimit = s.mgr.SnapshotLimit()
+	keys, _ := s.db.ListSSHKeys(u.ID)
+	for _, k := range keys {
+		d.SSHKeys = append(d.SSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
+	}
 	return d
 }

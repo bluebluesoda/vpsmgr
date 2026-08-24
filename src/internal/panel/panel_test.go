@@ -1018,3 +1018,100 @@ func TestStatsEndpoint(t *testing.T) {
 		t.Errorf("second point mem = %d, want 600", resp.Points[1].Y)
 	}
 }
+
+// TestSSHKeysSave exercises the SSH-key management endpoint: an authenticated
+// JSON save persists the key set (comment stripped, name fallback) and applies
+// it live. The test host has no Incus, so the live apply must degrade to a
+// warning rather than failing the save.
+func TestSSHKeysSave(t *testing.T) {
+	srv, d := newTestServer(t)
+	// Point the manager at a socket that cannot exist, so the live key apply
+	// fails fast and the test never touches a real container.
+	srv.cfg.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	srv.mgr = mgr.New(srv.cfg, d)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"pw"}}, nil)
+	var cookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no session cookie")
+	}
+
+	// Save a key with a comment and no name: stored clean, name from comment.
+	body := `{"keys":[{"id":0,"name":"","key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYbogusbogusbogusbogusbogusX my-laptop","active":true}]}`
+	req := httptest.NewRequest(http.MethodPost, prefix+"/ssh-keys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		OK      bool   `json:"ok"`
+		Error   string `json:"error"`
+		Warning string `json:"warning"`
+		Keys    []struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			Key    string `json:"key"`
+			Active bool   `json:"active"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v (%s)", err, rr.Body.String())
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, error = %q", resp.Error)
+	}
+	if len(resp.Keys) != 1 {
+		t.Fatalf("keys = %d, want 1", len(resp.Keys))
+	}
+	if resp.Keys[0].Name != "my-laptop" {
+		t.Errorf("name = %q, want comment fallback", resp.Keys[0].Name)
+	}
+	if strings.Contains(resp.Keys[0].Key, "my-laptop") {
+		t.Errorf("key not cleaned: %q", resp.Keys[0].Key)
+	}
+	// No Incus in tests -> the live apply warns but the save succeeds.
+	if resp.Warning == "" {
+		t.Error("expected apply warning without Incus")
+	}
+
+	// The key is persisted and appears on the overview page.
+	keys, err := d.ListSSHKeys(1)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("db keys = %+v err=%v, want 1", keys, err)
+	}
+
+	// An invalid key fails the save and changes nothing.
+	body = `{"keys":[{"id":0,"name":"bad","key":"not-a-key","active":true}]}`
+	req = httptest.NewRequest(http.MethodPost, prefix+"/ssh-keys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Error("invalid key should fail the save")
+	}
+	keys, _ = d.ListSSHKeys(1)
+	if len(keys) != 1 {
+		t.Fatalf("invalid save changed stored keys: %d", len(keys))
+	}
+}

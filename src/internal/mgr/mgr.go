@@ -1140,6 +1140,13 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			fmt.Printf("  ! warn: init script: %v (container still recreated)\n", err)
 		}
 	}
+	// Active SSH keys (if any): write them into the fresh container. Same
+	// best-effort contract — keys persist in the DB and apply on the next save.
+	if active, err := m.ActiveKeys(u.Name); err == nil && len(active) > 0 {
+		if err := m.ApplySSHKeys(u.Name, active); err != nil {
+			fmt.Printf("  ! warn: ssh keys: %v (container still recreated)\n", err)
+		}
+	}
 	// The reinstall is complete: back to ready. Also drop any in-memory
 	// throttled flag for this user — the old container's NIC limit died with
 	// it, so the next EnforceBandwidthLimits pass must re-evaluate from the
