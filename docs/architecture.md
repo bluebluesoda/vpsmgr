@@ -266,9 +266,10 @@ nano via `pacman -Syu`
 before publishing and the base deleted afterwards. Because Arch is a rolling
 release the script does NOT skip when the image exists: every run deletes the
 old `vpsmgr/arch-sshd`, re-pulls the latest upstream base and rebuilds fresh.
-The published image's description records the build's version code
-(`Archlinux<YYMM>`, e.g. `Archlinux2607` for a 2026-07 build), visible via
-`incus image show vpsmgr/arch-sshd`. Networking follows the openSUSE pattern:
+The published image's description records the build's date as 8 digits
+(`YYYYMMDD`, e.g. `20260824` for a 2026-08-24 build), visible via
+`incus image show vpsmgr/arch-sshd` and folded into the Arch intro the user
+panel shows in the reinstall dialog. Networking follows the openSUSE pattern:
 Arch ships systemd-networkd, so the panel's networkd branch configures IPv6 at
 runtime — nothing to bake.
 

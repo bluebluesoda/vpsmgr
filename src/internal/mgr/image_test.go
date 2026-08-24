@@ -2,6 +2,29 @@ package mgr
 
 import "testing"
 
+func TestDecorateImageDesc(t *testing.T) {
+	// A recorded build date is folded into the Arch intro.
+	got := decorateImageDesc(ManagedImage{Alias: "vpsmgr/arch-sshd", Version: "20260824"})
+	if got.DescZh != "Arch Linux 是一个滚动发行版，我们提供镜像打包于 20260824" {
+		t.Errorf("arch zh intro = %q", got.DescZh)
+	}
+	if got.DescEn != "Arch Linux is a rolling release; our image was built on 20260824" {
+		t.Errorf("arch en intro = %q", got.DescEn)
+	}
+	// No recorded date: the static blurb (already set by collectManagedImages)
+	// is left untouched.
+	base := imageDesc["vpsmgr/arch-sshd"]
+	plain := decorateImageDesc(ManagedImage{Alias: "vpsmgr/arch-sshd", DescZh: base[0], DescEn: base[1]})
+	if plain.DescZh != base[0] || plain.DescEn != base[1] {
+		t.Errorf("arch without version should keep the static blurb: %+v", plain)
+	}
+	// Non-Arch images are never touched.
+	other := decorateImageDesc(ManagedImage{Alias: "vpsmgr/debian-sshd", Version: "whatever"})
+	if other.DescZh != "" || other.DescEn != "" {
+		t.Errorf("debian should not be decorated: %+v", other)
+	}
+}
+
 func TestCollectManagedImages(t *testing.T) {
 	cases := []struct {
 		name         string

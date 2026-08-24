@@ -9,20 +9,17 @@
 # Arch is a ROLLING release, so unlike the other image scripts this one
 # deliberately does NOT skip when the image already exists: every run deletes
 # the old vpsmgr/arch-sshd, re-pulls the latest upstream Arch base and rebuilds
-# a fresh snapshot. The published image's description records the build's
-# version code — "Archlinux<YYMM>", e.g. Archlinux2607 for a 2026-07 build —
-# so the age of the snapshot is visible in `incus image show vpsmgr/arch-sshd`.
-#
-# Same hygiene as the others: openssh + common tools baked in, pacman caches
-# and logs cleaned before publishing, and the base image (a build intermediate
-# only) is deleted afterwards so only vpsmgr/arch-sshd stays on disk.
+# a fresh snapshot. The published image's description records the build's date
+# as 8 digits — YYYYMMDD, e.g. 20260824 for a 2026-08-24 build — so the age of
+# the snapshot is visible in `incus image show vpsmgr/arch-sshd` and shown in
+# the user panel's Arch intro.
 set -uo pipefail
 
 
 REMOTE_ALIAS=images:archlinux/current
 IMAGE=vpsmgr/arch-sshd
 BASE_PREFIX=vpsmgr-arch
-VER="Archlinux$(date +%y%m)"
+VER="$(date +%Y%m%d)"
 
 log(){ echo "[90] $*"; }
 

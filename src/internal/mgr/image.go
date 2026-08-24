@@ -7,10 +7,15 @@ import (
 
 // ManagedImage is one OS image offered for reinstall.
 type ManagedImage struct {
-	Alias  string `json:"alias"`            // Incus alias, e.g. "vpsmgr/debian-sshd"
-	Label  string `json:"label"`            // display name, e.g. "Debian 13"
+	Alias  string `json:"alias"`             // Incus alias, e.g. "vpsmgr/debian-sshd"
+	Label  string `json:"label"`             // display name, e.g. "Debian 13"
 	DescZh string `json:"desc_zh,omitempty"` // short one-line description (Chinese)
 	DescEn string `json:"desc_en,omitempty"` // short one-line description (English)
+	// Version is the image's Incus description — for the rolling Arch build the
+	// 8-digit build date YYYYMMDD (e.g. "20260824") — which the reinstall dialog
+	// folds into the Arch intro so the snapshot's age is visible. Empty for
+	// images without one.
+	Version string `json:"version,omitempty"`
 }
 
 // imageLabels maps known managed image aliases to friendly display names.
@@ -68,11 +73,36 @@ func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage 
 // Images returns the OS images offered for reinstall: the default Debian image
 // first, then every other managed prebuilt image present in Incus (e.g. Alma 9
 // built by scripts/60-rhel-image.sh). If Incus cannot be queried, only the
-// default is offered so reinstall still works.
+// default is offered so reinstall still works. Each image carries its Incus
+// description as Version (the Arch rolling build records the snapshot's
+// YYYYMMDD build date there), folded into the Arch intro by decorateImageDesc.
 func (m *Manager) Images() []ManagedImage {
-	aliases, err := m.lx.ImageAliases()
+	infos, err := m.lx.ImageAliasesWithDesc()
 	if err != nil {
-		aliases = nil
+		infos = nil
 	}
-	return collectManagedImages(m.cfg.Incus.Image, aliases)
+	desc := map[string]string{}
+	aliases := make([]string, 0, len(infos))
+	for _, info := range infos {
+		desc[info.Alias] = info.Description
+		aliases = append(aliases, info.Alias)
+	}
+	out := collectManagedImages(m.cfg.Incus.Image, aliases)
+	for i := range out {
+		out[i].Version = desc[out[i].Alias]
+		out[i] = decorateImageDesc(out[i])
+	}
+	return out
+}
+
+// decorateImageDesc surfaces a recorded build date in the image's intro line.
+// The Arch image's Incus description holds the 8-digit build date, so its
+// blurb becomes "…滚动发行版，我们提供镜像打包于 <YYYYMMDD>" — otherwise the
+// static imageDesc blurb is used as-is.
+func decorateImageDesc(m ManagedImage) ManagedImage {
+	if m.Alias == "vpsmgr/arch-sshd" && m.Version != "" {
+		m.DescZh = "Arch Linux 是一个滚动发行版，我们提供镜像打包于 " + m.Version
+		m.DescEn = "Arch Linux is a rolling release; our image was built on " + m.Version
+	}
+	return m
 }
