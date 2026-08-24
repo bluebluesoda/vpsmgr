@@ -13,15 +13,20 @@ func TestCollectManagedImages(t *testing.T) {
 			name:         "default only",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/debian-sshd"},
-			want:         []ManagedImage{{"vpsmgr/debian-sshd", "Debian 13"}},
+			want: []ManagedImage{
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+			},
 		},
 		{
 			name:         "default plus alma",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/alma-sshd", "vpsmgr/debian-sshd"},
 			want: []ManagedImage{
-				{"vpsmgr/debian-sshd", "Debian 13"},
-				{"vpsmgr/alma-sshd", "Alma 9"},
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/alma-sshd", Label: "Alma 9",
+					DescZh: "RHEL 复刻版镜像", DescEn: "RHEL-compatible rebuild"},
 			},
 		},
 		{
@@ -29,9 +34,12 @@ func TestCollectManagedImages(t *testing.T) {
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/rocky-sshd", "vpsmgr/alma-sshd", "vpsmgr/alma-sshd"},
 			want: []ManagedImage{
-				{"vpsmgr/debian-sshd", "Debian 13"},
-				{"vpsmgr/alma-sshd", "Alma 9"},
-				{"vpsmgr/rocky-sshd", "Rocky 9"},
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/alma-sshd", Label: "Alma 9",
+					DescZh: "RHEL 复刻版镜像", DescEn: "RHEL-compatible rebuild"},
+				{Alias: "vpsmgr/rocky-sshd", Label: "Rocky 9",
+					DescZh: "RHEL 复刻版镜像", DescEn: "RHEL-compatible rebuild"},
 			},
 		},
 		{
@@ -39,8 +47,10 @@ func TestCollectManagedImages(t *testing.T) {
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/opensuse-sshd", "vpsmgr/debian-sshd"},
 			want: []ManagedImage{
-				{"vpsmgr/debian-sshd", "Debian 13"},
-				{"vpsmgr/opensuse-sshd", "openSUSE Leap 16"},
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/opensuse-sshd", Label: "openSUSE Leap 16",
+					DescZh: "SUSE 系发行版", DescEn: "SUSE-family distro"},
 			},
 		},
 		{
@@ -48,17 +58,20 @@ func TestCollectManagedImages(t *testing.T) {
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/debian-dev-sshd", "vpsmgr/debian-sshd"},
 			want: []ManagedImage{
-				{"vpsmgr/debian-sshd", "Debian 13"},
-				{"vpsmgr/debian-dev-sshd", "Debian 13 dev"},
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/debian-dev-sshd", Label: "Debian 13 dev",
+					DescZh: "预装 Git、nvm、Node.js 24、Python 3、Go 等开发工具", DescEn: "Preinstalled dev tools: Git, nvm, Node.js 24, Python 3, Go"},
 			},
 		},
 		{
-			name:         "default missing locally still offered, unknown alias humanized",
+			name:         "default missing locally still offered, unknown alias humanized, no desc",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/fedora-sshd"},
 			want: []ManagedImage{
-				{"vpsmgr/debian-sshd", "Debian 13"},
-				{"vpsmgr/fedora-sshd", "fedora"},
+				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
+					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
+				{Alias: "vpsmgr/fedora-sshd", Label: "fedora"},
 			},
 		},
 	}

@@ -7,8 +7,10 @@ import (
 
 // ManagedImage is one OS image offered for reinstall.
 type ManagedImage struct {
-	Alias string `json:"alias"` // Incus alias, e.g. "vpsmgr/debian-sshd"
-	Label string `json:"label"` // display name, e.g. "Debian 13"
+	Alias  string `json:"alias"`            // Incus alias, e.g. "vpsmgr/debian-sshd"
+	Label  string `json:"label"`            // display name, e.g. "Debian 13"
+	DescZh string `json:"desc_zh,omitempty"` // short one-line description (Chinese)
+	DescEn string `json:"desc_en,omitempty"` // short one-line description (English)
 }
 
 // imageLabels maps known managed image aliases to friendly display names.
@@ -18,6 +20,17 @@ var imageLabels = map[string]string{
 	"vpsmgr/alma-sshd":       "Alma 9",
 	"vpsmgr/rocky-sshd":      "Rocky 9",
 	"vpsmgr/opensuse-sshd":   "openSUSE Leap 16",
+}
+
+// imageDesc maps known managed image aliases to a short one-line blurb shown in
+// the reinstall dialog when the image is selected. First entry is Chinese,
+// second English. Unknown aliases get no description (the UI shows nothing).
+var imageDesc = map[string][2]string{
+	"vpsmgr/debian-sshd":     {"轻巧的原味 Debian 13 系统", "Lightweight stock Debian 13"},
+	"vpsmgr/debian-dev-sshd": {"预装 Git、nvm、Node.js 24、Python 3、Go 等开发工具", "Preinstalled dev tools: Git, nvm, Node.js 24, Python 3, Go"},
+	"vpsmgr/alma-sshd":       {"RHEL 复刻版镜像", "RHEL-compatible rebuild"},
+	"vpsmgr/rocky-sshd":      {"RHEL 复刻版镜像", "RHEL-compatible rebuild"},
+	"vpsmgr/opensuse-sshd":   {"SUSE 系发行版", "SUSE-family distro"},
 }
 
 // collectManagedImages picks the reinstallable images out of a raw alias list:
@@ -37,7 +50,8 @@ func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage 
 		if !ok {
 			label = strings.TrimSuffix(strings.TrimPrefix(a, "vpsmgr/"), "-sshd")
 		}
-		out = append(out, ManagedImage{Alias: a, Label: label})
+		desc := imageDesc[a]
+		out = append(out, ManagedImage{Alias: a, Label: label, DescZh: desc[0], DescEn: desc[1]})
 	}
 	add(defaultAlias)
 	sort.Strings(aliases)
