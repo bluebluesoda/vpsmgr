@@ -1380,7 +1380,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   function safeNoteName(note){
     var t=(note.title||'').trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'-').replace(/[.\s]+$/,'').slice(0,60);
     if(!t)t='note-'+(note.id||'x');
-    return t+'.txt';
+    return t+'.md';
   }
   document.getElementById('notesExport').addEventListener('click',function(){
     if(state!=='unlocked')return;
@@ -1389,16 +1389,16 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var raw={v:1,notes:[]};
     (notes||[]).forEach(function(n){raw.notes.push({title:n.title||'',content:n.content||''});});
     var files=[{name:'raw.json',data:enc.encode(JSON.stringify(raw,null,2))}];
-    // One .txt per note.
+    // One Markdown file per note: title as an # heading, then the content.
     (notes||[]).forEach(function(n){
-      var txt=(n.title&&n.title.trim()?n.title.trim()+'\n\n':'')+(n.content||'');
+      var txt=(n.title&&n.title.trim()?'# '+n.title.trim()+'\n\n':'')+(n.content||'');
       if(!txt.trim())return;
       files.push({name:safeNoteName(n),data:enc.encode(txt)});
     });
     var used={};
     files.forEach(function(f){
       var base=f.name,i=2;
-      while(used[f.name]){f.name=base.replace(/\.txt$/,'')+'-'+i+'.txt';i++;}
+      while(used[f.name]){f.name=base.replace(/\.md$/,'')+'-'+i+'.md';i++;}
       used[f.name]=true;
     });
     var d=new Date(),pad=function(x){return (x<10?'0':'')+x;};
