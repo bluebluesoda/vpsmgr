@@ -448,55 +448,68 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSSHKeys reconciles the user's SSH-key set from the management panel
-// and applies the active selection to the running container. The body is a
-// JSON array of key rows (ID > 0 updates, ID == 0 adds, missing rows are
-// deleted). Returns the fresh key list so the panel can re-render without a
-// page reload.
+// AND which of the operator's admin keys the user has activated. The body is a
+// JSON object: `keys` is the array of user key rows (ID > 0 updates, ID == 0
+// adds, missing rows are deleted), `adminKeys` the list of checked admin-key
+// IDs. Returns the fresh user-key list plus the granted admin-key IDs so the
+// panel can re-render without a page reload.
 func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
 	var req struct {
-		Keys []mgr.SSHKeyInput `json:"keys"`
+		Keys      []mgr.SSHKeyInput `json:"keys"`
+		AdminKeys []int64           `json:"adminKeys"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeSSHKeys(w, false, "", "", nil)
+		writeSSHKeys(w, false, "", "", nil, nil)
 		return
 	}
 	keys, err := s.mgr.SaveSSHKeys(u.Name, req.Keys)
 	if err != nil {
-		writeSSHKeys(w, false, err.Error(), "", nil)
+		writeSSHKeys(w, false, err.Error(), "", nil, nil)
+		return
+	}
+	granted, err := s.mgr.SaveAdminKeyGrants(u.Name, req.AdminKeys)
+	if err != nil {
+		writeSSHKeys(w, false, err.Error(), "", nil, nil)
 		return
 	}
 	_ = s.db.AddAuditLog(u.Name, "ssh_keys")
-	// Apply the active selection immediately. Best-effort: keys persist in the
-	// DB either way and reach the container on the next reinstall, so a save
-	// must not fail just because the container is stopped or unreachable.
+	// Apply the selection immediately. Admin keys are fully synced (activated
+	// ones written with the AdminKeyMarker, stale/unactivated ones removed), so
+	// this runs even when nothing is active — deactivating an admin key must
+	// purge it from the machine. The user's own keys stay append-only. Best-
+	// effort: keys persist in the DB either way, so a save must not fail just
+	// because the container is stopped or unreachable.
 	warn := ""
-	var active []string
+	var userActive []string
 	for _, k := range keys {
 		if k.Active {
-			active = append(active, k.Key)
+			userActive = append(userActive, k.Key)
 		}
 	}
-	if len(active) > 0 {
-		if err := s.mgr.ApplySSHKeys(u.Name, active); err != nil {
-			warn = s.t(r, "ssh_keys_apply_warn")
-		}
+	if err := s.mgr.ApplySSHKeys(u.Name, userActive, granted); err != nil {
+		warn = s.t(r, "ssh_keys_apply_warn")
 	}
-	writeSSHKeys(w, true, "", warn, keys)
+	ids := make([]int64, 0, len(granted))
+	for _, k := range granted {
+		ids = append(ids, k.ID)
+	}
+	writeSSHKeys(w, true, "", warn, keys, ids)
 }
 
-func writeSSHKeys(w http.ResponseWriter, ok bool, errMsg, warn string, keys []db.SSHKey) {
+func writeSSHKeys(w http.ResponseWriter, ok bool, errMsg, warn string, keys []db.SSHKey, adminIDs []int64) {
 	rows := make([]sshKeyRow, 0, len(keys))
 	for _, k := range keys {
 		rows = append(rows, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
-		OK      bool        `json:"ok"`
-		Error   string      `json:"error,omitempty"`
-		Warning string      `json:"warning,omitempty"`
-		Keys    []sshKeyRow `json:"keys"`
-	}{ok, errMsg, warn, rows})
+		OK        bool        `json:"ok"`
+		Error     string      `json:"error,omitempty"`
+		Warning   string      `json:"warning,omitempty"`
+		Keys      []sshKeyRow `json:"keys"`
+		AdminKeys []int64     `json:"adminKeys"`
+	}{ok, errMsg, warn, rows, adminIDs})
 }
 
 // handleNotes serves the user's sticky-notes blob. GET returns the stored

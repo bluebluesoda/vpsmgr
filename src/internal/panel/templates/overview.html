@@ -117,6 +117,7 @@ footer a{color:var(--muted);text-decoration:underline}
 .adminkeys{margin-top:.5rem;border-top:1px dashed var(--border);padding-top:.55rem}
 .adminkeys .kname{font-weight:600;font-size:.84rem;color:var(--text)}
 .adminkeys-warn{margin:.45rem 0 .6rem}
+.adminkeys-hint{margin:.25rem 0 .55rem}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
 .notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
 .notes-cover[hidden],.notes-main[hidden]{display:none}
@@ -336,8 +337,10 @@ footer a{color:var(--muted);text-decoration:underline}
 <button type="button" class="keylink" id="adminKeysToggle">{{if eq .Lang "zh"}}展开来自管理员的公钥{{else}}Show the administrator's public keys{{end}}</button>
 <div id="adminKeysList" hidden>
 <div class="err adminkeys-warn">{{if eq .Lang "zh"}}激活以下公钥则授权管理员登录你的机器{{else}}Activating the keys below authorizes the administrator to log in to your machine{{end}}</div>
+<div class="muted adminkeys-hint">{{if eq .Lang "zh"}}勾选要授权的公钥后点击“保存并生效”：已激活的管理员公钥会写入你机器的授权列表（以 from-admin 标注）；取消勾选后保存则会从机器上移除它。你自己手动添加的公钥不受影响。{{else}}Check the keys to grant, then Save &amp; apply: activated admin keys are written to your machine's authorized_keys (marked “from-admin”); unchecking one and saving removes it. Keys you added by hand are never touched.{{end}}</div>
 {{range .AdminSSHKeys}}
-<div class="keyrow">
+<div class="keyrow admin-keyrow" data-aid="{{.ID}}">
+<input type="checkbox" class="kact"{{if .Active}} checked{{end}}>
 <span class="kname">{{.Name}}</span>
 <input type="text" class="kval" value="{{.Key}}" readonly spellcheck="false">
 </div>
@@ -592,8 +595,14 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
           active: row.querySelector('.kact').checked
         });
       });
+      // The checked admin-key grants ride along in the same save.
+      var adminKeys=[];
+      document.querySelectorAll('#adminKeysList .admin-keyrow .kact:checked').forEach(function(cb){
+        var aid=parseInt(cb.closest('.keyrow').getAttribute('data-aid'),10);
+        if(aid)adminKeys.push(aid);
+      });
       keySave.classList.add('pending');keySave.disabled=true;
-      fetch(P+'/ssh-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:keys}),credentials:'same-origin'})
+      fetch(P+'/ssh-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:keys,adminKeys:adminKeys}),credentials:'same-origin'})
         .then(function(r){return r.json();}).then(function(d){
           keySave.classList.remove('pending');keySave.disabled=false;
           if(!d||!d.ok){toast((d&&d.error)||'error',true);return;}
@@ -603,6 +612,15 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
             row.querySelector('.kact').checked=k.active;
             keyList.appendChild(row);
           });
+          // Sync the admin-key checkboxes with what was actually granted.
+          (d.adminKeys||[]).forEach(function(id){
+            var row=document.querySelector('#adminKeysList .admin-keyrow[data-aid="'+id+'"]');
+            if(row)row.querySelector('.kact').checked=true;
+          });
+          document.querySelectorAll('#adminKeysList .admin-keyrow').forEach(function(row){
+            var aid=parseInt(row.getAttribute('data-aid'),10);
+            if((d.adminKeys||[]).indexOf(aid)===-1)row.querySelector('.kact').checked=false;
+          });
           toast(d.warning||((LANG==='zh')?'密钥已保存并生效':'Keys saved and applied'),false);
         }).catch(function(){
           keySave.classList.remove('pending');keySave.disabled=false;
@@ -610,8 +628,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         });
     });
     // Admin-keys disclosure: the operator's stored public keys are shown
-    // read-only below the user's own list. Purely informational — expanding
-    // never touches them and they are not part of the save payload.
+    // read-only below the user's own list. Checking one and saving grants the
+    // admin access to this machine; expanding alone never touches anything.
     var adminToggle=document.getElementById('adminKeysToggle');
     if(adminToggle){
       var adminList=document.getElementById('adminKeysList');

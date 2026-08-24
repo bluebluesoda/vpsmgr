@@ -51,3 +51,72 @@ func TestAdminKeyCRUD(t *testing.T) {
 		t.Fatalf("after delete = %d keys, want 1", len(keys))
 	}
 }
+
+func TestAdminKeyGrants(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1, err := d.AddAdminKey("ops", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusX", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := d.AddAdminKey("ci", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusY", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a3, err := d.AddAdminKey("temp", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusZ", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetAdminKeyGrants(u.ID, []int64{a1.ID, a2.ID}); err != nil {
+		t.Fatal(err)
+	}
+	granted, err := d.GrantedAdminKeys(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(granted) != 2 || granted[0].ID != a1.ID || granted[1].ID != a2.ID {
+		t.Fatalf("granted = %+v, want [%d %d]", granted, a1.ID, a2.ID)
+	}
+	// The joined row carries the admin key's live content and name.
+	if granted[0].Name != "ops" || granted[0].Key == "" {
+		t.Errorf("granted row = %+v", granted[0])
+	}
+
+	// Replacing the set wholesale drops the first grant.
+	if err := d.SetAdminKeyGrants(u.ID, []int64{a2.ID}); err != nil {
+		t.Fatal(err)
+	}
+	granted, _ = d.GrantedAdminKeys(u.ID)
+	if len(granted) != 1 || granted[0].ID != a2.ID {
+		t.Fatalf("after replace = %+v, want only %d", granted, a2.ID)
+	}
+
+	// Deleting an admin key cascades away its grants.
+	if err := d.SetAdminKeyGrants(u.ID, []int64{a2.ID, a3.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DeleteAdminKey(a3.ID); err != nil {
+		t.Fatal(err)
+	}
+	granted, _ = d.GrantedAdminKeys(u.ID)
+	if len(granted) != 1 || granted[0].ID != a2.ID {
+		t.Fatalf("after admin-key delete = %+v, want only %d", granted, a2.ID)
+	}
+
+	// Empty set clears everything.
+	if err := d.SetAdminKeyGrants(u.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	granted, _ = d.GrantedAdminKeys(u.ID)
+	if len(granted) != 0 {
+		t.Fatalf("after clear = %d grants, want 0", len(granted))
+	}
+}

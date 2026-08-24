@@ -1116,6 +1116,135 @@ func TestSSHKeysSave(t *testing.T) {
 	}
 }
 
+// TestSSHKeysSaveAdminGrant covers the admin-key activation half of /ssh-keys:
+// the user checks some of the operator's public keys and saving persists those
+// grants (unknown ids dropped, selection replaced wholesale), returned back to
+// the panel so the checkboxes re-render. No Incus in tests, so the live apply
+// degrades to a warning.
+func TestSSHKeysSaveAdminGrant(t *testing.T) {
+	srv, d := newTestServer(t)
+	srv.cfg.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	srv.mgr = mgr.New(srv.cfg, d)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The operator's stored keys.
+	a1, err := d.AddAdminKey("ops", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusbogusX", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := d.AddAdminKey("ci", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusbogusY", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	// Grant the first admin key plus a stale id that must be dropped.
+	rr := postJSON(t, h, prefix+"/ssh-keys",
+		`{"keys":[],"adminKeys":[`+itoa(int(a1.ID))+`,999999]}`, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		OK        bool    `json:"ok"`
+		AdminKeys []int64 `json:"adminKeys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, body %s", rr.Body.String())
+	}
+	if len(resp.AdminKeys) != 1 || resp.AdminKeys[0] != a1.ID {
+		t.Fatalf("granted = %v, want [%d]", resp.AdminKeys, a1.ID)
+	}
+	granted, err := d.GrantedAdminKeys(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(granted) != 1 || granted[0].ID != a1.ID {
+		t.Fatalf("db grants = %+v, want only %d", granted, a1.ID)
+	}
+
+	// Overwrite with the second key: the first grant is replaced.
+	rr = postJSON(t, h, prefix+"/ssh-keys", `{"keys":[],"adminKeys":[`+itoa(int(a2.ID))+`]}`, cookie)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || len(resp.AdminKeys) != 1 || resp.AdminKeys[0] != a2.ID {
+		t.Fatalf("after overwrite = %+v", resp)
+	}
+
+	// Empty selection revokes everything.
+	rr = postJSON(t, h, prefix+"/ssh-keys", `{"keys":[],"adminKeys":[]}`, cookie)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || len(resp.AdminKeys) != 0 {
+		t.Fatalf("after revoke = %+v", resp)
+	}
+	granted, _ = d.GrantedAdminKeys(u.ID)
+	if len(granted) != 0 {
+		t.Fatalf("grants after revoke = %+v, want none", granted)
+	}
+}
+
+// TestOverviewAdminKeysDisclosure covers the SSH-key modal's admin-keys
+// section: with operator keys present the disclosure link, the red warning and
+// the grant checkboxes render (checked = already granted); with no operator
+// keys the whole block is absent.
+func TestOverviewAdminKeysDisclosure(t *testing.T) {
+	srv, _ := newTestServer(t)
+	const k1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusbogusX"
+	const k2 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBODYadminkeybogusbogusY"
+	html := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+		Lang:   langZh,
+		AdminSSHKeys: []sshKeyRow{
+			{ID: 1, Name: "ops", Key: k1, Active: true},  // already granted
+			{ID: 2, Name: "ci", Key: k2, Active: false},   // not granted
+		},
+	})
+	for _, want := range []string{
+		`id="adminKeysToggle"`, "展开来自管理员的公钥",
+		"激活以下公钥则授权管理员登录你的机器",
+		`data-aid="1"`, `data-aid="2"`, `class="keyrow admin-keyrow"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+	// Exactly one granted (checked) row and one plain row.
+	if n := strings.Count(html, `class="kact" checked>`); n != 1 {
+		t.Errorf("checked admin rows = %d, want 1", n)
+	}
+	if n := strings.Count(html, `class="kact">`); n != 1 {
+		t.Errorf("unchecked admin rows = %d, want 1", n)
+	}
+
+	// Without operator keys the disclosure block is not rendered at all. The
+	// JS always references these ids, so assert on the rendered-only strings.
+	plain := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+	})
+	for _, absent := range []string{
+		`id="adminKeysToggle"`, `id="adminKeysList"`,
+		"激活以下公钥则授权管理员登录你的机器",
+		"Activating the keys below authorizes",
+	} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("overview without admin keys should not render %q", absent)
+		}
+	}
+}
+
 // postJSON sends an authenticated JSON POST and returns the response recorder.
 func postJSON(t *testing.T, h http.Handler, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
