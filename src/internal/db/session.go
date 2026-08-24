@@ -24,6 +24,19 @@ func hashToken(token string) string {
 }
 
 func (d *DB) CreateSession(userID int64, days int) (*Session, error) {
+	return d.createSession(userID, days, false)
+}
+
+// CreateImpersonatedSession creates a user session on behalf of the operator
+// ("log in as user"). It is indistinguishable from a real login to the user
+// panel except for the impersonated flag, which the panel uses to attribute
+// audit events to the operator ("000+<user>") and to show a "logged in as"
+// banner.
+func (d *DB) CreateImpersonatedSession(userID int64, days int) (*Session, error) {
+	return d.createSession(userID, days, true)
+}
+
+func (d *DB) createSession(userID int64, days int, impersonated bool) (*Session, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, err
@@ -33,8 +46,8 @@ func (d *DB) CreateSession(userID int64, days int) (*Session, error) {
 	token := hex.EncodeToString(b)
 	s := &Session{Token: token, UserID: userID,
 		ExpiresAt: time.Now().Add(time.Duration(days) * 24 * time.Hour).Unix()}
-	_, err := d.sql.Exec(`INSERT INTO sessions(token, user_id, expires_at) VALUES(?,?,?)`,
-		hashToken(token), s.UserID, s.ExpiresAt)
+	_, err := d.sql.Exec(`INSERT INTO sessions(token, user_id, expires_at, impersonated) VALUES(?,?,?,?)`,
+		hashToken(token), s.UserID, s.ExpiresAt, b2i(impersonated))
 	if err != nil {
 		return nil, err
 	}
@@ -43,18 +56,30 @@ func (d *DB) CreateSession(userID int64, days int) (*Session, error) {
 
 // SessionUser returns the user for a valid (unexpired) session token.
 func (d *DB) SessionUser(token string) (*User, error) {
+	u, _, err := d.SessionWithFlag(token)
+	return u, err
+}
+
+// SessionWithFlag returns the user for a valid session token plus whether the
+// session was created by the operator (impersonation).
+func (d *DB) SessionWithFlag(token string) (*User, bool, error) {
 	var userID int64
 	var expiresAt int64
-	err := d.sql.QueryRow(`SELECT user_id, expires_at FROM sessions WHERE token=?`, hashToken(token)).
-		Scan(&userID, &expiresAt)
+	var imp int
+	err := d.sql.QueryRow(`SELECT user_id, expires_at, impersonated FROM sessions WHERE token=?`, hashToken(token)).
+		Scan(&userID, &expiresAt, &imp)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if time.Now().Unix() > expiresAt {
 		d.DeleteSession(token)
-		return nil, errors.New("session expired")
+		return nil, false, errors.New("session expired")
 	}
-	return d.GetUserByID(userID)
+	u, err := d.GetUserByID(userID)
+	if err != nil {
+		return nil, false, err
+	}
+	return u, imp != 0, nil
 }
 
 func (d *DB) DeleteSession(token string) error {

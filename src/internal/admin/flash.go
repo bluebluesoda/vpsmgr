@@ -8,6 +8,7 @@ import (
 type flashEntry struct {
 	msg  string
 	kind string
+	data string
 	ts   time.Time
 }
 
@@ -26,6 +27,12 @@ const (
 )
 
 func (f *flashStore) Set(token, msg, kind string) {
+	f.SetWithData(token, msg, kind, "")
+}
+
+// SetWithData stores a banner plus an optional opaque data payload (e.g. the
+// username of a freshly created user, so the modal can offer "log in as").
+func (f *flashStore) SetWithData(token, msg, kind, data string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.items) >= flashMaxItems {
@@ -36,18 +43,18 @@ func (f *flashStore) Set(token, msg, kind string) {
 			}
 		}
 	}
-	f.items[token] = &flashEntry{msg: msg, kind: kind, ts: time.Now()}
+	f.items[token] = &flashEntry{msg: msg, kind: kind, data: data, ts: time.Now()}
 }
 
-func (f *flashStore) Pop(token string) (msg, kind string, ok bool) {
+func (f *flashStore) Pop(token string) (msg, kind, data string, ok bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	e, ok := f.items[token]
 	if !ok {
-		return "", "toast", false
+		return "", "toast", "", false
 	}
 	delete(f.items, token)
-	return e.msg, e.kind, true
+	return e.msg, e.kind, e.data, true
 }
 
 func (f *flashStore) Clear(token string) {

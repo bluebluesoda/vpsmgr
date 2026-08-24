@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
 	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
+	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.handleLoginAs)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +256,15 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path, msg stri
 
 func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg string) {
 	s.storeFlash(r, msg, "modal")
+	http.Redirect(w, r, path, http.StatusFound)
+}
+
+// redirectModalData is redirectModal plus an opaque data payload attached to
+// the flash (used for the "log in as" button after creating a user).
+func (s *Server) redirectModalData(w http.ResponseWriter, r *http.Request, path, msg, data string) {
+	if c, err := r.Cookie("vpsmgr_admin_session"); err == nil {
+		s.flash.SetWithData(c.Value, msg, "user_created", data)
+	}
 	http.Redirect(w, r, path, http.StatusFound)
 }
 

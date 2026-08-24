@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 10
+const schemaVersion = 11
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -220,6 +220,13 @@ var migrations = []struct {
 			UNIQUE(user_id, admin_key_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_admin_key_grants_user ON admin_key_grants(user_id)`,
+	}},
+	// v11: mark user sessions created by the operator ("log in as user"). Lets
+	// the user panel tell an admin impersonation apart from the user's own
+	// login, so audit events can be attributed "000+<user>". Existing rows are
+	// normal (0).
+	{11, []string{
+		`ALTER TABLE sessions ADD COLUMN impersonated INTEGER NOT NULL DEFAULT 0`,
 	}},
 }
 

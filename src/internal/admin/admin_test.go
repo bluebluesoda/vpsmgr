@@ -425,7 +425,7 @@ func TestAuditPageAndAPI(t *testing.T) {
 		t.Fatalf("GET /audit/api = %d", rr.Code)
 	}
 	b := rr.Body.String()
-	for _, want := range []string{`"actor":"000+alice"`, `"action":"power.stop"`, `"total":2`, `"more":false`} {
+	for _, want := range []string{`"actor":"000+alice"`, `"action":"power.stop"`, `"total":3`, `"more":false`, `"actor":"000"`, `"action":"session.login"`} {
 		if !strings.Contains(b, want) {
 			t.Errorf("audit api missing %s:\n%s", want, b)
 		}
@@ -689,4 +689,146 @@ func TestAdminKeysSave(t *testing.T) {
 	if strings.Contains(rr.Body.String(), `class="kact"`) {
 		t.Error("admin key rows should no longer render an active checkbox")
 	}
+}
+
+// TestLoginAs covers "log in as user": the admin POSTs /login-as and gets a
+// redirect to the user panel with a fresh, impersonated user-panel session
+// cookie, and the event is audited "000+<user>".
+func TestLoginAs(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	userPrefix := "/UserSecRet99" // cfg.Panel.URLPath in newTestServer
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	rr := doReq(t, h, http.MethodPost, prefix+"/login-as", url.Values{"name": {"alice"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login-as = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != userPrefix+"/" {
+		t.Fatalf("Location = %q, want %q", loc, userPrefix+"/")
+	}
+	var uc *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			v := *c
+			uc = &v
+		}
+	}
+	if uc == nil {
+		t.Fatal("no user-panel session cookie set")
+	}
+	if uc.Path != userPrefix {
+		t.Errorf("cookie Path = %q, want %q", uc.Path, userPrefix)
+	}
+	u, imp, err := d.SessionWithFlag(uc.Value)
+	if err != nil {
+		t.Fatalf("session lookup: %v", err)
+	}
+	if u.Name != "alice" || !imp {
+		t.Errorf("session = user %q imp=%v, want alice imp=true", u.Name, imp)
+	}
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "000+alice" && r.Action == "session.login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want 000+alice session.login", rows)
+	}
+}
+
+// TestLoginAsRequiresAdminAuth ensures /login-as is gated on an admin session.
+func TestLoginAsRequiresAdminAuth(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	rr := doReq(t, h, http.MethodPost, prefix+"/login-as", url.Values{"name": {"alice"}}, nil)
+	if rr.Code != http.StatusFound || rr.Header().Get("Location") != prefix+"/login" {
+		t.Fatalf("unauthenticated login-as = %d (loc %q), want redirect to login", rr.Code, rr.Header().Get("Location"))
+	}
+}
+
+// TestFlashCarriesData verifies the post-create flash delivers the username as
+// opaque data so the modal can offer "log in as this user".
+func TestFlashCarriesData(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+	srv.flash.SetWithData(cookie.Value, "user:      alice\npassword:  xyz", "user_created", "alice")
+	rr := doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/flash = %d", rr.Code)
+	}
+	b := rr.Body.String()
+	for _, want := range []string{
+		`"kind":"user_created"`,
+		`"data":"alice"`,
+		"\"msg\":\"user:      alice\\npassword:  xyz\"",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("flash missing %s:\n%s", want, b)
+		}
+	}
+}
+
+// TestAdminLoginWritesAudit verifies admin login is audited as "000".
+func TestAdminLoginWritesAudit(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	adminLogin(t, h, prefix, "correct-horse-battery")
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "000" && r.Action == "session.login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want 000 session.login", rows)
+	}
+}
+
+// TestAdminOverviewLoginButtons checks the admin overview renders both the
+// per-user "login panel" button and the modal's "log in as this user" form.
+func TestAdminOverviewLoginButtons(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "admin_overview.html", pageData{
+		Prefix: "/" + testAdminSecret,
+		Lang:   langZh,
+		Users:  []userView{{Name: "alice", State: "Running", Status: "ready", SSHPort: "30001"}},
+	})
+	for _, want := range []string{
+		"login-as", "登录面板", `name="name" value="alice"`,
+		`id="loginAsForm"`, `id="loginAsName"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("admin overview missing %q", want)
+		}
+	}
+}
+
+// renderToString executes a named admin template into a string for assertions.
+func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
+	t.Helper()
+	tpl, err := s.templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := tpl.ExecuteTemplate(&b, name, data); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
 }
