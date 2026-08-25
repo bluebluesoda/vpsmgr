@@ -8,6 +8,7 @@
 :root{
   --bg:#f1f5f9; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
   --head:#0284c7; --accent:#2563eb; --on-accent:#fff;
+  --accent-soft:rgba(37,99,235,.12); --accent-glow:rgba(37,99,235,.30);
   --ok:#059669; --ok-bg:#ecfdf5; --ok-fg:#047857;
   --warn:#d97706; --danger:#dc2626; --err-bg:#fef2f2; --err-fg:#dc2626;
   --violet-bg:#f3e8ff; --violet-fg:#6d28d9; --violet-border:#c4b5fd;
@@ -108,13 +109,20 @@ footer a{color:var(--muted);text-decoration:underline}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:99;padding:1rem}
 .overlay.show{display:flex}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
-.imglist{display:flex;gap:.45rem;flex-wrap:wrap;margin:.35rem 0 .7rem}
-.imgopt{display:inline-flex;align-items:center;gap:.55rem;border:1px solid var(--border);border-radius:9px;padding:.45rem .8rem;cursor:pointer;font-size:.95rem}
-.imgopt:has(input:checked){border-color:var(--accent);color:var(--accent)}
-.imgic{display:inline-flex;align-items:center;flex:none}
-.imgic svg{display:block;width:28px;height:28px}
-#reDesc{min-height:1.2em;margin-bottom:.6rem;font-size:.86rem}
-.modal-wide{max-width:620px}
+.imglist{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:.6rem;margin:.45rem 0 .9rem}
+.imgopt{position:relative;display:flex;flex-direction:column;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:12px;padding:.85rem .6rem .7rem;cursor:pointer;text-align:center;transition:border-color .15s,box-shadow .15s,background .15s,transform .12s}
+.imgopt:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));box-shadow:0 2px 10px var(--accent-glow)}
+.imgopt:has(input:checked){border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 2px var(--accent),0 6px 16px var(--accent-glow);transform:translateY(-2px)}
+.imgopt:has(input:checked) .imgname{color:var(--accent)}
+.imgopt:has(input:checked) .optcheck{background:var(--accent);border-color:var(--accent);opacity:1;transform:scale(1)}
+.imgopt input{position:absolute;opacity:0;pointer-events:none}
+.imgic{display:flex;flex:none}
+.imgic svg{display:block;width:34px;height:34px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.08))}
+.imgname{font-size:.9rem;font-weight:600;color:var(--text);transition:color .15s}
+.optcheck{position:absolute;top:.45rem;right:.45rem;width:1.15rem;height:1.15rem;border-radius:50%;border:2px solid var(--border);background:var(--card);opacity:0;transform:scale(.6);transition:background .15s,border-color .15s,opacity .15s,transform .15s}
+.optcheck::after{content:'';position:absolute;left:.26rem;top:.12rem;width:.28rem;height:.52rem;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
+#reDesc{min-height:1.2em;margin-bottom:.65rem;font-size:.86rem;color:var(--muted)}
+.modal-wide{max-width:560px}
 .re-warn{margin-top:.7rem;text-align:center;color:var(--danger);font-weight:600;font-size:.9rem}
 .keyrow{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;margin-bottom:.45rem}
 .keyrow .kact{width:1rem;height:1rem;flex:none;cursor:pointer}
@@ -451,11 +459,11 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。{{else}}Deletes all data and rebuilds with the same IP/ports/quota.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。请选择要安装的系统：{{else}}Deletes all data and rebuilds with the same IP/ports/quota. Pick the system to install:{{end}}</p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
-<div class="muted" id="reDesc"></div>
+<div id="reDesc"></div>
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>
@@ -511,44 +519,33 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   // The image list is fetched lazily when the reinstall button is clicked, not
   // on every page load. If it fails, the form submits with no image and
   // reinstall falls back to the default Debian image.
-  // Small self-contained SVG icons per image (inline SVG — no external assets,
-  // so CSP and offline use are fine). A colored rounded square + a simple,
-  // distinguishable glyph: Debian's swirl of dots, Alma's flower petals,
-  // Rocky's mountain with a sun, the dev image's hammer, openSUSE's gecko.
+  // One icon per image, each a rounded-brand tile carrying the distribution's
+  // real logomark in white (inline SVG — no external assets, so CSP and offline
+  // use are fine). Known managed aliases get their official mark; anything
+  // unknown falls back to a neutral "?" tile.
+  function tile(bg, glyph){
+    return '<svg width="34" height="34" viewBox="0 0 34 34">'
+      +'<rect width="34" height="34" rx="8" fill="'+bg+'"/>'
+      +'<g transform="translate(5,5)" fill="#fff">'+glyph+'</g></svg>';
+  }
+  var PA={
+    // Official mark paths (24x24 coordinate space), filled white on a brand tile.
+    'vpsmgr/debian-sshd':
+      tile('#a81d33','<path d="M13.88 12.685c-.4 0 .08.2.601.28.14-.1.27-.22.39-.33a3.001 3.001 0 01-.99.05m2.14-.53c.23-.33.4-.69.47-1.06-.06.27-.2.5-.33.73-.75.47-.07-.27 0-.56-.8 1.01-.11.6-.14.89m.781-2.05c.05-.721-.14-.501-.2-.221.07.04.13.5.2.22M12.38.31c.2.04.45.07.42.12.23-.05.28-.1-.43-.12m.43.12l-.15.03.14-.01V.43m6.633 9.944c.02.64-.2.95-.38 1.5l-.35.181c-.28.54.03.35-.17.78-.44.39-1.34 1.22-1.62 1.301-.201 0 .14-.25.19-.34-.591.4-.481.6-1.371.85l-.03-.06c-2.221 1.04-5.303-1.02-5.253-3.842-.03.17-.07.13-.12.2a3.551 3.552 0 012.001-3.501 3.361 3.362 0 013.732.48 3.341 3.342 0 00-2.721-1.3c-1.18.01-2.281.76-2.651 1.57-.6.38-.67 1.47-.93 1.661-.361 2.601.66 3.722 2.38 5.042.27.19.08.21.12.35a4.702 4.702 0 01-1.53-1.16c.23.33.47.66.8.91-.55-.18-1.27-1.3-1.48-1.35.93 1.66 3.78 2.921 5.261 2.3a6.203 6.203 0 01-2.33-.28c-.33-.16-.77-.51-.7-.57a5.802 5.803 0 005.902-.84c.44-.35.93-.94 1.07-.95-.2.32.04.16-.12.44.44-.72-.2-.3.46-1.24l.24.33c-.09-.6.74-1.321.66-2.262.19-.3.2.3 0 .97.29-.74.08-.85.15-1.46.08.2.18.42.23.63-.18-.7.2-1.2.28-1.6-.09-.05-.28.3-.32-.53 0-.37.1-.2.14-.28-.08-.05-.26-.32-.38-.861.08-.13.22.33.34.34-.08-.42-.2-.75-.2-1.08-.34-.68-.12.1-.4-.3-.34-1.091.3-.25.34-.74.54.77.84 1.96.981 2.46-.1-.6-.28-1.2-.49-1.76.16.07-.26-1.241.21-.37A7.823 7.824 0 0017.702 1.6c.18.17.42.39.33.42-.75-.45-.62-.48-.73-.67-.61-.25-.65.02-1.06 0C15.082.73 14.862.8 13.8.4l.05.23c-.77-.25-.9.1-1.73 0-.05-.04.27-.14.53-.18-.741.1-.701-.14-1.431.03.17-.13.36-.21.55-.32-.6.04-1.44.35-1.18.07C9.6.68 7.847 1.3 6.867 2.22L6.838 2c-.45.54-1.96 1.611-2.08 2.311l-.131.03c-.23.4-.38.85-.57 1.261-.3.52-.45.2-.4.28-.6 1.22-.9 2.251-1.16 3.102.18.27 0 1.65.07 2.76-.3 5.463 3.84 10.776 8.363 12.006.67.23 1.65.23 2.49.25-.99-.28-1.12-.15-2.08-.49-.7-.32-.85-.7-1.34-1.13l.2.35c-.971-.34-.57-.42-1.361-.67l.21-.27c-.31-.03-.83-.53-.97-.81l-.34.01c-.41-.501-.63-.871-.61-1.161l-.111.2c-.13-.21-1.52-1.901-.8-1.511-.13-.12-.31-.2-.5-.55l.14-.17c-.35-.44-.64-1.02-.62-1.2.2.24.32.3.45.33-.88-2.172-.93-.12-1.601-2.202l.15-.02c-.1-.16-.18-.34-.26-.51l.06-.6c-.63-.74-.18-3.102-.09-4.402.07-.54.53-1.1.88-1.981l-.21-.04c.4-.71 2.341-2.872 3.241-2.761.43-.55-.09 0-.18-.14.96-.991 1.26-.7 1.901-.88.7-.401-.6.16-.27-.151 1.2-.3.85-.7 2.421-.85.16.1-.39.14-.52.26 1-.49 3.151-.37 4.562.27 1.63.77 3.461 3.011 3.531 5.132l.08.02c-.04.85.13 1.821-.17 2.711l.2-.42M9.54 13.236l-.05.28c.26.35.47.73.8 1.01-.24-.47-.42-.66-.75-1.3m.62-.02c-.14-.15-.22-.34-.31-.52.08.32.26.6.43.88l-.12-.36m10.945-2.382l-.07.15c-.1.76-.34 1.511-.69 2.212.4-.73.65-1.541.75-2.362M12.45.12c.27-.1.66-.05.95-.12-.37.03-.74.05-1.1.1l.15.02M3.006 5.142c.07.57-.43.8.11.42.3-.66-.11-.18-.1-.42m-.64 2.661c.12-.39.15-.62.2-.84-.35.44-.17.53-.2.83"/>'),
+    'vpsmgr/debian-dev-sshd':
+      tile('#5745e9','<path d="M2 3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H2zm4.4 4.6l4.9 4.4-4.9 4.4-1.5-1.7 3.3-2.7-3.3-2.7 1.5-1.7zm8.6 8h6v2.4h-6v-2.4z"/>'),
+    'vpsmgr/alma-sshd':
+      tile('#0069da','<path d="M23.994 15.133c.079 1.061-.668 1.927-1.69 2.005a1.8 1.8 0 0 1-1.928-1.651c-.078-1.062.63-1.849 1.691-1.967 1.023-.078 1.849.59 1.927 1.613zm-12.623 4.955c-.944 0-1.73.786-1.73 1.809 0 1.14.747 1.848 1.887 1.848.904-.04 1.691-.865 1.691-1.809 0-.983-.904-1.848-1.848-1.848zm1.061-9.675c-.039-.865-.078-1.73.08-2.556.156-.944.314-1.887.904-2.674.707-.983 1.809-.944 2.399.118.314.511.432 1.062.471 1.652 0 .354.158.432.472.393.944-.157 1.888-.157 2.792.197.118.039.236.118.394 0 .314-.276.393-1.652.196-2.006-.354-.63-.904-.55-1.455-.55-.629.039-1.18-.158-1.612-.67-.393-.471-.511-1.06-.59-1.65-.04-.276-.079-.512-.315-.709-.55-.55-1.809-.432-2.477.118-2.556 2.045-2.989 5.467-1.534 8.18.04.118.118.236.275.157zm7.984 3.658c.354-.511.865-.747 1.415-.983a.973.973 0 0 0 .59-.472c.354-.669-.078-1.81-.747-2.36-2.595-2.006-5.938-1.612-8.18.433-.118.078-.157.196-.078.314.786-.236 1.612-.472 2.477-.51.905-.08 1.848-.158 2.753.235 1.14.472 1.337 1.534.472 2.36-.393.393-.905.668-1.455.825-.315.08-.354.236-.236.551.354.865.59 1.77.472 2.753-.04.157-.079.275.078.393.354.236 1.691 0 1.967-.275.511-.472.314-1.023.196-1.534-.157-.63-.078-1.219.276-1.73zm-7.197-2.045c-.118-.079-.197-.118-.315 0 .472.708.905 1.455 1.259 2.241.314.866.668 1.73.55 2.714-.118 1.18-1.1 1.69-2.123 1.101-.511-.275-.905-.669-1.22-1.14-.196-.276-.393-.276-.629-.08-.747.63-1.533 1.102-2.516 1.26-.158 0-.315 0-.394.157-.118.393.472 1.612.826 1.809.59.354 1.062 0 1.534-.276.55-.314 1.101-.432 1.73-.236.59.197.983.63 1.337 1.102.158.196.315.353.63.432.747.197 1.77-.59 2.084-1.376 1.18-3.028-.157-6.135-2.753-7.708zm-2.556 2.438c.472-.669.826-1.416.983-2.202-.157-.04-.197.04-.315.078-.904.944-1.848 1.849-3.067 2.478-.472.236-.983.433-1.534.433-.865 0-1.376-.551-1.298-1.416a2.92 2.92 0 0 1 .787-1.849c.236-.275.236-.432-.04-.668-.786-.55-1.494-1.22-1.848-2.124-.078-.275-.275-.275-.51-.157a4.293 4.293 0 0 0-.434.236c-1.022.63-1.14 1.416-.275 2.28.63.63.944 1.338.708 2.203-.118.433-.354.747-.63 1.101a.95.95 0 0 0-.235.787c.079.747.826 1.494 1.73 1.573 2.517.236 4.562-.63 5.978-2.753zm-4.68-5.152c1.376 1.18 3.067 1.455 4.837 1.377.157 0 .315 0 .354-.118.04-.197-.157-.197-.275-.236-.826-.354-1.691-.63-2.438-1.14S6.848 8.25 6.534 7.266c-.236-.747.078-1.415.825-1.651.669-.236 1.337-.236 1.967 0 .393.157.55.078.629-.354.118-.747.354-1.455.826-2.085.55-.786.55-.865-.354-1.376-.04 0-.04-.04-.079-.04-.865-.471-1.534-.196-1.848.709-.472 1.376-1.377 1.887-2.832 1.612-.196-.04-.393-.079-.472-.079-.747.118-1.18.55-1.297 1.14-.158 1.81.786 3.107 2.084 4.17zm-2.32 3.658c-.079-.944-1.023-1.652-2.045-1.534-.905.079-1.691 1.022-1.613 1.966.08.983 1.023 1.77 1.967 1.652 1.14-.079 1.73-1.18 1.69-2.084zm15.18-8.298c.943-.079 1.73-.983 1.651-1.927-.078-.983-1.022-1.77-2.005-1.691-1.023.079-1.73.983-1.652 1.966s.983 1.73 2.006 1.652zm-12.27-.826c1.062-.157 1.77-1.023 1.652-2.045C8.107.897 7.163.149 6.18.267c-1.062.118-1.691.944-1.573 2.085.118.865 1.061 1.612 1.966 1.494z"/>'),
+    'vpsmgr/rocky-sshd':
+      tile('#10b981','<path d="M23.332 15.957c.433-1.239.668-2.57.668-3.957 0-6.627-5.373-12-12-12S0 5.373 0 12c0 3.28 1.315 6.251 3.447 8.417L15.62 8.245l3.005 3.005zm-2.192 3.819l-5.52-5.52L6.975 22.9c1.528.706 3.23 1.1 5.025 1.1 3.661 0 6.94-1.64 9.14-4.224z"/>'),
+    'vpsmgr/opensuse-sshd':
+      tile('#0f8f5f','<path d="M10.724 0a12 12 0 0 0-9.448 4.623c1.464.391 2.5.727 2.81.832.005-.19.037-1.893.037-1.893s.004-.04.025-.06c.026-.026.065-.018.065-.018.385.056 8.602 1.274 12.066 3.292.427.25.638.517.902.786.958.99 2.223 5.108 2.359 5.957.005.033-.036.07-.054.083a5.177 5.177 0 0 1-.313.228c-.82.55-2.708 1.872-5.13 1.656-2.176-.193-5.018-1.44-8.445-3.699.336.79.668 1.58 1 2.371.497.258 5.287 2.7 7.651 2.651 1.904-.04 3.941-.968 4.756-1.458 0 0 .179-.108.257-.048.085.066.061.167.041.27-.05.234-.164.66-.242.863l-.065.165c-.093.25-.183.482-.356.625-.48.436-1.246.784-2.446 1.305-1.855.812-4.865 1.328-7.66 1.31-1.001-.022-1.968-.133-2.817-.232-1.743-.197-3.161-.357-4.026.269A12 12 0 0 0 10.724 24a12 12 0 0 0 12-12 12 12 0 0 0-12-12zM13.4 6.963a3.503 3.503 0 0 0-2.521.942 3.498 3.498 0 0 0-1.114 2.449 3.528 3.528 0 0 0 3.39 3.64 3.48 3.48 0 0 0 2.524-.946 3.504 3.504 0 0 0 1.114-2.446 3.527 3.527 0 0 0-3.393-3.64zm-.03 1.035a2.458 2.458 0 0 1 2.368 2.539 2.43 2.43 0 0 1-.774 1.706 2.456 2.456 0 0 1-1.762.659 2.461 2.461 0 0 1-2.364-2.542c.02-.655.3-1.26.777-1.707a2.419 2.419 0 0 1 1.756-.655zm.402 1.23c-.602 0-1.087.325-1.087.727 0 .4.485.725 1.087.725.6 0 1.088-.326 1.088-.725 0-.402-.487-.726-1.088-.726Z"/>'),
+    'vpsmgr/arch-sshd':
+      tile('#1793d1','<path d="M11.39.605C10.376 3.092 9.764 4.72 8.635 7.132c.693.734 1.543 1.589 2.923 2.554-1.484-.61-2.496-1.224-3.252-1.86C6.86 10.842 4.596 15.138 0 23.395c3.612-2.085 6.412-3.37 9.021-3.862a6.61 6.61 0 01-.171-1.547l.003-.115c.058-2.315 1.261-4.095 2.687-3.973 1.426.12 2.534 2.096 2.478 4.409a6.52 6.52 0 01-.146 1.243c2.58.505 5.352 1.787 8.914 3.844-.702-1.293-1.33-2.459-1.929-3.57-.943-.73-1.926-1.682-3.933-2.713 1.38.359 2.367.772 3.137 1.234-6.09-11.334-6.582-12.84-8.67-17.74zM22.898 21.36v-.623h-.234v-.084h.562v.084h-.234v.623h.331v-.707h.142l.167.5.034.107a2.26 2.26 0 01.038-.114l.17-.493H24v.707h-.091v-.593l-.206.593h-.084l-.205-.602v.602h-.091"/>')
+  };
   function imgIcon(alias){
-    var svg={
-      'vpsmgr/debian-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#d70a53"/>'
-        +'<path d="M 8.5,8.0 L 8.53,8.03 L 8.56,8.06 L 8.59,8.1 L 8.62,8.14 L 8.64,8.18 L 8.66,8.23 L 8.67,8.28 L 8.69,8.33 L 8.7,8.38 L 8.7,8.44 L 8.7,8.5 L 8.7,8.55 L 8.69,8.61 L 8.68,8.68 L 8.66,8.74 L 8.64,8.8 L 8.62,8.86 L 8.58,8.92 L 8.55,8.98 L 8.51,9.04 L 8.46,9.1 L 8.41,9.15 L 8.35,9.2 L 8.29,9.25 L 8.23,9.3 L 8.16,9.34 L 8.09,9.38 L 8.01,9.42 L 7.93,9.45 L 7.84,9.48 L 7.76,9.5 L 7.67,9.51 L 7.57,9.52 L 7.48,9.53 L 7.38,9.53 L 7.28,9.52 L 7.19,9.51 L 7.09,9.49 L 6.99,9.46 L 6.88,9.43 L 6.79,9.39 L 6.69,9.34 L 6.59,9.29 L 6.49,9.23 L 6.4,9.16 L 6.31,9.09 L 6.23,9.01 L 6.14,8.92 L 6.06,8.83 L 5.99,8.73 L 5.92,8.63 L 5.86,8.52 L 5.8,8.4 L 5.75,8.28 L 5.7,8.16 L 5.66,8.03 L 5.63,7.9 L 5.61,7.77 L 5.59,7.63 L 5.59,7.49 L 5.59,7.34 L 5.6,7.2 L 5.62,7.06 L 5.64,6.91 L 5.68,6.77 L 5.72,6.62 L 5.78,6.48 L 5.84,6.33 L 5.91,6.2 L 5.99,6.06 L 6.08,5.93 L 6.18,5.8 L 6.28,5.67 L 6.4,5.55 L 6.52,5.44 L 6.65,5.33 L 6.79,5.23 L 6.93,5.14 L 7.09,5.05 L 7.24,4.97 L 7.41,4.9 L 7.58,4.84 L 7.75,4.79 L 7.93,4.75 L 8.11,4.72 L 8.3,4.69 L 8.49,4.68 L 8.68,4.68 L 8.87,4.7 L 9.07,4.72 L 9.26,4.75 L 9.45,4.8 L 9.64,4.86 L 9.83,4.92 L 10.02,5.0 L 10.2,5.1 L 10.38,5.2 L 10.56,5.31 L 10.73,5.44 L 10.89,5.57 L 11.05,5.72 L 11.2,5.87 L 11.34,6.04 L 11.48,6.21 L 11.6,6.4 L 11.72,6.59 L 11.82,6.79 L 11.91,7.0 L 12.0,7.21 L 12.07,7.43 L 12.12,7.65 L 12.17,7.88 L 12.2,8.12 L 12.22,8.35 L 12.23,8.59 L 12.22,8.84 L 12.2,9.08 L 12.16,9.32 L 12.11,9.56 L 12.05,9.8 L 11.97,10.04 L 11.88,10.28 L 11.77,10.51 L 11.65,10.73 L 11.52,10.96 L 11.38,11.17 L 11.22,11.38 L 11.04,11.58 L 10.86,11.77 L 10.66,11.95 L 10.45,12.12 L 10.24,12.28 L 10.01,12.43 L 9.77,12.56 L 9.52,12.68 L 9.27,12.79 L 9.0,12.89 L 8.73,12.97 L 8.46,13.04 L 8.18,13.09 L 7.89,13.12 L 7.6,13.14 L 7.31,13.14 L 7.02,13.13 L 6.73,13.1 L 6.44,13.05 L 6.15,12.98 L 5.86,12.9 L 5.57,12.81 L 5.29,12.69 L 5.02,12.56 L 4.75,12.41 L 4.48,12.25 L 4.23,12.07 L 3.99,11.88 L 3.75,11.67 L 3.53,11.44 L 3.31,11.21 L 3.11,10.96 L 2.93,10.7 L 2.76,10.42 L 2.6,10.14 L 2.46,9.84 L 2.33,9.54 L 2.22,9.23 L 2.13,8.91 L 2.05,8.58 L 2.0,8.25 L 1.96,7.92 L 1.94,7.58 L 1.94,7.23 L 1.96,6.89 L 2.0,6.55 L 2.06,6.21 L 2.14,5.87 L 2.24,5.53 L 2.36,5.2 L 2.49,4.87 L 2.65,4.55 L 2.82,4.24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-        +'</svg>',
-      'vpsmgr/debian-dev-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#ec4899"/><g fill="#fff">'
-        +'<rect x="4.6" y="3.6" width="6.8" height="3" rx="1"/><rect x="7.4" y="6.2" width="1.6" height="7.2" rx="0.8"/>'
-        +'</g></svg>',
-      'vpsmgr/alma-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#f0f9ff" stroke="#bae6fd"/>'
-        +'<circle cx="8" cy="4.2" r="1.9" fill="#ef4444"/><circle cx="11.3" cy="6" r="1.9" fill="#f97316"/>'
-        +'<circle cx="10.5" cy="10" r="1.9" fill="#eab308"/><circle cx="5.5" cy="10" r="1.9" fill="#22c55e"/>'
-        +'<circle cx="4.7" cy="6" r="1.9" fill="#3b82f6"/><circle cx="8" cy="8" r="2.1" fill="#a855f7"/>'
-        +'</svg>',
-      'vpsmgr/rocky-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#22c55e"/>'
-        +'<circle cx="8" cy="5.4" r="3.1" fill="#fff"/>'
-        +'<path d="M1.5,14 L7,5 L8.8,8.2 L10.8,4.6 L14.5,14 Z" fill="#166534"/>'
-        +'</svg>',
-      'vpsmgr/opensuse-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#059669"/>'
-        +'<path d="M3,11.2 q-1.4,-3.2 1,-4.6 q3.4,-1 4.6,1.4 q1.2,2.6 2,3 q3.2,0 3.2,2.8 q-0.8,1.4 -2.8,1.6 q-3.8,0 -6,-1.3 q-1.6,-0.8 -2,-2.9 Z" fill="#a7f3d0"/>'
-        +'<circle cx="11.7" cy="5.6" r="2.6" fill="#a7f3d0"/>'
-        +'<circle cx="11.3" cy="5.2" r="0.6" fill="#065f46"/><circle cx="12.6" cy="5.2" r="0.6" fill="#065f46"/>'
-        +'</svg>',
-      'vpsmgr/arch-sshd':
-        '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#6b7280"/>'
-        +'<path d="M4.2,12.4 L8,3.8 L11.8,12.4" fill="none" stroke="#a5f3fc" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
-        +'</svg>'
-    };
-    return svg[alias]||(
-      '<svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#94a3b8"/><text x="8" y="12" text-anchor="middle" font-size="10" font-weight="bold" fill="#fff" font-family="system-ui,sans-serif">?</text></svg>'
+    return PA[alias]||(
+      '<svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" rx="8" fill="#94a3b8"/><text x="17" y="23" text-anchor="middle" font-size="16" font-weight="700" fill="#fff" font-family="system-ui,sans-serif">?</text></svg>'
     );
   }
   var reDesc=document.getElementById('reDesc');
@@ -560,8 +557,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         var l=document.createElement('label');l.className='imgopt';
         var inp=document.createElement('input');inp.type='radio';inp.name='image';inp.value=img.alias;
         if(img.alias===d.default)inp.checked=true;
+        var ck=document.createElement('span');ck.className='optcheck';
         var ic=document.createElement('span');ic.className='imgic';ic.innerHTML=imgIcon(img.alias);
-        l.appendChild(inp);l.appendChild(ic);l.appendChild(document.createTextNode(img.label));
+        var nm=document.createElement('span');nm.className='imgname';nm.textContent=img.label;
+        l.appendChild(inp);l.appendChild(ck);l.appendChild(ic);l.appendChild(nm);
         box.appendChild(l);
         var show=function(){
           if(reDesc)reDesc.textContent=(LANG==='zh')?(img.desc_zh||''):(img.desc_en||'');
