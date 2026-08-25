@@ -195,7 +195,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}状态{{else}}State{{end}}</th>
           <th>{{if eq .Lang "zh"}}端口/SSH{{else}}Ports/SSH{{end}}</th>
           <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
-          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}5分钟CPU{{else}}5m CPU{{end}}<span class="ind"></span></th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}1小时CPU{{else}}1h CPU{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}内存{{else}}Mem{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}<span class="ind"></span></th>
@@ -417,7 +417,7 @@ function del(name){
   var qc = document.getElementById('quotaCpu');
   if (qc) qc.addEventListener('input', function(){ syncCpuStep(qc); });
 })();
-// Clickable column headers for Name / 5m CPU / Mem / Procs / Disk: cycle
+// Clickable column headers for Name / 1h CPU / Mem / Procs / Disk: cycle
 // ascending -> descending -> default. Only one column sorts at a time; the
 // default state restores the original render order.
 (function(){

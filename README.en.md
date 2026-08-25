@@ -8,8 +8,8 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 ## Feature Details
 
-- Admin panel: users, quotas, domains, IPv6 pool, and audit logs
-- User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16 reinstall, and domain configuration
+- Admin panel: users, quotas, domains, IPv6 pool, SSH public keys, and audit logs; supports logging in as a user
+- User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16/Arch Linux reinstall, domain and SSH key management, encrypted sticky notes (exportable)
 - CPU, memory, and disk oversubscription; quota changes apply live without a container restart
 - Strict container network isolation; prefix mode assigns each container a dedicated `/112` IPv6 block that it can subdivide
 - Traffic is counted in both directions; over-quota containers are rate-limited to 1 Mbps both ways
@@ -18,9 +18,9 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 ## Installation
 
-Ubuntu 22.04, 24.04, or 26.04 is recommended. Debian 12 and 13 are also supported; Debian requires a kernel-module build and takes longer to install.
+Ubuntu 24.04 is recommended; Ubuntu 22+ and Debian 12+ also work. Debian requires a kernel-module build and takes longer to install.
 
-Recommended minimum: 1 CPU core, 1.5 GB RAM, 15 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
+Recommended minimum: 1 CPU core, 1 GB RAM, 15 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
 
 ```sh
 git clone https://github.com/bluebluesoda/vpsmgr.git
@@ -76,11 +76,13 @@ Users can define an init script in the panel. It runs as root inside the contain
 
 ## Additional Images
 
-Debian 13 is the default image. To offer AlmaLinux 9 or openSUSE Leap 16 during reinstall, build it once:
+Debian 13 is the default image. To also offer AlmaLinux 9, openSUSE Leap 16, Arch Linux, or a Debian dev image during reinstall, build them once:
 
 ```sh
 sudo bash scripts/60-rhel-image.sh          # AlmaLinux 9
 sudo bash scripts/70-opensuse-image.sh      # openSUSE Leap 16
+sudo bash scripts/80-debian-dev-image.sh    # Debian 13 dev image (full dev toolchain)
+sudo bash scripts/90-arch-image.sh          # Arch Linux (rolling — rebuilds to the latest snapshot on every run)
 ```
 
 The image builder is not run by `install.sh`, keeping the default installation small.
