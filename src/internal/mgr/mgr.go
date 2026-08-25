@@ -716,7 +716,7 @@ func (m *Manager) List() ([]*Result, error) {
 		return nil, err
 	}
 	latest, _ := m.db.LatestResourceSamples()
-	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	average, _ := m.db.AverageCPU(time.Now().Add(-time.Hour).Unix())
 	live := m.liveStatusFallback(users, latest)
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
@@ -735,7 +735,7 @@ func (m *Manager) Show(name string) (*Result, error) {
 		return nil, err
 	}
 	latest, _ := m.db.LatestResourceSamples()
-	average, _ := m.db.AverageCPU(time.Now().Add(-5 * time.Minute).Unix())
+	average, _ := m.db.AverageCPU(time.Now().Add(-time.Hour).Unix())
 	sample, hasSample := latest[u.ID]
 	live := m.liveStatusFallback([]*db.User{u}, latest)
 	avg, hasAverage := average[u.ID]
