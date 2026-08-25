@@ -394,14 +394,29 @@ func writeInitScriptJSON(w http.ResponseWriter, ok bool, errMsg string) {
 
 // handleImages returns the OS images available for reinstall. It is fetched
 // lazily when the user opens the reinstall dialog, not on every page load, so
-// an Incus image listing only happens when actually needed.
+// an Incus image listing only happens when actually needed. Default is the
+// configured image when it exists, else the first offered one, so the picker
+// always has a checked entry.
 func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 	imgs := s.mgr.Images()
+	def := s.cfg.Incus.Image
+	if len(imgs) > 0 && !containsAlias(imgs, def) {
+		def = imgs[0].Alias
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
 		Images  []mgr.ManagedImage `json:"images"`
 		Default string             `json:"default"`
-	}{imgs, s.cfg.Incus.Image})
+	}{imgs, def})
+}
+
+func containsAlias(imgs []mgr.ManagedImage, alias string) bool {
+	for _, im := range imgs {
+		if im.Alias == alias {
+			return true
+		}
+	}
+	return false
 }
 
 // handleStats returns the last 24h of per-minute resource history for the

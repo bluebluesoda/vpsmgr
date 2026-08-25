@@ -40,11 +40,23 @@ var imageDesc = map[string][2]string{
 	"vpsmgr/arch-sshd":       {"滚动发行版，持续获取最新软件", "Rolling release — always the latest packages"},
 }
 
+// managedImage builds one ManagedImage for an alias, with a friendly label and
+// (where known) a one-line description. Unknown aliases get a humanized label
+// ("vpsmgr/fedora-sshd" -> "fedora") and no description.
+func managedImage(alias string) ManagedImage {
+	label, ok := imageLabels[alias]
+	if !ok {
+		label = strings.TrimSuffix(strings.TrimPrefix(alias, "vpsmgr/"), "-sshd")
+	}
+	desc := imageDesc[alias]
+	return ManagedImage{Alias: alias, Label: label, DescZh: desc[0], DescEn: desc[1]}
+}
+
 // collectManagedImages picks the reinstallable images out of a raw alias list:
-// the default image always comes first (it is available even as a remote
-// fallback), then every other existing `vpsmgr/*-sshd` alias, deduplicated and
-// alphabetical. Unknown managed aliases get a humanized label
-// ("vpsmgr/fedora-sshd" -> "fedora").
+// every existing `vpsmgr/*-sshd` alias, deduplicated, with the configured
+// default first when it is actually present. Only locally-existing images are
+// listed — a deleted image disappears from the picker rather than being pinned
+// forever. The configured default is NOT force-added when it is missing.
 func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage {
 	seen := map[string]bool{}
 	var out []ManagedImage
@@ -53,16 +65,20 @@ func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage 
 			return
 		}
 		seen[a] = true
-		label, ok := imageLabels[a]
-		if !ok {
-			label = strings.TrimSuffix(strings.TrimPrefix(a, "vpsmgr/"), "-sshd")
-		}
-		desc := imageDesc[a]
-		out = append(out, ManagedImage{Alias: a, Label: label, DescZh: desc[0], DescEn: desc[1]})
+		out = append(out, managedImage(a))
 	}
-	add(defaultAlias)
 	sort.Strings(aliases)
+	exists := make(map[string]bool, len(aliases))
 	for _, a := range aliases {
+		exists[a] = true
+	}
+	if exists[defaultAlias] {
+		add(defaultAlias)
+	}
+	for _, a := range aliases {
+		if a == defaultAlias {
+			continue
+		}
 		if strings.HasPrefix(a, "vpsmgr/") {
 			add(a)
 		}
@@ -70,16 +86,17 @@ func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage 
 	return out
 }
 
-// Images returns the OS images offered for reinstall: the default Debian image
-// first, then every other managed prebuilt image present in Incus (e.g. Alma 9
-// built by scripts/60-rhel-image.sh). If Incus cannot be queried, only the
+// Images returns the OS images offered for reinstall: every managed prebuilt
+// image actually present in Incus (e.g. Alma 9 built by scripts/60-rhel-image.sh),
+// with the configured default first when it exists. Images deleted from Incus
+// are no longer offered. If Incus cannot be queried, only the configured
 // default is offered so reinstall still works. Each image carries its Incus
 // description as Version (the Arch rolling build records the snapshot's
 // YYYYMMDD build date there), folded into the Arch intro by decorateImageDesc.
 func (m *Manager) Images() []ManagedImage {
 	infos, err := m.lx.ImageAliasesWithDesc()
 	if err != nil {
-		infos = nil
+		return []ManagedImage{managedImage(m.cfg.Incus.Image)}
 	}
 	desc := map[string]string{}
 	aliases := make([]string, 0, len(infos))
