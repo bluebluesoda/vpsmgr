@@ -53,9 +53,9 @@ func TestCollectManagedImages(t *testing.T) {
 			},
 		},
 		{
-			name:         "default first, rocky sorted after alma, dedupe",
+			name:         "default first when present, rocky sorted after alma, dedupe",
 			defaultAlias: "vpsmgr/debian-sshd",
-			aliases:      []string{"vpsmgr/rocky-sshd", "vpsmgr/alma-sshd", "vpsmgr/alma-sshd"},
+			aliases:      []string{"vpsmgr/rocky-sshd", "vpsmgr/alma-sshd", "vpsmgr/alma-sshd", "vpsmgr/debian-sshd"},
 			want: []ManagedImage{
 				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
 					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
@@ -88,13 +88,22 @@ func TestCollectManagedImages(t *testing.T) {
 			},
 		},
 		{
-			name:         "default missing locally still offered, unknown alias humanized, no desc",
+			name:         "deleted default is dropped, unknown alias humanized, no desc",
 			defaultAlias: "vpsmgr/debian-sshd",
 			aliases:      []string{"vpsmgr/fedora-sshd"},
 			want: []ManagedImage{
-				{Alias: "vpsmgr/debian-sshd", Label: "Debian 13",
-					DescZh: "轻巧的原味 Debian 13 系统", DescEn: "Lightweight stock Debian 13"},
 				{Alias: "vpsmgr/fedora-sshd", Label: "fedora"},
+			},
+		},
+		{
+			name:         "default missing but others present keeps them sorted",
+			defaultAlias: "vpsmgr/debian-sshd",
+			aliases:      []string{"vpsmgr/alma-sshd", "vpsmgr/debian-dev-sshd"},
+			want: []ManagedImage{
+				{Alias: "vpsmgr/alma-sshd", Label: "Alma 9",
+					DescZh: "RHEL 复刻版镜像", DescEn: "RHEL-compatible rebuild"},
+				{Alias: "vpsmgr/debian-dev-sshd", Label: "Debian 13 dev",
+					DescZh: "预装 Git、nvm、Node.js 24、Python 3、Go 等开发工具", DescEn: "Preinstalled dev tools: Git, nvm, Node.js 24, Python 3, Go"},
 			},
 		},
 		{
