@@ -199,7 +199,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}内存{{else}}Mem{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}<span class="ind"></span></th>
           <th class="sortable" data-type="number">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}<span class="ind"></span></th>
-          <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}</th>
+          <th class="sortable" data-type="number">{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}<span class="ind"></span></th>
           {{if .IPv6PoolMode}}<th>IPv6</th>{{end}}
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
         </tr>
@@ -215,7 +215,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td data-sort="{{.MemUse}}">{{.MemUse}}</td>
           <td data-sort="{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}">{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
           <td data-sort="{{.DiskUsed}}">{{.DiskUsed}}</td>
-          <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
+          <td data-sort="{{.BWTotal}}">↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
           {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{.IPv6}}{{else}}<span class="down">-</span>{{end}}</td>{{end}}
           <td>
             <div class="ops">
@@ -417,9 +417,9 @@ function del(name){
   var qc = document.getElementById('quotaCpu');
   if (qc) qc.addEventListener('input', function(){ syncCpuStep(qc); });
 })();
-// Clickable column headers for Name / 1h CPU / Mem / Procs / Disk: cycle
-// ascending -> descending -> default. Only one column sorts at a time; the
-// default state restores the original render order.
+// Clickable column headers for Name / 1h CPU / Mem / Procs / Disk /
+// Bandwidth (by up+down total): cycle ascending -> descending -> default. Only
+// one column sorts at a time; the default state restores the original order.
 (function(){
   var table = document.getElementById('usersTable');
   if (!table) return;
@@ -428,12 +428,21 @@ function del(name){
   var original = Array.prototype.slice.call(tbody.rows);
   var col = null, dir = 0;
 
+  // Sortable numeric cells may carry a binary unit (humanBytes: "970 MiB",
+  // "2.5 GiB", "184 B") or be unitless ("12%", decimal GB traffic). Normalize
+  // everything to the base unit so cross-unit comparisons sort correctly.
+  var BYTE_UNITS = { b:1, kb:1e3, mb:1e6, gb:1e9, tb:1e12, pb:1e15, kib:1<<10, mib:1<<20, gib:1<<30, tib:1<<40, pib:1<<50 };
   function num(v){
     if (v === null || v === undefined || v === '' || v === '-') return -Infinity;
-    var m = String(v).match(/-?[\d.]+/);
+    var m = String(v).match(/(-?[\d.]+)\s*([KMGTPE]i?B)?/i);
     if (!m) return -Infinity;
-    var n = parseFloat(m[0]);
-    return isNaN(n) ? -Infinity : n;
+    var n = parseFloat(m[1]);
+    if (isNaN(n)) return -Infinity;
+    if (m[2]) {
+      var u = m[2].toLowerCase();
+      if (BYTE_UNITS[u] !== undefined) n *= BYTE_UNITS[u];
+    }
+    return n;
   }
   function str(v){ return String(v === null || v === undefined ? '' : v).toLowerCase(); }
 
