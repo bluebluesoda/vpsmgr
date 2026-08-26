@@ -168,20 +168,31 @@ footer a{color:var(--muted);text-decoration:underline}
 </style>
 {{if .ThemeColor}}
 <style>
-/* Operator-assigned accent color: tints the background and recolors accents
-   (headings, primary buttons, links) via the shared variables. Light and dark
-   modes stay readable — the blend is subtle in both. */
+/* Operator-assigned accent color: overrides the shared variables so the whole
+   page takes on the color — background, cards, borders and code blocks get a
+   subtle tint, headings and primary buttons recolor fully, and a colored bar
+   under the page title anchors it. Light and dark variants stay readable. */
 :root{
   --accent:{{.ThemeColor}};
   --head:{{.ThemeColor}};
   --on-accent:#fff;
-  --accent-soft:color-mix(in srgb, {{.ThemeColor}} 15%, transparent);
-  --accent-glow:color-mix(in srgb, {{.ThemeColor}} 38%, transparent);
+  --accent-soft:color-mix(in srgb, {{.ThemeColor}} 18%, transparent);
+  --accent-glow:color-mix(in srgb, {{.ThemeColor}} 45%, transparent);
+  --bg:color-mix(in srgb, {{.ThemeColor}} 13%, #f1f5f9);
+  --card:color-mix(in srgb, {{.ThemeColor}} 5%, #ffffff);
+  --border:color-mix(in srgb, {{.ThemeColor}} 24%, #e2e8f0);
+  --code-bg:color-mix(in srgb, {{.ThemeColor}} 8%, #f8fafc);
 }
-body{background:color-mix(in srgb, {{.ThemeColor}} 7%, var(--bg))}
 @media (prefers-color-scheme: dark){
-  body{background:color-mix(in srgb, {{.ThemeColor}} 10%, var(--bg))}
+  :root{
+    --bg:color-mix(in srgb, {{.ThemeColor}} 16%, #14161a);
+    --card:color-mix(in srgb, {{.ThemeColor}} 7%, #1e2126);
+    --border:color-mix(in srgb, {{.ThemeColor}} 38%, #2c3036);
+    --code-bg:color-mix(in srgb, {{.ThemeColor}} 10%, #14161a);
+  }
 }
+.top{border-bottom:3px solid {{.ThemeColor}};padding-bottom:.7rem}
+.top h1{color:{{.ThemeColor}}}
 </style>
 {{end}}
 </head>

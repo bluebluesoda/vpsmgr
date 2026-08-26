@@ -183,7 +183,7 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   cannot block the reinstall because it is backgrounded. Delivery failure only
   warns — the reinstall still succeeds.
 - **Per-user accent color**: each user can carry an accent color
-  (`users.color`, a hex string from the admin panel's **fixed 8-color palette**
+  (`users.color`, a hex string from the admin panel's **fixed 10-color palette**
   in `admin` — black/white/gray are excluded; the palette is the allowlist, so
   a free-form hex can never be stored). The entry point is deliberately low-key:
   **clicking the username** in the admin user table opens a swatch picker with a

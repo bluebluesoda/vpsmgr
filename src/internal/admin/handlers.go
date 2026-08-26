@@ -340,7 +340,9 @@ var userColorPalette = []string{
 	"#16a34a", // green
 	"#0d9488", // teal
 	"#0891b2", // cyan
+	"#3b82f6", // blue
 	"#7c3aed", // violet
+	"#c026d3", // fuchsia
 	"#db2777", // pink
 }
 

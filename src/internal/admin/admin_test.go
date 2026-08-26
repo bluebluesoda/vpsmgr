@@ -924,13 +924,18 @@ func TestAdminOverviewColorUI(t *testing.T) {
 		`class="uname"`, `onclick="pickColor('alice')"`, `onclick="pickColor('bob')"`,
 		`class="udot" style="background:#16a34a"`, `style="color:#16a34a"`,
 		`id="colorModal"`, `id="colorForm"`, `id="colorResetName"`,
-		`name="color" value="#e11d48"`, `name="color" value="#db2777"`,
+		`name="color" value="#e11d48"`, `name="color" value="#3b82f6"`,
+		`name="color" value="#c026d3"`, `name="color" value="#db2777"`,
 		`style="--ubtn:#16a34a;color:#fff"`,
 		`button.login { --ubtn: #1c1e21;`, // neutral light default
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("admin overview missing %q", want)
 		}
+	}
+	// Exactly 10 palette swatches render.
+	if n := strings.Count(html, `type="submit" name="color"`); n != 10 {
+		t.Errorf("palette swatches = %d, want 10", n)
 	}
 	// Only alice (the colored user) gets an inline --ubtn; bob falls back to
 	// the neutral .login default.
