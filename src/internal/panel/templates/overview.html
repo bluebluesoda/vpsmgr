@@ -30,9 +30,10 @@
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:1rem}
 .wrap{max-width:960px;margin:0 auto;min-height:calc(100vh - 5rem)}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem}
-.top h1{margin:0;font-size:1.25rem;font-weight:600}
+ .top h1{margin:0;font-size:1.25rem;font-weight:600}
+ .user-name{font-weight:800;letter-spacing:.01em}
 .top .actions{display:flex;gap:.45rem}
-.card{background:var(--card);border:2px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-bottom:.8rem}
+ .card{background:var(--card);border:3px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-bottom:.8rem}
 .card h2{margin:0 0 .55rem;font-size:.9rem;color:var(--head);font-weight:600}
 .grid{display:grid;grid-template-columns:1fr;gap:.8rem}
 @media (min-width:860px){.grid{grid-template-columns:1fr 1fr}}
@@ -49,7 +50,7 @@ code.copyable.copied{outline:1px solid var(--ok);outline-offset:2px;color:var(--
 .up{background:var(--ok-bg);color:var(--ok-fg)}
 .down{background:var(--err-bg);color:var(--err-fg)}
 .muted{color:var(--muted);font-size:.8rem}
-.btn{display:inline-block;padding:.35rem .75rem;border-radius:7px;border:2px solid var(--border);cursor:pointer;font-size:.82rem;background:var(--card);color:var(--text);font-family:inherit}
+ .btn{display:inline-block;padding:.35rem .75rem;border-radius:7px;border:3px solid var(--border);cursor:pointer;font-size:.82rem;background:var(--card);color:var(--text);font-family:inherit}
 .btn[hidden]{display:none}
 .btn:hover{filter:brightness(1.08)}
 .btn.pending{background:var(--err-bg);color:var(--err-fg);border-color:var(--danger);cursor:wait}
@@ -62,8 +63,8 @@ code.copyable.copied{outline:1px solid var(--ok);outline-offset:2px;color:var(--
 .btnrow{display:flex;flex-wrap:wrap;gap:.45rem;margin-bottom:.55rem}
 .btnrow:last-child{margin-bottom:0}
 form.inline{display:inline}
-input[type=text],input[type=password]{padding:.32rem .5rem;border-radius:7px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:.85rem}
-textarea{width:100%;box-sizing:border-box;padding:.4rem .55rem;border-radius:7px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.45;resize:vertical;margin-bottom:.55rem}
+ input[type=text],input[type=password]{padding:.32rem .5rem;border-radius:7px;border:3px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:.85rem}
+ textarea{width:100%;box-sizing:border-box;padding:.4rem .55rem;border-radius:7px;border:3px solid var(--border);background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.45;resize:vertical;margin-bottom:.55rem}
 input.bad{border-color:var(--danger);outline:1px solid var(--danger)}
 .frow{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem}
 .frow label{flex:0 0 4.2rem}
@@ -87,7 +88,7 @@ a{color:var(--accent);text-decoration:none}
 .help.open .tip{display:block}
 .bandwidth-line{margin:.15rem 0 .6rem;font-size:.8rem}
 .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin:.15rem 0 .7rem}
-.qitem{background:var(--bg);border:2px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
+ .qitem{background:var(--bg);border:3px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
 .qlabel{display:block;color:var(--muted);font-size:.72rem;letter-spacing:.02em;margin-bottom:.2rem}
 .qval{display:block;font-size:.98rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .bandwidth-quota{margin:.15rem 0 .7rem}
@@ -108,7 +109,7 @@ footer a{color:var(--muted);text-decoration:underline}
 .toast.hide{opacity:0}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:99;padding:1rem}
 .overlay.show{display:flex}
-.modal{background:var(--card);border:2px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
+ .modal{background:var(--card);border:3px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
 .imglist{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:.6rem;margin:.45rem 0 .9rem}
 .imgopt{position:relative;display:flex;flex-direction:column;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:12px;padding:.85rem .6rem .7rem;cursor:pointer;text-align:center;transition:border-color .15s,box-shadow .15s,background .15s,transform .12s}
 .imgopt:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));box-shadow:0 2px 10px var(--accent-glow)}
@@ -216,7 +217,7 @@ footer a{color:var(--muted);text-decoration:underline}
 {{end}}
 
 <div class="card">
-<h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
+<h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span class="user-name"> · {{.User.Name}}</span></h2>
 <table>
 {{if .V4Forward}}<tr><th>IPV4</th><td><code class="copyable">{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code class="copyable" data-copy="ssh -p {{.SSHPort}} root@{{.PublicIP}}" title="ssh -p {{.SSHPort}} root@{{.PublicIP}}">{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code class="copyable" data-copy="ssh -p 22 root@{{.IPv6}}" title="ssh -p 22 root@{{.IPv6}}">22</code></span>{{end}}</td></tr>

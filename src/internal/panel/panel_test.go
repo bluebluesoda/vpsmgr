@@ -372,6 +372,22 @@ func TestOverviewThemeColor(t *testing.T) {
 	}
 }
 
+// TestOverviewUserNameEmphasis keeps the current user's name in the overview
+// heading visibly heavier than the surrounding heading text.
+func TestOverviewUserNameEmphasis(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "rapmq"},
+		Prefix: "/" + testSecret,
+	})
+	if !strings.Contains(html, `<span class="user-name"> · rapmq</span>`) {
+		t.Error("overview heading should mark the username with user-name class")
+	}
+	if !strings.Contains(html, ".user-name{font-weight:800") {
+		t.Error("overview username should use a visibly heavier font weight")
+	}
+}
+
 // renderToString executes a named template into a string for assertions.
 func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
 	t.Helper()
