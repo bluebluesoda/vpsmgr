@@ -46,7 +46,54 @@ func TestNextFreeIdxRandom(t *testing.T) {
 	}
 }
 
-// TestNextFreeIdxExhausted verifies the error path when every index is taken.
+// TestUserColorRoundTrip exercises the per-user accent color: it defaults to
+// empty, persists across a set, and an empty value resets it. Also covers the
+// ListUsers scan path which reads the same column.
+func TestUserColorRoundTrip(t *testing.T) {
+	d, err := Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser("dave", "h", "10.115.0.5", 4, 30004, 10300, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Color != "" {
+		t.Errorf("new user color = %q, want empty default", u.Color)
+	}
+	if err := d.UpdateUserColor(u.ID, "#e11d48"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetUserByID(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Color != "#e11d48" {
+		t.Errorf("color after set = %q, want #e11d48", got.Color)
+	}
+	byName, err := d.GetUserByName("dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byName.Color != "#e11d48" {
+		t.Errorf("color via name = %q, want #e11d48", byName.Color)
+	}
+	if err := d.UpdateUserColor(u.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = d.GetUserByID(u.ID)
+	if got.Color != "" {
+		t.Errorf("color after reset = %q, want empty", got.Color)
+	}
+	list, err := d.ListUsers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Color != "" {
+		t.Errorf("ListUsers color = %+v, want one user with empty color", list)
+	}
+}
 func TestNextFreeIdxExhausted(t *testing.T) {
 	d, err := Open(t.TempDir() + "/t.db")
 	if err != nil {

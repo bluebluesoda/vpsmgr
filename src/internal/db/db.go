@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 11
+const schemaVersion = 12
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -227,6 +227,13 @@ var migrations = []struct {
 	// normal (0).
 	{11, []string{
 		`ALTER TABLE sessions ADD COLUMN impersonated INTEGER NOT NULL DEFAULT 0`,
+	}},
+	// v12: per-user accent color assigned by the operator (empty = default).
+	// Stored as a hex string from the admin panel's fixed palette; the user
+	// panel tints its background/accents with it so an impersonating operator
+	// can tell users apart at a glance. Only the admin can set it.
+	{12, []string{
+		`ALTER TABLE users ADD COLUMN color TEXT NOT NULL DEFAULT ''`,
 	}},
 }
 

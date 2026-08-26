@@ -72,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/user-add", s.requireAuth(s.requirePost(s.handleUserAdd)))
 	mux.HandleFunc("/user-del", s.requireAuth(s.requirePost(s.handleUserDel)))
 	mux.HandleFunc("/user-quota", s.requireAuth(s.requirePost(s.handleUserQuota)))
+	mux.HandleFunc("/user-color", s.requireAuth(s.requirePost(s.handleUserColor)))
 	mux.HandleFunc("/user-bandwidth-reset", s.requireAuth(s.requirePost(s.handleUserBandwidthReset)))
 	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.handlePower)))
 	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
