@@ -350,6 +350,9 @@ func TestOverviewThemeColor(t *testing.T) {
 	if !strings.Contains(plain, "--accent:#2563eb") {
 		t.Error("plain overview should keep the default accent")
 	}
+	if !strings.Contains(plain, "--bg:#e6ebf1") {
+		t.Error("plain overview light background should be the darker shade")
+	}
 
 	themed := srv.renderToString(t, "overview.html", pageData{
 		User:       &db.User{Name: "alice"},
@@ -358,7 +361,7 @@ func TestOverviewThemeColor(t *testing.T) {
 	})
 	for _, want := range []string{
 		"--accent:#16a34a", "--head:#16a34a",
-		"color-mix(in srgb, #16a34a 13%, #f1f5f9)",
+		"color-mix(in srgb, #16a34a 13%, #e6ebf1)",
 		"color-mix(in srgb, #16a34a 16%, #14161a)",
 		"color-mix(in srgb, #16a34a 5%, #ffffff)",
 		"border-bottom:3px solid #16a34a",

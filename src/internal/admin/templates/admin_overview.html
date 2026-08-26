@@ -62,11 +62,12 @@ button.busy::before { content: ""; position: absolute; left: 8px; top: 50%; widt
 .udot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
 button.uname { background: none; border: none; padding: 0; font-size: inherit; font-family: inherit; font-weight: 700; color: inherit; cursor: pointer; }
 button.uname:hover { text-decoration: underline; }
-button.login { --ubtn: #1c1e21; background: var(--ubtn); border-color: var(--ubtn); color: #fff; }
-button.login:hover { background: var(--ubtn); border-color: var(--ubtn); filter: brightness(1.15); }
+/* neutral primary action: black in light mode, white in dark mode */
+button.neutral { --ubtn: #1c1e21; background: var(--ubtn); border-color: var(--ubtn); color: #fff; }
+button.neutral:hover { background: var(--ubtn); border-color: var(--ubtn); filter: brightness(1.15); }
 @media (prefers-color-scheme: dark) {
-  button.login { --ubtn: #e6e8eb; color: #14161a; }
-  button.login:hover { color: #14161a; }
+  button.neutral { --ubtn: #e6e8eb; color: #14161a; }
+  button.neutral:hover { color: #14161a; }
 }
 .swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 10px 0 14px; }
 button.swatch { width: 100%; aspect-ratio: 1; border: 2px solid transparent; border-radius: 10px; cursor: pointer; padding: 0; }
@@ -196,7 +197,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         {{if .PoolTotal}}<small style="color:#6b7280">{{if eq .Lang "zh"}}池 {{.PoolUsed}}/{{.PoolTotal}} 已用{{else}}{{.PoolUsed}}/{{.PoolTotal}} used{{end}}</small>{{end}}
       </div>
       {{end}}
-      <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
+      <button type="submit" class="primary neutral" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
 
@@ -241,7 +242,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
               <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
-              <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary login"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
+              <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary neutral"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
             </div>
@@ -260,7 +261,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid" id="adminPassForm">
       <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 14 位）{{else}}New password (14+ chars){{end}}</label><input name="new_password" type="password" minlength="14" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="14" required></div>
-      <button type="submit" class="primary" id="adminPassBtn">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
+      <button type="submit" class="primary neutral" id="adminPassBtn">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
     </form>
   </div>
 </main>
