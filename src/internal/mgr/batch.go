@@ -139,6 +139,7 @@ type UserStatus struct {
 	DiskUsed string // actual disk usage, e.g. "184 MiB" or "-"
 	UpGB     string
 	DownGB   string
+	BWTotal  string // up+down this month, GB ("0.0" when idle) — for sorting
 	IPv6     string
 	Procs    int64 // latest sampled process count (0 when stopped / unavailable)
 }
@@ -169,7 +170,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 		transfer := bandwidth[u.ID]
 		up, down := transfer.Upload, transfer.Download
 		sample, hasSample := latest[u.ID]
-		rs := &UserStatus{User: u, State: resolvedState(sample, live[u.Name]), UpGB: FormatGB(up), DownGB: FormatGB(down)}
+		rs := &UserStatus{User: u, State: resolvedState(sample, live[u.Name]), UpGB: FormatGB(up), DownGB: FormatGB(down), BWTotal: FormatGB(up + down)}
 		if hasSample {
 			if sample.State == resourceRunning {
 				rs.Procs = sample.Processes

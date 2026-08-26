@@ -90,6 +90,7 @@ type userView struct {
 	DiskUsed   string
 	UpGB       string
 	DownGB     string
+	BWTotal    string // up+down this month, GB — used for table sorting
 	IPv6       string
 	Procs      int64  // live process count (0 when stopped)
 	ProcsLimit string // per-container pids.max cap, e.g. "4096"
@@ -165,6 +166,7 @@ func (s *Server) loadUsers(d *pageData) {
 			DiskUsed:   st.DiskUsed,
 			UpGB:       st.UpGB,
 			DownGB:     st.DownGB,
+			BWTotal:    st.BWTotal,
 			IPv6:       st.IPv6,
 			Procs:      st.Procs,
 			ProcsLimit: lx.DefaultProcessesLimit,
