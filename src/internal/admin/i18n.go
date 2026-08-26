@@ -98,6 +98,9 @@ func tr(l, key string, args ...any) string {
 		"blocked_skipped_lines": {"第 %[1]v 行不是有效域名，已跳过；其余已保存", "line(s) %[1]v are not valid domains and were skipped; the rest were saved"},
 		"pool_added":            {"已添加 %[1]v 个 IPv6 地址到池", "added %[1]v IPv6 address(es) to the pool"},
 		"pool_removed":          {"已从池中移除 %[1]v", "removed %[1]v from the pool"},
+		"color_updated":         {"已设置 %[1]v 的专属颜色", "color set for %[1]v"},
+		"color_reset":           {"已清除 %[1]v 的专属颜色", "color cleared for %[1]v"},
+		"err_invalid_color":     {"颜色不在可选范围内", "color is not in the allowed palette"},
 	}
 	pair, ok := m[key]
 	if !ok {

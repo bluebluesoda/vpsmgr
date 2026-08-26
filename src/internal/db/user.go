@@ -31,6 +31,10 @@ type User struct {
 	// IPv6Address is the pool-mode IPv6 /128 assigned to this user ("" when
 	// none, e.g. prefix mode or a V4-only container). Released on delete.
 	IPv6Address string
+	// Color is the accent color the operator assigned to this user ("" =
+	// default). A hex string from the admin panel's fixed palette; the user
+	// panel tints its theme with it.
+	Color string
 }
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
@@ -156,7 +160,7 @@ func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	var ipv6 sql.NullString
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &u.Color)
 	if err != nil {
 		return nil, err
 	}
@@ -166,19 +170,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -189,7 +193,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 		u := &User{}
 		var ipv6 sql.NullString
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &u.Color); err != nil {
 			return nil, err
 		}
 		u.IPv6Address = ipv6.String
@@ -229,6 +233,12 @@ func (d *DB) UpdateBandwidthQuota(id int64, gb int) error {
 // UpdateUserStatus sets a user's persistent lifecycle state.
 func (d *DB) UpdateUserStatus(id int64, status string) error {
 	_, err := d.sql.Exec(`UPDATE users SET status=? WHERE id=?`, status, id)
+	return err
+}
+
+// UpdateUserColor sets a user's accent color ("" clears it back to default).
+func (d *DB) UpdateUserColor(id int64, color string) error {
+	_, err := d.sql.Exec(`UPDATE users SET color=? WHERE id=?`, color, id)
 	return err
 }
 

@@ -10,6 +10,7 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 - Admin panel: users, quotas, domains, IPv6 pool, SSH public keys, and audit logs; supports logging in as a user
 - User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16/Arch Linux reinstall, domain and SSH key management, encrypted sticky notes (exportable)
+- The admin can assign each user a dedicated accent color (click the username in the user list): that user's "log in" button and user-panel background use it, so impersonating operators can tell users apart at a glance
 - CPU, memory, and disk oversubscription; quota changes apply live without a container restart
 - Strict container network isolation; prefix mode assigns each container a dedicated `/112` IPv6 block that it can subdivide
 - Traffic is counted in both directions; over-quota containers are rate-limited to 1 Mbps both ways
@@ -73,6 +74,8 @@ Bandwidth quotas are monthly GiB totals for upload and download combined. Contai
 Container swap is controlled by `incus.swap_ratio` (default 0.5 — a 1 GiB memory container may use up to 512 MiB of host swap). Setting the value applies it to all existing containers immediately (no restart); after upgrading to a version with swap support, run `vps install` to apply the swap allowance to containers created before it.
 
 Users can define an init script in the panel. It runs as root inside the container after reinstall, with output written to `/var/log/vpsmgr-init.log`.
+
+In the admin user list, **clicking a username** (a deliberately low-key entry point) opens a picker where the operator can assign that user a dedicated accent color, or clear it back to the default. The color is applied to that user's "log in" button and tints their user-panel background (adapted for both light and dark mode). Users cannot change it themselves.
 
 ## Additional Images
 

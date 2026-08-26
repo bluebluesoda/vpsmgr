@@ -57,6 +57,21 @@ button:disabled { opacity: .5; cursor: default; }
 button.busy { position: relative; padding-left: 26px; }
 button.busy::before { content: ""; position: absolute; left: 8px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border: 2px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* per-user accent color: bold clickable username + themed login button */
+.urow { display: inline-flex; align-items: center; gap: 6px; }
+.udot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+button.uname { background: none; border: none; padding: 0; font-size: inherit; font-family: inherit; font-weight: 700; color: inherit; cursor: pointer; }
+button.uname:hover { text-decoration: underline; }
+button.login { --ubtn: #1c1e21; background: var(--ubtn); border-color: var(--ubtn); color: #fff; }
+button.login:hover { background: var(--ubtn); border-color: var(--ubtn); filter: brightness(1.15); }
+@media (prefers-color-scheme: dark) {
+  button.login { --ubtn: #e6e8eb; color: #14161a; }
+  button.login:hover { color: #14161a; }
+}
+.swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0 14px; }
+button.swatch { width: 100%; aspect-ratio: 1; border: 2px solid transparent; border-radius: 10px; cursor: pointer; padding: 0; }
+button.swatch:hover { border-color: #9ca3af; transform: scale(1.06); }
+@media (prefers-color-scheme: dark) { button.swatch:hover { border-color: #6b7280; } }
 form.inline { display: inline; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
@@ -207,7 +222,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <tbody>
         {{range .Users}}
         <tr>
-          <td data-sort="{{.Name}}">{{.Name}}</td>
+          <td data-sort="{{.Name}}"><span class="urow">{{if .Color}}<span class="udot" style="background:{{.Color}}"></span>{{end}}<button type="button" class="uname"{{if .Color}} style="color:{{.Color}}"{{end}} onclick="pickColor('{{.Name}}')">{{.Name}}</button></span></td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}{{if and (ne .Status "ready") (ne .Status "")}} <span class="pill down">{{.Status}}</span>{{end}}</td>
           <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small></td>
@@ -226,7 +241,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
               <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
-              <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary" title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
+              <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary login"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
             </div>
@@ -290,6 +305,28 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   </div>
 </div>
 
+<!-- per-user color modal (hidden feature: click the username to open it) -->
+<div class="overlay" id="colorModal">
+  <div class="modal" style="width:min(360px,92vw)">
+    <h3>{{if eq .Lang "zh"}}选择用户颜色{{else}}Pick a color{{end}}: <span id="colorName"></span></h3>
+    <div style="color:#6b7280;font-size:12px;margin-bottom:4px">{{if eq .Lang "zh"}}颜色会应用到该用户的「登录面板」按钮和其用户面板的背景，便于区分不同用户。{{else}}The color themes this user's panel and its login button, so you can tell users apart.{{end}}</div>
+    <form action="{{.Prefix}}/user-color" method="post" id="colorForm">
+      <input type="hidden" name="name" id="colorNameHidden">
+      <div class="swatches">
+        {{range .Colors}}<button type="submit" name="color" value="{{.}}" class="swatch" style="background:{{.}}" title="{{.}}"></button>{{end}}
+      </div>
+    </form>
+    <div class="foot">
+      <form action="{{.Prefix}}/user-color" method="post" class="inline">
+        <input type="hidden" name="name" id="colorResetName">
+        <input type="hidden" name="color" value="">
+        <button class="warn" type="submit">{{if eq .Lang "zh"}}清除颜色{{else}}Clear color{{end}}</button>
+      </form>
+      <button onclick="closeColor()">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+    </div>
+  </div>
+</div>
+
 <!-- ssh keys modal -->
 <div class="overlay" id="keysModal">
   <div class="modal" style="width:min(600px,94vw)">
@@ -347,6 +384,15 @@ function quota(name, cpu, mem, disk, bandwidth){
   document.getElementById('quotaModal').classList.add('open');
 }
 function closeQuota(){ document.getElementById('quotaModal').classList.remove('open'); }
+// Per-user color picker: opened by clicking the (bold) username. The modal
+// posts straight to /user-color — one click on a swatch saves and reloads.
+function pickColor(name){
+  document.getElementById('colorName').textContent = name;
+  document.getElementById('colorNameHidden').value = name;
+  document.getElementById('colorResetName').value = name;
+  document.getElementById('colorModal').classList.add('open');
+}
+function closeColor(){ document.getElementById('colorModal').classList.remove('open'); }
 // CPU stepper: 0.1-core steps below one core, whole-core steps from 1 up.
 // From 1 down goes to 0.9; from 0.9 up goes to 1. Clamped at the 0.1 minimum.
 function stepCpu(id, dir){

@@ -36,6 +36,9 @@ type pageData struct {
 	CapacityPct int
 	V4Forward   bool
 	Lang        string
+	// Colors is the fixed palette of accent colors an admin may assign to a
+	// user (see userColorPalette). Empty when never rendered.
+	Colors []string
 	// IPv6 pool mode: the free addresses offered in the create-user dropdown
 	// (empty = not pool mode / pool exhausted). PoolUsed/PoolTotal are the
 	// pool fill for display.
@@ -73,6 +76,9 @@ type hostView struct {
 // userView is one row of the admin user table.
 type userView struct {
 	Name       string
+	// Color is the operator-assigned accent color ("" = default). It colors
+	// the bold username and the "login panel" button for quick user spotting.
+	Color      string
 	State      string
 	// Status is the persistent lifecycle state (ready/creating/reinstalling/
 	// failed). Non-ready states are shown to the operator so a crashed
@@ -103,6 +109,7 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		Msg:       msg,
 		Err:       errMsg,
 		V4Forward: s.mgr.V4ForwardLive(),
+		Colors:    append([]string{}, userColorPalette...),
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded
@@ -152,6 +159,7 @@ func (s *Server) loadUsers(d *pageData) {
 		u := st.User
 		vs = append(vs, userView{
 			Name:       u.Name,
+			Color:      u.Color,
 			State:      st.State,
 			Status:     u.Status,
 			Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
@@ -320,6 +328,33 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 
 // handleUserAdd creates a user with the CLI's Add logic and shows the full
 // login credentials (panel address, username, password) once in a modal.
+// userColorPalette is the fixed set of accent colors an admin can assign to a
+// user. Black/white/gray are excluded on purpose (too faint against the
+// panel's neutral surfaces); these mid-tone hues stay readable as button
+// backgrounds in both light and dark mode. The stored value is the hex string
+// itself, and this list is the allowlist — anything else is rejected.
+var userColorPalette = []string{
+	"#e11d48", // red
+	"#ea580c", // orange
+	"#d97706", // amber
+	"#16a34a", // green
+	"#0d9488", // teal
+	"#0891b2", // cyan
+	"#7c3aed", // violet
+	"#db2777", // pink
+}
+
+// validUserColor reports whether color is a member of the fixed palette
+// ("" is reserved for "reset to default" and handled by the caller).
+func validUserColor(color string) bool {
+	for _, c := range userColorPalette {
+		if c == color {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -433,6 +468,39 @@ func (s *Server) handleUserBandwidthReset(w http.ResponseWriter, r *http.Request
 	}
 	_ = s.db.AddAuditLog("000+"+name, "bandwidth.reset")
 	s.redirect(w, r, s.p(""), s.t(r, "bandwidth_reset", name))
+}
+
+// handleUserColor sets or clears a user's accent color. Empty color = reset
+// to default; a non-empty color must come from the fixed palette (allowlist,
+// never a free-form value). It is triggered from the username in the user
+// table — a deliberately low-key entry point, documented rather than surfaced
+// as its own button.
+func (s *Server) handleUserColor(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	color := strings.TrimSpace(r.FormValue("color"))
+	if color != "" && !validUserColor(color) {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_color"))
+		return
+	}
+	u, err := s.db.GetUserByName(name)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: user not found")
+		return
+	}
+	if err := s.db.UpdateUserColor(u.ID, color); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000+"+name, "color.update")
+	if color == "" {
+		s.redirect(w, r, s.p(""), s.t(r, "color_reset", name))
+		return
+	}
+	s.redirect(w, r, s.p(""), s.t(r, "color_updated", name))
 }
 
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {

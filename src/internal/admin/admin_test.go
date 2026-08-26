@@ -842,6 +842,103 @@ func TestAdminOverviewLoginButtons(t *testing.T) {
 	}
 }
 
+// TestUserColorSet exercises the /user-color endpoint: a palette color
+// persists, an out-of-palette value is rejected without changing the stored
+// value, and an empty value resets the user to default. The event is audited
+// "000+<user>".
+func TestUserColorSet(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// Valid palette color persists.
+	rr := doReq(t, h, http.MethodPost, prefix+"/user-color",
+		url.Values{"name": {"alice"}, "color": {"#16a34a"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("user-color = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+	u, err := d.GetUserByName("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Color != "#16a34a" {
+		t.Errorf("color = %q, want #16a34a", u.Color)
+	}
+
+	// Out-of-palette color is rejected and changes nothing.
+	rr = doReq(t, h, http.MethodPost, prefix+"/user-color",
+		url.Values{"name": {"alice"}, "color": {"#000000"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("user-color invalid = %d, want 302", rr.Code)
+	}
+	u, _ = d.GetUserByName("alice")
+	if u.Color != "#16a34a" {
+		t.Errorf("invalid color changed stored value: %q", u.Color)
+	}
+
+	// Empty color resets to default.
+	rr = doReq(t, h, http.MethodPost, prefix+"/user-color",
+		url.Values{"name": {"alice"}, "color": {""}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("user-color reset = %d, want 302", rr.Code)
+	}
+	u, _ = d.GetUserByName("alice")
+	if u.Color != "" {
+		t.Errorf("color after reset = %q, want empty", u.Color)
+	}
+
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "000+alice" && r.Action == "color.update" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want a 000+alice color.update row", rows)
+	}
+}
+
+// TestAdminOverviewColorUI checks the per-user color UI in the overview:
+// usernames render as bold clickable buttons (with a color dot + colored text
+// when set), the color modal and full palette are present, and only a colored
+// user's login button carries an inline theme color (the rest use the neutral
+// default from the .login CSS rule).
+func TestAdminOverviewColorUI(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "admin_overview.html", pageData{
+		Prefix: "/" + testAdminSecret,
+		Lang:   langZh,
+		Colors: userColorPalette,
+		Users: []userView{
+			{Name: "alice", State: "Running", Status: "ready", SSHPort: "30001", Color: "#16a34a"},
+			{Name: "bob", State: "Running", Status: "ready", SSHPort: "30002"},
+		},
+	})
+	for _, want := range []string{
+		`class="uname"`, `onclick="pickColor('alice')"`, `onclick="pickColor('bob')"`,
+		`class="udot" style="background:#16a34a"`, `style="color:#16a34a"`,
+		`id="colorModal"`, `id="colorForm"`, `id="colorResetName"`,
+		`name="color" value="#e11d48"`, `name="color" value="#db2777"`,
+		`style="--ubtn:#16a34a;color:#fff"`,
+		`button.login { --ubtn: #1c1e21;`, // neutral light default
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("admin overview missing %q", want)
+		}
+	}
+	// Only alice (the colored user) gets an inline --ubtn; bob falls back to
+	// the neutral .login default.
+	if n := strings.Count(html, `style="--ubtn:`); n != 1 {
+		t.Errorf("inline --ubtn styles = %d, want exactly 1 (the colored user)", n)
+	}
+}
+
 // renderToString executes a named admin template into a string for assertions.
 func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
 	t.Helper()

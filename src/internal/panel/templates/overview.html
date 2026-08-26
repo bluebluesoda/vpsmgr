@@ -166,6 +166,24 @@ footer a{color:var(--muted);text-decoration:underline}
 .spinner{width:2rem;height:2rem;border:3px solid var(--border);border-top-color:var(--danger);border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
+{{if .ThemeColor}}
+<style>
+/* Operator-assigned accent color: tints the background and recolors accents
+   (headings, primary buttons, links) via the shared variables. Light and dark
+   modes stay readable — the blend is subtle in both. */
+:root{
+  --accent:{{.ThemeColor}};
+  --head:{{.ThemeColor}};
+  --on-accent:#fff;
+  --accent-soft:color-mix(in srgb, {{.ThemeColor}} 15%, transparent);
+  --accent-glow:color-mix(in srgb, {{.ThemeColor}} 38%, transparent);
+}
+body{background:color-mix(in srgb, {{.ThemeColor}} 7%, var(--bg))}
+@media (prefers-color-scheme: dark){
+  body{background:color-mix(in srgb, {{.ThemeColor}} 10%, var(--bg))}
+}
+</style>
+{{end}}
 </head>
 <body>
 <div class="wrap">

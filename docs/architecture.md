@@ -182,6 +182,20 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `/var/log/vpsmgr-init.log` there. Shebangs are honored; a hanging script
   cannot block the reinstall because it is backgrounded. Delivery failure only
   warns — the reinstall still succeeds.
+- **Per-user accent color**: each user can carry an accent color
+  (`users.color`, a hex string from the admin panel's **fixed 8-color palette**
+  in `admin` — black/white/gray are excluded; the palette is the allowlist, so
+  a free-form hex can never be stored). The entry point is deliberately low-key:
+  **clicking the username** in the admin user table opens a swatch picker with a
+  "clear" action (reset to `''`); there is no dedicated row button, so the
+  already-crowded table stays uncluttered. The color feeds two places: the
+  user's **「登录面板」/Login** button in the admin table (default is a neutral
+  black-in-light / white-in-dark, themed when a color is set) and the **user
+  panel**, which injects it as a CSS-variable override — `--accent`/`--head`
+  recolor headings, primary buttons and links, and the page background gets a
+  soft `color-mix()` tint that stays readable in both light and dark mode. Only
+  the admin can set it; users cannot. Setting/clearing is audited as
+  `color.update` under `000+<user>`.
 
 ## Storage
 

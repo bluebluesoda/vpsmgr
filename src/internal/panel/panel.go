@@ -164,6 +164,10 @@ type pageData struct {
 	Impersonated       bool        // operator "log in as user": show a banner
 	AdminPrefix        string      // admin panel path, for the banner's return link
 	MaxNotesPlaintext  int         // sticky-notes plaintext byte cap (client-side check)
+	// ThemeColor is the accent color the operator assigned to this user ("" =
+	// default). The overview tints its background and accents with it so an
+	// impersonating admin can tell users apart. Users cannot set it themselves.
+	ThemeColor string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -295,6 +299,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	d := pageData{
 		Title:      "VPS Manager",
 		User:       u,
+		ThemeColor: u.Color,
 		PublicIP:   s.cfg.DisplayIP(),
 		Prefix:     s.prefix(),
 		SSHPort:    u.SSHPort,

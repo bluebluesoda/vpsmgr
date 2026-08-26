@@ -332,6 +332,41 @@ func TestOverviewShowsBandwidthQuota(t *testing.T) {
 	}
 }
 
+// TestOverviewThemeColor verifies the operator-assigned accent color is
+// injected as a CSS variable override block only when set: with a theme color
+// the overview carries the tinted background and recolored accents, without it
+// the default (untouched) styles render.
+func TestOverviewThemeColor(t *testing.T) {
+	srv, _ := newTestServer(t)
+	plain := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+	})
+	for _, absent := range []string{"--accent:#16a34a", "var(--ubtn)", "#16a34a 7%"} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("plain overview should not contain %q", absent)
+		}
+	}
+	if !strings.Contains(plain, "--accent:#2563eb") {
+		t.Error("plain overview should keep the default accent")
+	}
+
+	themed := srv.renderToString(t, "overview.html", pageData{
+		User:       &db.User{Name: "alice"},
+		ThemeColor: "#16a34a",
+		Prefix:     "/" + testSecret,
+	})
+	for _, want := range []string{
+		"--accent:#16a34a", "--head:#16a34a",
+		"color-mix(in srgb, #16a34a 7%, var(--bg))",
+		"color-mix(in srgb, #16a34a 10%, var(--bg))",
+	} {
+		if !strings.Contains(themed, want) {
+			t.Errorf("themed overview missing %q", want)
+		}
+	}
+}
+
 // renderToString executes a named template into a string for assertions.
 func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
 	t.Helper()
