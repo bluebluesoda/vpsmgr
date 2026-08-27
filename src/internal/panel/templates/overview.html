@@ -203,7 +203,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <h1>VPS Manager</h1>
 <div class="actions">
 {{if eq .Lang "zh"}}<a class="btn" href="{{.Prefix}}/?lang=en">English</a>{{else}}<a class="btn" href="{{.Prefix}}/?lang=zh">中文</a>{{end}}
-<button class="btn" id="pwBtn">{{if eq .Lang "zh"}}修改密码{{else}}Change password{{end}}</button>
+<button class="btn" id="pwBtn">{{if eq .Lang "zh"}}改密{{else}}Change password{{end}}</button>
 <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn" type="submit">{{if eq .Lang "zh"}}退出{{else}}Log out{{end}}</button></form>
 </div>
 </div>
@@ -354,7 +354,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="npwc" name="confirm_password" type="password" required></div>
 <div class="actions">
 <button class="btn" type="button" id="pwClose">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
-<button class="btn accent" type="submit">{{if eq .Lang "zh"}}修改密码{{else}}Update password{{end}}</button>
+<button class="btn accent" type="submit">{{if eq .Lang "zh"}}改密{{else}}Update password{{end}}</button>
 </div>
 </form>
 </div>
