@@ -21,6 +21,8 @@
 
 推荐使用 Ubuntu 24.04。Ubuntu 22+ / Debian 12+ 均可使用；Debian 需要编译内核模块，安装时间较长。
 
+除非你明确检查过现有服务与网络配置，否则请把安装器视为“全新、专用主机”安装器，不要直接在正在运行其他业务的自用主机上执行。安装器会安装并配置 Incus、ZFS（默认）、nftables、Traefik、systemd 服务和容器网桥；启用 v4 入站转发时还要求 `80/443`、`10000-29999`、`30000-31999` 端口可用，并可能停用冲突的 UFW 配置。安装器不会卸载你的业务程序，但端口、网桥和防火墙策略可能与已有服务冲突。
+
 最低建议：1 核、1 GB 内存、15 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
 
 **从预编译安装**
@@ -37,6 +39,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/hea
 git clone --depth 1 https://github.com/bluebluesoda/vpsmgr.git && cd vpsmgr
 sudo ./install.sh --local-build 
 ```
+
+如果这台主机已有其他公网服务，且你只需要 IPv6 入站、不需要 v4 SSH/端口转发，可以使用：
+
+```sh
+sudo ./install.sh --disable-v4forward
+```
+
+该参数会在安装开始时要求确认；确认后写入 `net.v4_forward=false`，跳过 vpsmgr 保留端口检查，只随机选择一个面板入口端口。Traefik 仍会安装但不会启动。以后可用 `vps config set net.v4_forward true` 恢复 IPv4 入站转发。
 
 ### IPv6
 

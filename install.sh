@@ -4,19 +4,29 @@
 #   ./install.sh                  # default: download latest prebuilt release binary (fallback: local build)
 #   ./install.sh --local-build    # force local Go compilation of the panel binary
 #   ./install.sh --update         # force re-download of the prebuilt release binary over an existing one
+#   ./install.sh --disable-v4forward  # install IPv6-only inbound policy; skip reserved-port checks
 set -euo pipefail
 
 cd "$(dirname "$0")"
 ROOT="$PWD"
 
 BUILD_MODE=release
+DISABLE_V4FORWARD=0
 for arg in "$@"; do
   case "$arg" in
     --local-build) BUILD_MODE=local ;;
     --update)      BUILD_MODE=update ;;
+    --disable-v4forward) DISABLE_V4FORWARD=1 ;;
   esac
 done
 export VPSMGR_BUILD_MODE="$BUILD_MODE"
+if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
+  # This explicit installer choice overrides an adopted config and any
+  # VPSMGR_V4_FORWARD value inherited from the caller.  00-check.sh uses the
+  # separate marker to skip checks for ports that vpsmgr will not expose.
+  export VPSMGR_V4_FORWARD=0
+  export VPSMGR_DISABLE_V4FORWARD=1
+fi
 
 # Storage backend: zfs (default) or dir. dir has no quotas/snapshots/clones —
 # only meant for throwaway test boxes. Never fall back automatically.
@@ -29,6 +39,24 @@ esac
 if [[ $EUID -ne 0 ]]; then
   echo "error: must run as root (sudo ./install.sh)" >&2
   exit 1
+fi
+
+if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
+  echo
+  echo "!! --disable-v4forward: install with IPv4 inbound forwarding disabled !!"
+  echo "   Containers will have no IPv4 SSH/port DNAT; Traefik will be installed but stopped."
+  echo "   Reserved vpsmgr port checks will be skipped. You can re-enable later with:"
+  echo "   vps config set net.v4_forward true"
+  if [[ ! -t 0 ]]; then
+    echo "error: --disable-v4forward requires an interactive confirmation" >&2
+    exit 1
+  fi
+  read -r -p "Continue with IPv4 inbound disabled? [Y/n] " V4_CONFIRM
+  case "$V4_CONFIRM" in
+    ''|y|Y|yes|YES) ;;
+    n|N|no|NO) echo "[install] aborted by user"; exit 1 ;;
+    *) echo "error: please answer Y or n" >&2; exit 1 ;;
+  esac
 fi
 
 # Local build: make it obvious WHICH branch will be compiled, and give the user

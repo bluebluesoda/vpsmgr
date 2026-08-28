@@ -10,6 +10,7 @@
 # Supported args (passed straight through to install.sh):
 #   --update        re-download the latest prebuilt release binary over an existing one
 #   --local-build   force local Go compilation of the panel binary
+#   --disable-v4forward  install with IPv4 inbound forwarding disabled
 # Env:
 #   VPSMGR_STORAGE=zfs|dir   storage backend (default zfs)
 #   VPSMGR_BRANCH=<branch>   branch/tag to fetch (default main)
@@ -32,7 +33,7 @@ fi
 ARGS=()
 for a in "$@"; do
   case "$a" in
-    --update|--local-build) ARGS+=("$a") ;;
+    --update|--local-build|--disable-v4forward) ARGS+=("$a") ;;
     *) echo "oneclick.sh: ignoring unknown arg '$a'" >&2 ;;
   esac
 done
