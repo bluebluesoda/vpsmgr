@@ -23,20 +23,19 @@
 
 最低建议：1 核、1 GB 内存、15 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
 
-```sh
-git clone --depth 1 https://github.com/bluebluesoda/vpsmgr.git
-cd vpsmgr
-sudo ./install.sh                  # 下载最新预编译版本
-# sudo ./install.sh --local-build  # 强制从当前源码编译
-# sudo ./install.sh --update       # 更新现有安装的预编译版本
+**从预编译安装**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/heads/main/oneclick.sh)
+```
+**从预编译更新**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/heads/main/oneclick.sh) --update
 ```
 
-默认安装会先下载 GitHub Release 中的预编译二进制；下载失败时会回退到本地编译。`--local-build` 总是重新编译，`--update` 下载失败时保留现有二进制。
-
-安装器会配置 Zabbly Incus 7 LTS 软件源，并默认使用 ZFS 存储。测试环境可显式使用 `VPSMGR_STORAGE=dir`，但该模式没有 ZFS 的配额、快照和克隆能力：
-
+**从源代码编译安装**
 ```sh
-sudo VPSMGR_STORAGE=dir ./install.sh
+git clone --depth 1 https://github.com/bluebluesoda/vpsmgr.git && cd vpsmgr
+sudo ./install.sh --local-build 
 ```
 
 ### IPv6
