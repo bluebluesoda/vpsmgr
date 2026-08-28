@@ -77,6 +77,22 @@ if [ -f /etc/systemd/network/eth0.network ]; then
   sed -i "s/^DHCP=true\$/DHCP=ipv4/" /etc/systemd/network/eth0.network
   printf "\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
 fi
+# vpsmgr TCP tuning: BBR congestion control, larger autotuned buffers, window
+# scaling on, and no slow-start reset after idle (better for long-lived SSH and
+# tunnel connections). Baked into /etc/sysctl.conf so it applies at container
+# boot; sysctl -p is a best-effort apply during the build (an unprivileged
+# container may deny net.* sysctls — that is non-fatal).
+cat >> /etc/sysctl.conf <<SYSCTL
+
+# vpsmgr TCP tuning
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_rmem = 8192 262144 4194304
+net.ipv4.tcp_wmem = 4096 16384 4194304
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+SYSCTL
+sysctl -p 2>/dev/null || true
+
 # slim the published image: drop apt lists/archives and logs. Without this the
 # image balloons ~70MiB beyond just openssh (apt lists alone are ~50MiB).
 apt-get clean 2>/dev/null || true

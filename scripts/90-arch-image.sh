@@ -99,6 +99,22 @@ command -v sshd >/dev/null || { echo "sshd install failed" >&2; exit 1; }
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable sshd
+# vpsmgr TCP tuning: BBR congestion control, larger autotuned buffers, window
+# scaling on, and no slow-start reset after idle (better for long-lived SSH and
+# tunnel connections). Baked into /etc/sysctl.conf so it applies at container
+# boot; sysctl -p is a best-effort apply during the build (an unprivileged
+# container may deny net.* sysctls — that is non-fatal).
+cat >> /etc/sysctl.conf <<SYSCTL
+
+# vpsmgr TCP tuning
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_rmem = 8192 262144 4194304
+net.ipv4.tcp_wmem = 4096 16384 4194304
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+SYSCTL
+sysctl -p 2>/dev/null || true
+
 # slim the published image: drop pacman caches (packages + sync dbs), logs.
 # A bare rm avoids the pacman -Scc interactive prompts in a non-tty exec.
 rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true

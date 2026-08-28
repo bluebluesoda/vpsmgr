@@ -139,6 +139,22 @@ ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 ln -sf "${NODE_BIN_DIR}/node" /usr/local/bin/node
 ln -sf "${NODE_BIN_DIR}/npm" /usr/local/bin/npm
 ln -sf "${NODE_BIN_DIR}/npx" /usr/local/bin/npx
+# vpsmgr TCP tuning: BBR congestion control, larger autotuned buffers, window
+# scaling on, and no slow-start reset after idle (better for long-lived SSH and
+# tunnel connections). Baked into /etc/sysctl.conf so it applies at container
+# boot; sysctl -p is a best-effort apply during the build (an unprivileged
+# container may deny net.* sysctls — that is non-fatal).
+cat >> /etc/sysctl.conf <<SYSCTL
+
+# vpsmgr TCP tuning
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_rmem = 8192 262144 4194304
+net.ipv4.tcp_wmem = 4096 16384 4194304
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+SYSCTL
+sysctl -p 2>/dev/null || true
+
 # slim the published image: apt lists/archives, logs, nvm caches (.cache holds
 # the downloaded node tarballs; .git is the repo cloned by nvm installer), npm
 # and root caches. Without this the image balloons ~150MiB beyond the tools.
