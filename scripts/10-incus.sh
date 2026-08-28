@@ -155,13 +155,7 @@ elif [[ "$STORAGE" == "zfs" ]]; then
     rm -rf /var/lib/apt/lists/* 2>/dev/null || true
     DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq 2>/dev/null || true
     journalctl --vacuum-time=3d >/dev/null 2>&1 || true
-    # Never clear /tmp wholesale: oneclick.sh runs from /tmp/vpsmgr-oneclick.*
-    # and deleting the current working directory makes every later child print
-    # "getcwd() failed". Only remove stale scratch paths owned by vpsmgr; the
-    # oneclick worktree is intentionally excluded because it may be active.
-    find /tmp /var/tmp -maxdepth 1 -mindepth 1 -mmin +60 \
-      \( -name 'vpsmgr-traefik.*' -o -name 'vpsmgr-dl.*' -o -name 'vpsmgr-preseed.*' \) \
-      -exec rm -rf -- {} + 2>/dev/null || true
+    rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
     # Stale kernels: purge ALL linux-image-* except the RUNNING kernel — but
     # if a NEWER kernel than the running one is already installed (upgraded,
     # not yet rebooted), keep that newest one too: deleting it would make the
