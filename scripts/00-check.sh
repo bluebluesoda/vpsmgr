@@ -75,12 +75,12 @@ log "storage backend: $STORAGE"
 #   - zfsutils-linux: Incus does NOT bundle the ZFS userspace tools; the
 #     storage pool is ZFS-only by default, so zpool/zfs must be present or
 #     pool creation fails (skipped in dir mode — no kernel module needed)
-#   - linux-headers-amd64 (meta, no version) + build-essential: Debian only.
-#     On Debian the ZFS kernel modules are compiled with DKMS against the
-#     running kernel; the meta package tracks the installed kernel so the
-#     postinst hook rebuilds the module after every kernel upgrade. Ubuntu
-#     ships the ZFS module PREBUILT inside the kernel (linux-modules), so it
-#     needs none of the DKMS toolchain — no compile time at all.
+#   - matching kernel headers (plus build-essential): Debian only. The
+#     linux-headers-amd64 meta package is for the normal amd64 kernel; cloud
+#     kernels need linux-headers-cloud-amd64 so DKMS can build for the kernel
+#     that is actually running. Ubuntu ships the ZFS module PREBUILT inside
+#     the kernel (linux-modules), so it needs none of the DKMS toolchain — no
+#     compile time at all.
 #   - ca-certificates: without it every curl HTTPS call (Zabbly key, traefik
 #     download, image pulls) fails with a certificate error
 #   - python3: used by 00-ip-ask.sh (prefix/subnet validation) and the
@@ -96,8 +96,12 @@ BASE_DEPS="sudo ca-certificates python3 tar xz-utils nftables zstd curl gpg"
 if [[ "$STORAGE" == "zfs" ]]; then
   BASE_DEPS="$BASE_DEPS zfsutils-linux"
   if [[ "$ID" == "debian" ]]; then
-    BASE_DEPS="$BASE_DEPS linux-headers-amd64 build-essential"
-    log "Debian detected — ZFS module will be DKMS-compiled (one-time build)"
+    KERNEL_HEADERS_PKG=linux-headers-amd64
+    case "$KERNEL_REL" in
+      *-cloud-*) KERNEL_HEADERS_PKG=linux-headers-cloud-amd64 ;;
+    esac
+    BASE_DEPS="$BASE_DEPS $KERNEL_HEADERS_PKG build-essential"
+    log "Debian detected — ZFS module will be DKMS-compiled (headers: $KERNEL_HEADERS_PKG)"
   else
     log "Ubuntu detected — ZFS module is prebuilt in the kernel, no compilation"
     # Ubuntu minimal/cloud images often ship with only the 'main' component; the
@@ -122,6 +126,21 @@ for p in $BASE_DEPS; do
   fi
 done
 
+# A headers meta-package may track a newer kernel than the one currently
+# running. Try the exact package once, then fail with an actionable message
+# instead of letting DKMS silently build for another installed kernel.
+if [[ "$STORAGE" == "zfs" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
+  EXACT_HEADERS_PKG="linux-headers-$KERNEL_REL"
+  if apt-cache show "$EXACT_HEADERS_PKG" >/dev/null 2>&1; then
+    log "matching headers are missing for $KERNEL_REL — installing $EXACT_HEADERS_PKG"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$EXACT_HEADERS_PKG" || true
+  fi
+fi
+if [[ "$STORAGE" == "zfs" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
+  die "matching kernel headers are missing for $KERNEL_REL — install linux-headers-$KERNEL_REL or reboot into a kernel with installed headers"
+fi
+
 # ZFS module present and loadable for the RUNNING kernel? On Debian a kernel
 # upgrade can leave the DKMS module missing (headers were unavailable at
 # postinst time); rebuild it for the running kernel rather than failing later
@@ -130,11 +149,19 @@ done
 if [[ "$STORAGE" == "zfs" ]]; then
   if ! modprobe zfs 2>/dev/null; then
     log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
-    for v in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u); do
-      dkms build "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
-      dkms install "zfs/$v" -k "$KERNEL_REL" >/dev/null 2>&1
+    DKMS_VERSIONS=$(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u)
+    [[ -n "$DKMS_VERSIONS" ]] || die "no ZFS DKMS version found — check 'dkms status'"
+    for v in $DKMS_VERSIONS; do
+      if ! DKMS_OUT=$(dkms build "zfs/$v" -k "$KERNEL_REL" 2>&1); then
+        printf '%s\n' "$DKMS_OUT" >&2
+        die "DKMS failed to build zfs/$v for $KERNEL_REL — check the matching kernel headers"
+      fi
+      if ! DKMS_OUT=$(dkms install "zfs/$v" -k "$KERNEL_REL" 2>&1); then
+        printf '%s\n' "$DKMS_OUT" >&2
+        die "DKMS failed to install zfs/$v for $KERNEL_REL"
+      fi
     done
-    modprobe zfs || die "ZFS kernel module failed to load — check 'dkms status' and 'dmesg | grep zfs'"
+    modprobe zfs || die "ZFS kernel module failed to load for $KERNEL_REL — check 'dkms status' and 'dmesg | grep zfs'"
   fi
   log "zfs: $(zpool version 2>/dev/null | head -1)"
 
