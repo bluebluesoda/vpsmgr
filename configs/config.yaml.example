@@ -12,7 +12,7 @@ panel:
   url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install
   admin_url_path: AUTO     # 10-char random secret prefix for the ADMIN panel; can be
                            # changed later or set to empty to disable the admin panel
-   admin_pass_hash: AUTO    # bcrypt hash of the admin panel password; generated at install,
+  admin_pass_hash: AUTO     # bcrypt hash of the admin panel password; generated at install,
                             # reset via `vps admin-passwd`. No admin username — password only.
 
 net:
@@ -28,14 +28,22 @@ net:
                               # SSH/port-block DNAT and traefik/domains disabled
                               # (NAT4 outbound kept). Toggle at runtime: vps config set net.v4_forward true|false
   ext_if: AUTO             # detected from default route
+  ipv6_mode: none          # fixed at install: none, prefix, or pool
   ipv6_subnet: ""          # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64".
-                           # /64 or shorter works (e.g. /56); a provider /80 slice like
+                           # /64 or shorter uses the first /64; a provider /80 slice like
                            # "2406:da14:1dd2:a807:753a::/80" is also supported.
                            # empty = IPv6 disabled (default). Containers get global
                            # addresses via SLAAC; no NAT; set at install time.
+  ipv6_pool: []            # optional (pool mode): bare global IPv6 addresses or /128;
+                           # addresses are assigned to containers until they are deleted.
 
 incus:
   image: "vpsmgr/debian-sshd"
   image_fallback: "images:debian/13"
   pool: vpsmgr
   bridge: incusbr0
+  socket: "/var/lib/incus/unix.socket"
+  swap_ratio: 0.5          # 0 = no container swap; 0.5 = memory allowance / 2
+
+snapshots:
+  limit: 1                 # 0 disables new snapshots

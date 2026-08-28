@@ -197,6 +197,9 @@ fi
 # panel and traefik are already running and owned by vpsmgr — those listeners
 # are excluded by process name. Checks TCP and UDP (the user port block is
 # DNAT-ed for both).
+if [[ "${VPSMGR_DISABLE_V4FORWARD:-0}" == "1" ]]; then
+  log "v4 forwarding disabled by installer — skipping reserved port checks"
+else
 port_reserved(){
   local p="$1"
   [[ "$p" == "80" || "$p" == "443" ]] && return 0
@@ -226,6 +229,7 @@ $CONFLICTS
 Free these ports (or remove the programs above) and re-run install."
 fi
 log "reserved ports are free"
+fi
 
 # --- detect public ip / ext iface ---
 # ext iface: prefer the IPv4 default route, then the IPv6 default route (covers

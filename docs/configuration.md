@@ -5,6 +5,13 @@ root-only read/write). The `VPSMGR_CONFIG` env var points the `vps` binary at
 another path; the shell install/uninstall scripts always use
 `/etc/vpsmgr/config.yaml`.
 
+The installer is intended for a fresh, dedicated host unless existing services,
+ports, bridges, UFW, and firewall rules have been checked. For a host that must
+keep other public services and only needs IPv6 inbound access, install with
+`./install.sh --disable-v4forward`; this requires an explicit confirmation,
+skips vpsmgr's reserved-port check, writes `net.v4_forward=false`, and leaves
+Traefik installed but stopped.
+
 **Editing config.yaml by hand is discouraged.** The sanctioned interface is
 `vps config list` / `vps config set` / `vps config help`, which validate every
 change and refuse immutable fields. A raw YAML edit still works but is not
@@ -21,7 +28,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.listen` | operator | `systemctl restart vps` | a FRESH install picks a random free port in 2000-9999 |
 | `panel.cert` | operator | restart panel | TLS certificate path |
 | `panel.key` | operator | restart panel | TLS private key path |
-| `panel.db` | operator | restart panel | SQLite database path |
+| `panel.db` | operator | re-run `vps install` | SQLite database path |
 | `panel.public_ip` | operator | re-run `vps install` | NIC IPv4 used by firewall/routing; cert is regenerated |
 | `panel.display_ip` | operator | restart panel | address shown to users (panel URL / SSH hints); any string without spaces (IP or domain), or empty = fall back to `public_ip` |
 | `panel.session_days` | operator | restart panel | login session lifetime (days) |
@@ -34,19 +41,19 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
-| `net.ipv6_pool` | operator | applied immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
+| `net.ipv6_pool` | operator | `vps config set` needs `--apply`; admin-panel changes apply immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool |
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
-| `snapshots.limit` | operator | restart panel | max snapshots a user may keep per container (`0` = default `1`) |
+| `snapshots.limit` | operator | restart panel | max snapshots a user may keep per container (`0` = disable new snapshots) |
 
 ### How "fixed at install" is enforced
 
 Fields marked **fixed at install** (`net.subnet`, `net.gateway`, `incus.pool`,
-`incus.bridge`, `panel.url_path`) are snapshotted into the DB settings table on
+`incus.bridge`, `panel.url_path`, `net.ipv6_mode`) are snapshotted into the DB settings table on
 the first `vps install`. Every later `vps install` and `vps serve` compares the
 live config against that snapshot and **refuses to run** if any of them drifted
 — `vps config set` also refuses them up front. The user panel path
@@ -91,7 +98,7 @@ net:
   ext_if: AUTO                 # external NIC, auto-detected from the default route
   ipv6_mode: ""                # IPv6 allocation mode: none / prefix / pool (fixed at install)
   ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
-                               # (/64 or shorter, incl. provider /80 slices like
+                               # (/64 or shorter uses the first /64; provider /80 slices like
                                # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default),
                                # but does not remove IPv6 state already applied
   ipv6_pool: []                # optional (pool mode): the /128 addresses containers are
@@ -108,6 +115,9 @@ incus:
                                          # memory limit (0 = no swap; 0.5 = a 1 GiB
                                          # container may use 512 MiB host swap);
                                          # applied to all containers immediately on set
+
+snapshots:
+  limit: 1                                # 0 disables new snapshots
 ```
 
 ## Port scheme (fixed)
@@ -159,7 +169,8 @@ goes away when the panel is uninstalled.
   change them after first install.
 - `net.ipv6_subnet` must be a **global** (non-ULA) IPv6 CIDR with an explicit
   prefix length — a bare address is rejected, never silently assumed `/64`.
-  Valid range is `/48`..`/80` (see [ipv6.md](ipv6.md)).
+  The validator accepts a global prefix of `/80` or shorter; `/48`..`/80` are
+  the documented operational range (see [ipv6.md](ipv6.md)).
 - `net.ipv6_mode` is fixed at install and immutable (like `net.subnet`):
   `none` (pure IPv4), `prefix` (classic /112 blocks), `pool` (per-container
   address from `net.ipv6_pool`). Switching modes would renumber containers.

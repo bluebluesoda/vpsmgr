@@ -21,6 +21,8 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 Ubuntu 24.04 is recommended; Ubuntu 22+ and Debian 12+ also work. Debian requires a kernel-module build and takes longer to install.
 
+Unless you have checked the existing services and network configuration, treat the installer as a fresh, dedicated-host installer. Do not run it directly on a personal host that already serves other workloads. It installs and configures Incus, ZFS (by default), nftables, Traefik, systemd units, and a container bridge; with IPv4 inbound forwarding enabled it also requires ports `80/443`, `10000-29999`, and `30000-31999` to be available, and may disable conflicting UFW configuration. The installer does not uninstall your applications, but its ports, bridge, and firewall policy can conflict with existing services.
+
 Recommended minimum: 1 CPU core, 1 GB RAM, 15 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
 
 ```sh
@@ -32,6 +34,14 @@ sudo ./install.sh                  # download the latest prebuilt binary
 ```
 
 The installer first downloads the prebuilt binary from GitHub Releases. If that fails, it falls back to a local build. `--local-build` always rebuilds from source. If `--update` cannot download the release, the existing binary is left untouched.
+
+If the host already runs other public services and you only need IPv6 inbound access, without IPv4 SSH/port forwarding, use:
+
+```sh
+sudo ./install.sh --disable-v4forward
+```
+
+This option asks for confirmation at the beginning. Once confirmed, it writes `net.v4_forward=false`, skips vpsmgr's reserved-port check, and only needs one randomly selected panel entry port. Traefik is still installed but remains stopped. IPv4 inbound forwarding can later be restored with `vps config set net.v4_forward true`.
 
 ZFS is the default storage backend. For disposable test machines, you can explicitly choose the `dir` backend. It does not provide ZFS quotas, snapshots, or cloning:
 
