@@ -61,7 +61,7 @@ if incus launch vpsmgr-debian-13 "$NAME"; then
 set -e
 # universal user tooling (small, every container hits these): curl/wget need
 # ca-certificates or HTTPS fails; dnsutils is bind9-dnsutils on Debian 13.
-apt-get update -qq && apt-get install -y -qq openssh-server ca-certificates curl wget less bind9-dnsutils openssh-client unzip nano
+apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-server ca-certificates curl wget less openssh-client unzip nano
 # hard gate: never publish an image without sshd baked in
 command -v sshd >/dev/null || { echo "sshd install failed" >&2; exit 1; }
 mkdir -p /etc/ssh/sshd_config.d
