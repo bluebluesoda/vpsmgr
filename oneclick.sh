@@ -16,19 +16,21 @@
 #   VPSMGR_BRANCH=<branch>   branch/tag to fetch (default main)
 set -euo pipefail
 
+if [[ $EUID -ne 0 ]]; then
+  echo "error: must run as root (sudo bash ...)" >&2
+  exit 1
+fi
+
 REPO="bluebluesoda/vpsmgr"
 BRANCH="${VPSMGR_BRANCH:-main}"
-WORKDIR="$(mktemp -d /tmp/vpsmgr-oneclick.XXXXXX)"
+# The installer may reclaim /tmp and /var/tmp when disk space is tight.
+# Keep the active checkout outside those directories until installation ends.
+WORKDIR="$(mktemp -d /var/lib/vpsmgr-oneclick.XXXXXX)"
 
 cleanup() {
   rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
-
-if [[ $EUID -ne 0 ]]; then
-  echo "error: must run as root (sudo bash ...)" >&2
-  exit 1
-fi
 
 ARGS=()
 for a in "$@"; do
