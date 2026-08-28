@@ -24,7 +24,7 @@
 最低建议：1 核、1 GB 内存、15 GB 可用磁盘空间，以及 root 权限。amd64 和 arm64 均支持，主要在 amd64 上测试。
 
 ```sh
-git clone https://github.com/bluebluesoda/vpsmgr.git
+git clone --depth 1 https://github.com/bluebluesoda/vpsmgr.git
 cd vpsmgr
 sudo ./install.sh                  # 下载最新预编译版本
 # sudo ./install.sh --local-build  # 强制从当前源码编译
