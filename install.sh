@@ -49,6 +49,63 @@ fi
 
 echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE, storage: $VPSMGR_STORAGE)"
 echo
+
+# --- swap (MANDATORY, asked before the IPv6 prompts) ---
+# vpsmgr REQUIRES swap: without it a container memory spike OOMs the host
+# instead of throttling. We decide this up front, before the IPv6 questions.
+# If swap already exists we keep it. If not, we ask the user to create one and
+# how many GiB; the DEFAULT is NO and declining aborts the install — a
+# swap-less host is not supported.
+SWAP_KB=$(awk '/SwapTotal/{print $2}' /proc/meminfo)
+if [[ ${SWAP_KB:-0} -gt 0 ]]; then
+  echo "[install] swap present: $(awk '/SwapTotal/{printf "%.1f GiB", $2/1024/1024}' /proc/meminfo)"
+else
+  echo "[install] no swap detected — vpsmgr requires swap."
+  SWAP_DECLINE=0
+  read -r -p "Add a swap file? Enter size in GiB (e.g. 2), or press Enter / 'n' to abort: " SWAP_ANS
+  case "$SWAP_ANS" in
+    ''|n|N|no|NO) SWAP_DECLINE=1 ;;
+    *)
+      if [[ "$SWAP_ANS" =~ ^[0-9]+$ ]] && [[ $SWAP_ANS -ge 1 ]]; then
+        SWAP_MB=$(( SWAP_ANS * 1024 ))
+        if [[ ! -e /swapfile ]]; then
+          echo "[install] creating ${SWAP_ANS} GiB swap file (this can take a moment)..."
+          if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
+            dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+          fi
+          chmod 600 /swapfile
+          mkswap /swapfile >/dev/null 2>&1
+        fi
+        if swapon /swapfile 2>/dev/null; then
+          grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          echo "[install] swap enabled (${SWAP_ANS} GiB, persisted in /etc/fstab)"
+        else
+          echo "[install] error: could not enable /swapfile (filesystem may not support swap files) — install aborted" >&2
+          exit 1
+        fi
+      else
+        echo "[install] invalid size '$SWAP_ANS'" >&2
+        SWAP_DECLINE=1
+      fi
+      ;;
+  esac
+  if [[ $SWAP_DECLINE -eq 1 ]]; then
+    echo
+    echo "==================================================================="
+    echo "ERROR: vpsmgr requires swap. Installation aborted."
+    echo
+    echo "vpsmgr 必须要有 swap。你可以创建并启用 swap 文件，或使用"
+    echo "systemd-zram-generator 配置 zram 作为 swap（不占硬盘空间）。"
+    echo "配置好适量 swap 后再运行安装程序即可。"
+    echo
+    echo "vpsmgr requires swap. Create and enable a swap file, or use"
+    echo "systemd-zram-generator to configure zram as swap (no disk usage)."
+    echo "Configure adequate swap, then re-run the installer."
+    echo "==================================================================="
+    exit 1
+  fi
+fi
+
 echo "===== 00-ip-ask ====="
 # shellcheck disable=SC1090
 source "$ROOT/scripts/00-ip-ask.sh" || { echo "error: install-time network asks failed — aborting" >&2; exit 1; }
