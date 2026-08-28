@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# vpsmgr oneclick.sh — gitless one-shot installer.
+# Downloads the repo as a tarball (no git needed on the host), runs install.sh,
+# then removes the extracted directory on exit so nothing is left behind.
+#
+# Usage:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/heads/main/oneclick.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/heads/main/oneclick.sh) --update
+#
+# Supported args (passed straight through to install.sh):
+#   --update        re-download the latest prebuilt release binary over an existing one
+#   --local-build   force local Go compilation of the panel binary
+# Env:
+#   VPSMGR_STORAGE=zfs|dir   storage backend (default zfs)
+#   VPSMGR_BRANCH=<branch>   branch/tag to fetch (default main)
+set -euo pipefail
+
+REPO="bluebluesoda/vpsmgr"
+BRANCH="${VPSMGR_BRANCH:-main}"
+WORKDIR="$(mktemp -d /tmp/vpsmgr-oneclick.XXXXXX)"
+
+cleanup() {
+  rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
+
+if [[ $EUID -ne 0 ]]; then
+  echo "error: must run as root (sudo bash ...)" >&2
+  exit 1
+fi
+
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --update|--local-build) ARGS+=("$a") ;;
+    *) echo "oneclick.sh: ignoring unknown arg '$a'" >&2 ;;
+  esac
+done
+
+echo "==> downloading $REPO@$BRANCH (gitless) into $WORKDIR"
+curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+  | tar -xz --strip-components=1 -C "$WORKDIR"
+
+echo "==> starting installer ${ARGS[*]:-}"
+bash "$WORKDIR/install.sh" "${ARGS[@]:-}"
+
+echo "==> install finished; temp dir $WORKDIR will be removed on exit"
