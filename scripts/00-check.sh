@@ -47,7 +47,11 @@ log "cpu: ${CPUS} cores, mem: ${MEM_GB} GiB"
 # --- disk ---
 FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
 log "free disk on /: $(( FREE_KB / 1024 )) MiB"
-[[ $FREE_KB -lt 5*1024*1024 ]] && die "need at least 5 GiB free on /"
+if [[ $FREE_KB -lt 5*1024*1024 ]]; then
+  log "warn: need at least 5 GiB free on /, only $(( FREE_KB / 1024 / 1024 )) GiB available"
+  read -r -p "force continue anyway? [y/N] " ans
+  [[ "$ans" == "y" || "$ans" == "Y" ]] || die "aborted: not enough free disk on /"
+fi
 
 # --- swap (recommend a swap file when absent) ---
 # Containers can spike memory; a small box without swap OOMs the host instead
