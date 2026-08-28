@@ -129,7 +129,7 @@ done
 # A headers meta-package may track a newer kernel than the one currently
 # running. Try the exact package once, then fail with an actionable message
 # instead of letting DKMS silently build for another installed kernel.
-if [[ "$STORAGE" == "zfs" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
+if [[ "$STORAGE" == "zfs" && "$ID" == "debian" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
   EXACT_HEADERS_PKG="linux-headers-$KERNEL_REL"
   if apt-cache show "$EXACT_HEADERS_PKG" >/dev/null 2>&1; then
     log "matching headers are missing for $KERNEL_REL — installing $EXACT_HEADERS_PKG"
@@ -137,7 +137,7 @@ if [[ "$STORAGE" == "zfs" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$EXACT_HEADERS_PKG" || true
   fi
 fi
-if [[ "$STORAGE" == "zfs" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
+if [[ "$STORAGE" == "zfs" && "$ID" == "debian" && ! -e "/lib/modules/$KERNEL_REL/build" ]]; then
   die "matching kernel headers are missing for $KERNEL_REL — install linux-headers-$KERNEL_REL or reboot into a kernel with installed headers"
 fi
 
