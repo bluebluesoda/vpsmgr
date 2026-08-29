@@ -27,6 +27,42 @@ func TestAddDomainRejectedWhenV4Off(t *testing.T) {
 	}
 }
 
+func TestAddDomainRejectedWhenTraefikOff(t *testing.T) {
+	c := cfg.Default()
+	c.Net.Traefik = false
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	m := New(c, d)
+	if err := m.AddDomain("alice", "example.com", false); err == nil {
+		t.Fatal("AddDomain should be rejected when Traefik is disabled")
+	}
+}
+
+func TestTraefikLive(t *testing.T) {
+	c := cfg.Default()
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	m := New(c, d)
+	if !m.TraefikLive() {
+		t.Fatal("TraefikLive should fall back to the config default")
+	}
+	if err := d.SetSetting(db.SettingTraefik, "false"); err != nil {
+		t.Fatal(err)
+	}
+	if m.TraefikLive() {
+		t.Fatal("TraefikLive should read false from the DB setting")
+	}
+}
+
 // TestV4ForwardLive: the panel's long-running process must reflect a toggle
 // made through `vps config set` (which writes the DB setting via
 // ApplyV4State) even though its in-memory config still says otherwise.

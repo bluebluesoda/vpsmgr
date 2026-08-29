@@ -30,6 +30,10 @@ const (
 	// be added.
 	SettingV4Forward = "v4_forward"
 
+	// SettingTraefik mirrors net.traefik so the long-running panel sees a
+	// runtime toggle without a panel restart.
+	SettingTraefik = "traefik"
+
 	// SettingBlockedDomains is the admin blocked-domains list, stored as
 	// newline-separated normalized domains. A blocked domain and all its
 	// subdomains are refused by AddDomain (admin-managed via the web UI).

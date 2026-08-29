@@ -281,10 +281,10 @@ footer a{color:var(--muted);text-decoration:underline}
 {{else}}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
-{{if .V4Forward}}<form action="{{.Prefix}}/domain-add" method="post">
+{{if and .V4Forward .TraefikEnabled}}<form action="{{.Prefix}}/domain-add" method="post">
 <div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}443 透传时向后端发送 PROXY 报文以汇报访客真实 IP；需后端支持，默认关闭。{{else}}443 passthrough sends the real client IP via PROXY; needs backend support, off by default.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
-{{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加域名。{{else}}IPv4 inbound is off — domains can't be added.{{end}}</div>{{end}}
+{{else}}<div class="muted">{{if eq .Lang "zh"}}{{if .V4Forward}}Traefik 已关闭，无法添加域名。{{else}}IPv4 入站已关闭，无法添加域名。{{end}}{{else}}{{if .V4Forward}}Traefik is disabled — domains can't be added.{{else}}IPv4 inbound is off — domains can't be added.{{end}}{{end}}</div>{{end}}
   </div>
 </div>
 

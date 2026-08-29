@@ -607,7 +607,7 @@ func (m *Manager) Del(name string) error {
 
 // ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
 // or removes (when off) every user's DNAT rules, reloads the ruleset, and
-// starts/stops the traefik service to match. Called by
+// applies the related Traefik state. Called by
 // `vps config set net.v4_forward` and at the end of `vps install`. It also
 // records the effective policy in the DB settings so the long-running panel
 // process reflects the toggle without a restart.
@@ -648,14 +648,28 @@ func (m *Manager) V4ForwardLive() bool {
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
-// ApplyTraefikState starts/stops the traefik service to match v4_forward: with
-// IPv4 inbound off, the domain proxy is not offered, so traefik is stopped and
+// TraefikLive reports the effective domain-proxy toggle, including changes
+// made by `vps config set` while this panel process remains running.
+func (m *Manager) TraefikLive() bool {
+	v, ok, err := m.db.GetSetting(db.SettingTraefik)
+	if err != nil || !ok {
+		return m.cfg.Net.Traefik
+	}
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// ApplyTraefikState starts/stops the traefik service to match v4_forward and
+// net.traefik: with either disabled, the domain proxy is not offered, so
+// traefik is stopped and
 // its BOOT AUTOSTART is disabled (systemctl disable --now) — it must not come
 // back on the next reboot. Domain config files are KEPT, so re-enabling
 // restores them; a full re-sync runs when enabling. systemctl errors are
 // surfaced, not swallowed.
 func (m *Manager) ApplyTraefikState() error {
-	if m.cfg.Net.V4Forward {
+	if err := m.db.SetSetting(db.SettingTraefik, strconv.FormatBool(m.cfg.Net.Traefik)); err != nil {
+		return fmt.Errorf("record traefik: %w", err)
+	}
+	if m.cfg.Net.V4Forward && m.cfg.Net.Traefik {
 		if err := systemctl("enable", "--now", "traefik.service"); err != nil {
 			return fmt.Errorf("start traefik: %w", err)
 		}
@@ -1181,6 +1195,9 @@ func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	defer m.domainMu.Unlock()
 	if !m.V4ForwardLive() {
 		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
+	}
+	if !m.TraefikLive() {
+		return errors.New("Traefik is disabled (net.traefik: false) — domains are not available; re-enable with `vps config set net.traefik true`")
 	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
