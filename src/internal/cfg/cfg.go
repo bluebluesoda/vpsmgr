@@ -88,10 +88,10 @@ const GeneratedBanner = "# Managed by vpsmgr — generated file, do not edit by 
 	"# Changes are overwritten on the next write; use the panel / `vps` CLI instead.\n"
 
 type Config struct {
-	Panel     PanelCfg      `yaml:"panel"`
-	Net       NetCfg        `yaml:"net"`
-	Incus     IncusCfg      `yaml:"incus"`
-	Snapshots SnapshotsCfg  `yaml:"snapshots"`
+	Panel     PanelCfg     `yaml:"panel"`
+	Net       NetCfg       `yaml:"net"`
+	Incus     IncusCfg     `yaml:"incus"`
+	Snapshots SnapshotsCfg `yaml:"snapshots"`
 }
 
 type PanelCfg struct {
@@ -127,6 +127,10 @@ type NetCfg struct {
 	// net.v4_forward true|false`.
 	// Deliberately NOT omitempty: false must round-trip through the config.
 	V4Forward bool `yaml:"v4_forward"`
+	// Traefik controls the optional domain reverse proxy independently of
+	// IPv4 forwarding. When false, Traefik is stopped and not enabled at boot;
+	// existing domain records are retained but new domains cannot be added.
+	Traefik bool `yaml:"traefik"`
 	// IPv6Subnet is the global prefix handed out to containers (e.g.
 	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
 	// Empty means IPv6 pass-through is disabled.
@@ -208,7 +212,7 @@ type SnapshotsCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1}
 	return c

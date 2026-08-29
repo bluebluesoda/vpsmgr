@@ -125,39 +125,40 @@ type sshKeyRow struct {
 }
 
 type pageData struct {
-	Title            string
-	User             *db.User
-	State            string
-	IP               string
-	SSHPort          int
-	StartPort        int
-	Ports            string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort       string // compact form, e.g. 107xx
-	SSH              string
-	V4Forward        bool   // false = IPv6-only box: v4 ssh/ports not offered
-	InitScript       string // custom init script, run after a reinstall
-	BandwidthQuotaGB int    // monthly bandwidth quota GiB, 0 = unlimited
-	BandwidthUsedGB  string // used this month (GB, 1 decimal) — only set when limited
-	BandwidthPct     int    // used/quota * 100, clamped to 100
-	Throttled        bool   // over quota: NIC limited to 1Mbps
-	Domains          []domainRow
-	QuotaCPU         string
-	QuotaMem         string
-	QuotaDisk        string
-	CPUUse           string // 5-minute CPU average ("12%" or "-")
-	MemUse           string // latest sampled memory usage ("345 MiB" or "-")
-	DiskUsed         string // latest sampled disk usage ("184 MiB" or "-")
-	Msg              string
-	Err              string
-	PublicIP         string
-	Prefix           string
-	Lang             string
-	UpGB             string
-	DownGB           string
-	IPv6             string // primary global address (the one to connect to)
-	IPv6Block        string // the /112 block the container owns (informational)
-	Snapshots        []snapshotRow
-	SnapshotLimit    int // configured per-container snapshot cap (for display)
+	Title              string
+	User               *db.User
+	State              string
+	IP                 string
+	SSHPort            int
+	StartPort          int
+	Ports              string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort         string // compact form, e.g. 107xx
+	SSH                string
+	V4Forward          bool   // false = IPv6-only box: v4 ssh/ports not offered
+	TraefikEnabled     bool   // false = domain proxy disabled; domains cannot be added
+	InitScript         string // custom init script, run after a reinstall
+	BandwidthQuotaGB   int    // monthly bandwidth quota GiB, 0 = unlimited
+	BandwidthUsedGB    string // used this month (GB, 1 decimal) — only set when limited
+	BandwidthPct       int    // used/quota * 100, clamped to 100
+	Throttled          bool   // over quota: NIC limited to 1Mbps
+	Domains            []domainRow
+	QuotaCPU           string
+	QuotaMem           string
+	QuotaDisk          string
+	CPUUse             string // 5-minute CPU average ("12%" or "-")
+	MemUse             string // latest sampled memory usage ("345 MiB" or "-")
+	DiskUsed           string // latest sampled disk usage ("184 MiB" or "-")
+	Msg                string
+	Err                string
+	PublicIP           string
+	Prefix             string
+	Lang               string
+	UpGB               string
+	DownGB             string
+	IPv6               string // primary global address (the one to connect to)
+	IPv6Block          string // the /112 block the container owns (informational)
+	Snapshots          []snapshotRow
+	SnapshotLimit      int // configured per-container snapshot cap (for display)
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
 	AdminKeysAnyActive bool        // at least one admin key is granted: expand the disclosure by default
@@ -297,24 +298,25 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	d := pageData{
-		Title:      "VPS Manager",
-		User:       u,
-		ThemeColor: u.Color,
-		PublicIP:   s.cfg.DisplayIP(),
-		Prefix:     s.prefix(),
-		SSHPort:    u.SSHPort,
-		StartPort:  u.StartPort,
-		Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
-		PortsShort: mgr.UserPortsShort(u.StartPort),
-		SSH:        "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
-		V4Forward:  s.mgr.V4ForwardLive(),
-		InitScript: u.InitScript,
+		Title:             "VPS Manager",
+		User:              u,
+		ThemeColor:        u.Color,
+		PublicIP:          s.cfg.DisplayIP(),
+		Prefix:            s.prefix(),
+		SSHPort:           u.SSHPort,
+		StartPort:         u.StartPort,
+		Ports:             mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+		PortsShort:        mgr.UserPortsShort(u.StartPort),
+		SSH:               "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
+		V4Forward:         s.mgr.V4ForwardLive(),
+		TraefikEnabled:    s.mgr.TraefikLive(),
+		InitScript:        u.InitScript,
 		MaxNotesPlaintext: cfg.MaxNotesPlaintextBytes,
-		QuotaCPU:   mgr.FormatCPU(u.CPU),
-		QuotaMem:   itoa(u.MemMB) + " MiB",
-		QuotaDisk:  itoa(u.DiskGB) + " GiB",
-		Msg:        msg,
-		Err:        errMsg,
+		QuotaCPU:          mgr.FormatCPU(u.CPU),
+		QuotaMem:          itoa(u.MemMB) + " MiB",
+		QuotaDisk:         itoa(u.DiskGB) + " GiB",
+		Msg:               msg,
+		Err:               errMsg,
 	}
 	// Resource usage comes from the persisted sampler snapshot (five-minute
 	// CPU average plus latest memory/disk), never from a live Incus sample.

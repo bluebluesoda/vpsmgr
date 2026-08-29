@@ -373,8 +373,9 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vps.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vps: %s", strings.TrimSpace(string(out)))
 	}
-	// Enforce the IPv4 inbound policy: per-user DNAT rules + traefik state
-	// (v4_forward off = IPv6-only, traefik disabled). Idempotent.
+	// Enforce the IPv4 inbound policy and the independent Traefik state.
+	// (v4_forward off = IPv6-only; net.traefik off = domain proxy disabled.)
+	// Idempotent.
 	d2, err := db.Open(c.Panel.DB)
 	if err != nil {
 		return err
@@ -896,6 +897,18 @@ func configSet(args []string) error {
 			fmt.Printf("%s updated and applied to all containers.\n", key)
 			return nil
 		}
+		if key == "net.traefik" {
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				return fmt.Errorf("config saved, but applying Traefik state failed: %w", err)
+			}
+			defer d.Close()
+			if err := mgr.New(c, d).ApplyTraefikState(); err != nil {
+				return fmt.Errorf("config saved, but applying Traefik state failed: %w", err)
+			}
+			fmt.Printf("%s updated and applied (Traefik state refreshed).\n", key)
+			return nil
+		}
 		if err := applyV4State(c); err != nil {
 			return err
 		}
@@ -965,6 +978,8 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 		switch key {
 		case "net.v4_forward":
 			what = "toggles container IPv4 inbound immediately — SSH / port / domain reachability of every container changes"
+		case "net.traefik":
+			what = "starts/stops Traefik immediately and changes whether new domains may be added"
 		case "incus.swap_ratio":
 			what = "re-applies the swap allowance of every existing container (no restart)"
 		default:
@@ -1004,7 +1019,8 @@ func listenFree(addr string) bool {
 	return true
 }
 
-// applyV4State enforces the current net.v4_forward policy (firewall + traefik).
+// applyV4State enforces the current net.v4_forward policy (firewall plus the
+// related Traefik state).
 func applyV4State(c *cfg.Config) error {
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {

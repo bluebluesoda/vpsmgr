@@ -23,7 +23,8 @@ const (
 	// KindOperator is operator-editable; the Apply column says how the change
 	// takes effect (panel restart, `vps install`, next add, ...).
 	KindOperator
-	// KindRuntime is a live toggle applied immediately (net.v4_forward).
+	// KindRuntime is a live toggle applied immediately (net.v4_forward,
+	// net.traefik).
 	KindRuntime
 	// KindAuto is written by the panel/installer only; never user-set.
 	KindAuto
@@ -52,11 +53,11 @@ func (k FieldKind) String() string {
 type Apply int
 
 const (
-	ApplyRestart Apply = iota // panel is restarted automatically by `vps config set`
-	ApplyInstall              // re-run `vps install` (or `vps config set --apply`)
-	ApplyImmediate            // applied by vps config set right now
-	ApplyNextAdd              // used on the next vps add / reinstall
-	ApplyNone                 // not settable
+	ApplyRestart   Apply = iota // panel is restarted automatically by `vps config set`
+	ApplyInstall                // re-run `vps install` (or `vps config set --apply`)
+	ApplyImmediate              // applied by vps config set right now
+	ApplyNextAdd                // used on the next vps add / reinstall
+	ApplyNone                   // not settable
 )
 
 func (a Apply) String() string {
@@ -152,7 +153,7 @@ var Fields = []Field{
 			}
 			c.Panel.PublicIP = v
 			return nil
-		}}, 
+		}},
 	{"panel.display_ip", KindOperator, ApplyRestart, "address shown to users (panel URL / SSH hints); any string without spaces, or empty = fall back to public_ip",
 		"203.0.113.5, 2001:db8::1, panel.example.com or AUTO",
 		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
@@ -170,7 +171,7 @@ var Fields = []Field{
 			}
 			c.Panel.DisplayIP = v
 			return nil
-		}}, 
+		}},
 	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
 		"3",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),
@@ -245,6 +246,18 @@ var Fields = []Field{
 				return fmt.Errorf("net.v4_forward must be true/false or 1/0")
 			}
 			c.Net.V4Forward = b
+			return nil
+		}},
+	{"net.traefik", KindRuntime, ApplyImmediate,
+		"Traefik domain proxy: true = running and enabled at boot, false = stopped and disabled at boot",
+		"true or false",
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.Traefik) }),
+		func(c *Config, v string) error {
+			b, ok := parseBool(v)
+			if !ok {
+				return fmt.Errorf("net.traefik must be true/false or 1/0")
+			}
+			c.Net.Traefik = b
 			return nil
 		}},
 	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",

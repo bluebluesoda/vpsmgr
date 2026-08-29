@@ -38,6 +38,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
+| `net.traefik` | runtime toggle | **applied immediately** | false = stop and disable Traefik; existing domains are retained, but new domains cannot be added |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
@@ -95,6 +96,7 @@ net:
   subnet: "10.115.0.0/24"      # container subnet 10.<n>.0.0/24 — only the second octet is settable, at install
   gateway: "10.115.0.1"
   v4_forward: true             # IPv4 inbound policy (false = IPv6-only containers)
+  traefik: true                # domain reverse proxy (false = stopped and not enabled at boot)
   ext_if: AUTO                 # external NIC, auto-detected from the default route
   ipv6_mode: ""                # IPv6 allocation mode: none / prefix / pool (fixed at install)
   ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
@@ -153,6 +155,14 @@ stay recorded in the DB, so turning it back on restores everything. The user
 panel hides IPv4 inbound info and shows "v4 SSH unavailable" while off, and
 **domain-add is blocked while off** — the add form is hidden and the handler
 rejects it (the panel reads the toggle live from the DB, no restart needed).
+
+## Traefik (`net.traefik`)
+
+`net.traefik` independently controls the Traefik domain reverse proxy. It is
+enabled by default. Set it with `vps config set net.traefik false` to stop
+Traefik and disable its boot autostart. Existing domain records and files are
+kept, but users cannot add new domains while it is disabled. Re-enabling the
+setting starts Traefik, restores autostart, and synchronizes the domain files.
 
 ## Port 25 (SMTP) is always blocked
 

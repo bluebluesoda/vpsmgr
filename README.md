@@ -46,7 +46,7 @@ sudo ./install.sh --local-build
 sudo ./install.sh --disable-v4forward
 ```
 
-该参数会在安装开始时要求确认；确认后写入 `net.v4_forward=false`，跳过 vpsmgr 保留端口检查，只随机选择一个面板入口端口。Traefik 仍会安装但不会启动。以后可用 `vps config set net.v4_forward true` 恢复 IPv4 入站转发。
+该参数会在安装开始时要求确认；确认后写入 `net.v4_forward=false`，跳过 vpsmgr 保留端口检查，只随机选择一个面板入口端口。Traefik 仍会安装但不会启动。以后可用 `vps config set net.v4_forward true` 恢复 IPv4 入站转发。Traefik 也可通过 `vps config set net.traefik false` 独立关闭；关闭后不会运行或自启，且不能添加新域名。
 
 ### IPv6
 
