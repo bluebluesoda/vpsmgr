@@ -20,9 +20,17 @@ net:
   # default 115). Immutable: changing it after install breaks existing
   # containers. The port scheme is fixed too: each container gets a random SSH
   # port from 30000-31999 plus a whole-hundred block of 100 user ports
-  # (10000-29999), up to 200 containers.
+  # (UserPortBase+(idx-1)*100 .. +99, idx being the container slot).
   subnet: "10.115.0.0/24"
   gateway: "10.115.0.1"
+  # Slot range (read the v4 last octet a new container may take; the container
+  # index idx is octet-1, gateway takes .1). Default 2-201 = 200 containers;
+  # shrinkable to any sub-range of 2-201 (e.g. 6-201) to keep the higher
+  # user ports (and fewer slots total) on the host. Affects ONLY new
+  # containers — existing ones keep their slots/ports. Since the user-port
+  # span the host reserves follows this range, an install's port-occupancy
+  # check scans only that span (SSH 30000-31999 stays reserved regardless).
+  slot_range: "2-201"
   v4_forward: true            # IPv4 inbound policy. false (only meaningful with
                               # ipv6_subnet set) = containers are IPv6-only: no
                               # SSH/port-block DNAT and traefik/domains disabled

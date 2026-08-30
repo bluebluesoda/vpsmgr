@@ -291,7 +291,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx, err := m.db.NextFreeIdx()
+	idMin, idMax := m.cfg.SlotIdxBounds()
+	idx, err := m.db.NextFreeIdx(idMin, idMax)
 	if err != nil {
 		return nil, err
 	}

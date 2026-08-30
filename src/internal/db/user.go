@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"vpsmgr/internal/cfg"
 )
 
 type User struct {
@@ -100,11 +99,14 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	return u, nil
 }
 
-// NextFreeIdx returns a random unused index in [1, cfg.MaxUsers], so a new
-// user gets a random slot (and therefore IP + port block) instead of always
-// the smallest free one. Cross-process races on the pick are caught by the
-// users.idx UNIQUE constraint; within one process Add is serialized by opMu.
-func (d *DB) NextFreeIdx() (int, error) {
+// NextFreeIdx returns a random unused index in [idxMin, idxMax] (currently the
+// configured slot range, idx = v4-last-octet - 1), so a new user gets a random
+// slot (and therefore IP + port block) instead of always the smallest free
+// one. Cross-process races on the pick are caught by the users.idx UNIQUE
+// constraint; within one process Add is serialized by opMu. Existing users
+// whose idx falls outside the current range (from an earlier, wider setting)
+// keep their slots — they are simply excluded from the free-list window here.
+func (d *DB) NextFreeIdx(idxMin, idxMax int) (int, error) {
 	rows, err := d.sql.Query(`SELECT idx FROM users`)
 	if err != nil {
 		return 0, err
@@ -121,14 +123,14 @@ func (d *DB) NextFreeIdx() (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	free := make([]int, 0, cfg.MaxUsers-len(used))
-	for i := 1; i <= cfg.MaxUsers; i++ {
+	free := make([]int, 0, idxMax-idxMin+1)
+	for i := idxMin; i <= idxMax; i++ {
 		if !used[i] {
 			free = append(free, i)
 		}
 	}
 	if len(free) == 0 {
-		return 0, fmt.Errorf("user limit reached (%d)", cfg.MaxUsers)
+		return 0, fmt.Errorf("slot range reach (%d..%d)", idxMin, idxMax)
 	}
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(free))))
 	if err != nil {

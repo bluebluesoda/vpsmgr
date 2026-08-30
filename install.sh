@@ -165,7 +165,15 @@ for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
   echo
   echo "===== $step ====="
   bash "$ROOT/scripts/$step.sh"
+  # 80/443 already in use (detected by 00-check): force net.traefik false for
+  # the rest of the install — 30-traefik keeps the binary installed but stops
+  # it, and `vps install` writes net.traefik: false. The marker is cleared at
+  # the start of the next 00-check run.
+  if [[ -f /etc/vpsmgr/.install-traefik-off ]]; then
+    export VPSMGR_TRAEFIK=0
+  fi
 done
+export VPSMGR_TRAEFIK="${VPSMGR_TRAEFIK:-}"
 
 echo
 echo "===== cleaning apt cache ====="
