@@ -3,6 +3,9 @@
 # Targets Debian 12/13 and Ubuntu 22.04/24.04/26.04 via the Zabbly package
 # repository (the Incus team's official third-party repo, maintained by the
 # project lead). Version follows the lts-7.0 channel.
+#
+# vpsmgr is containers-only, so it installs the container-only incus-base
+# package (never the full `incus` meta package with its VM stack).
 set -uo pipefail
 
 log(){ echo "[10] $*"; }
@@ -80,11 +83,23 @@ EOF
   apt-get update -qq || die "apt-get update failed (check the Zabbly repo)"
 fi
 
-if dpkg -s incus >/dev/null 2>&1; then
-  log "incus already installed: $(incus version 2>/dev/null | head -1)"
+# vpsmgr only runs containers, so new installs use the container-only
+# incus-base build (it pulls in incus-client for the CLI). The full `incus`
+# package adds the entire VM stack (QEMU/SPICE/Ceph/ffmpeg/VA-API — roughly
+# 240 MiB extra download, 500 MiB+ on disk) that this panel never uses.
+# Hosts that already carry the full `incus` package keep it: swapping
+# packages under a running daemon risks the existing setup, and VM support
+# does not interfere with containers. Existing incus-base installs are
+# adopted as-is.
+if dpkg -s incus-base >/dev/null 2>&1 || dpkg -s incus >/dev/null 2>&1; then
+  if dpkg -s incus >/dev/null 2>&1; then
+    log "incus already installed (full package incl. VM support) — keeping it"
+  else
+    log "incus-base already installed (container-only) — keeping it"
+  fi
 else
-  log "installing incus (Zabbly lts-7.0)..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus || die "apt install incus failed"
+  log "installing incus-base (container-only, Zabbly lts-7.0)..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus-base || die "apt install incus-base failed"
 fi
 log "incus version: $(incus version 2>/dev/null | head -1)"
 
