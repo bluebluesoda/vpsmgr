@@ -21,8 +21,6 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 
 Ubuntu 24.04 is recommended; Ubuntu 22+ and Debian 12+ also work. Debian requires a kernel-module build and takes longer to install.
 
-Unless you have checked the existing services and network configuration, treat the installer as a fresh, dedicated-host installer. Do not run it directly on a personal host that already serves other workloads. It installs and configures Incus, ZFS (by default), nftables, Traefik, systemd units, and a container bridge; with IPv4 inbound forwarding enabled it also requires ports `80/443`, `30000-31999` (SSH), and the user-port span implied by the current slot range (`net.slot_range`, default `2-201`) to be available, and may disable conflicting UFW configuration. If `80/443` is already taken by another program the installer does not fail — it installs Traefik with `net.traefik: false` instead (binary still installed, but not started/autostarted; restore later with `vps config set net.traefik true`). The installer does not uninstall your applications, but its ports, bridge, and firewall policy can conflict with existing services.
-
 Recommended minimum: 1 CPU core, 1 GB RAM, 15 GB of free disk space, and root access. Both amd64 and arm64 are supported; testing has focused mainly on amd64.
 
 ```sh
