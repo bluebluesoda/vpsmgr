@@ -316,6 +316,20 @@ validate_range(){
   return 0
 }
 
+# slot_range_summary: one-line hint echoing what the chosen slot range means —
+# the container capacity it allows and the user-port span it reserves (each
+# slot idx=octet-1 owns [10000+(idx-1)*100, +99]). SSH ports are separate.
+slot_range_summary(){
+  local r="$1" lo hi cap plo phi
+  lo="${r%%-*}"; hi="${r##*-}"
+  cap=$(( hi - lo + 1 ))
+  plo=$(( 10000 + (lo - 2) * 100 ))
+  phi=$(( 10000 + (hi - 2) * 100 + 99 ))
+  log "换算: 容器总数量上限 ${cap} 台; 可用用户端口范围 ${plo}-${phi} (SSH 端口 30000-31999 独立分配)"
+  log "capacity: up to ${cap} containers; usable user ports ${plo}-${phi} (SSH 30000-31999 separate)"
+}
+
+
 # overlaps_existing: exit 0 when 10.<octet>.0.0/24 does NOT overlap any existing
 # IPv4 network on the host (routes or interface addresses). On overlap it prints
 # the conflicting networks and exits 1.
@@ -433,30 +447,42 @@ ask_range(){
     if validate_range "$VPSMGR_SLOT_RANGE"; then
       log "container slot range: $VPSMGR_SLOT_RANGE (from env)"
       export VPSMGR_SLOT_RANGE
+      slot_range_summary "$VPSMGR_SLOT_RANGE"
       return 0
     fi
     die "VPSMGR_SLOT_RANGE='$VPSMGR_SLOT_RANGE' must be 'A-B' with each end in 2..201 and A<=B (e.g. 2-201, 6-201)"
     return 1
   fi
 
-  # Adoption: keep an existing slot_range instead of re-asking.
+  # Adoption: keep the recorded slot_range instead of re-asking.
   if [[ -f /etc/vpsmgr/config.yaml ]]; then
     EXISTING=$(grep -E '^\s+slot_range:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
     if [[ -n "$EXISTING" ]]; then
       if validate_range "$EXISTING"; then
         log "existing config has slot_range=$EXISTING — keeping it"
         export VPSMGR_SLOT_RANGE="$EXISTING"
+        slot_range_summary "$EXISTING"
         return 0
       fi
       die "existing config has an invalid slot_range='$EXISTING'"
       return 1
     fi
+    # Older config WITHOUT a slot_range key (pre-slot-range version): this box
+    # is being upgraded. Leave it at the default (full 2-201, which the panel
+    # applies anyway) and DO NOT prompt — a one-click upgrade of an existing
+    # panel must not be interrupted by a new question. Existing users keep
+    # their slots/ports untouched.
+    log "existing config has no slot_range (older version) — keeping default 2-201 (upgrade not interrupted)"
+    export VPSMGR_SLOT_RANGE="2-201"
+    slot_range_summary "2-201"
+    return 0
   fi
 
   # Non-interactive with no env var: default range (full capacity).
   if [[ ! -t 0 ]] && [[ -z "${FORCE_ASK:-}" ]]; then
     log "non-interactive install — using default slot range 2-201"
     export VPSMGR_SLOT_RANGE="2-201"
+    slot_range_summary "2-201"
     return 0
   fi
 
@@ -473,6 +499,7 @@ ask_range(){
   fi
   export VPSMGR_SLOT_RANGE="$RANGE"
   log "container slot range: $RANGE"
+  slot_range_summary "$RANGE"
 }
 
 ask_ipv6 || return 1
