@@ -90,33 +90,40 @@ if [[ ${SWAP_KB:-0} -gt 0 ]]; then
 else
   echo "[install] no swap detected — vpsmgr requires swap."
   SWAP_DECLINE=0
-  read -r -p "Add a swap file? Enter size in GiB (e.g. 2), or press Enter / 'n' to abort: " SWAP_ANS
+  # 'y' answers with a 1:1 auto size: host RAM in GiB.
+  AUTO_GIB=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) / 1024 / 1024 ))
+  [[ $AUTO_GIB -lt 1 ]] && AUTO_GIB=1
+  read -r -p "Add a swap file? Enter size in GiB, y for ${AUTO_GIB} GiB (host RAM 1:1), or N to abort [${AUTO_GIB} GiB/y/N]: " SWAP_ANS
   case "$SWAP_ANS" in
     ''|n|N|no|NO) SWAP_DECLINE=1 ;;
+    y|Y|yes|YES) SWAP_GIB=$AUTO_GIB ;;
     *)
       if [[ "$SWAP_ANS" =~ ^[0-9]+$ ]] && [[ $SWAP_ANS -ge 1 ]]; then
-        SWAP_MB=$(( SWAP_ANS * 1024 ))
-        if [[ ! -e /swapfile ]]; then
-          echo "[install] creating ${SWAP_ANS} GiB swap file (this can take a moment)..."
-          if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
-            dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
-          fi
-          chmod 600 /swapfile
-          mkswap /swapfile >/dev/null 2>&1
-        fi
-        if swapon /swapfile 2>/dev/null; then
-          grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-          echo "[install] swap enabled (${SWAP_ANS} GiB, persisted in /etc/fstab)"
-        else
-          echo "[install] error: could not enable /swapfile (filesystem may not support swap files) — install aborted" >&2
-          exit 1
-        fi
+        SWAP_GIB=$SWAP_ANS
       else
         echo "[install] invalid size '$SWAP_ANS'" >&2
         SWAP_DECLINE=1
       fi
       ;;
   esac
+  if [[ $SWAP_DECLINE -eq 0 ]]; then
+    SWAP_MB=$(( SWAP_GIB * 1024 ))
+    if [[ ! -e /swapfile ]]; then
+      echo "[install] creating ${SWAP_GIB} GiB swap file (this can take a moment)..."
+      if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
+        dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+      fi
+      chmod 600 /swapfile
+      mkswap /swapfile >/dev/null 2>&1
+    fi
+    if swapon /swapfile 2>/dev/null; then
+      grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      echo "[install] swap enabled (${SWAP_GIB} GiB, persisted in /etc/fstab)"
+    else
+      echo "[install] error: could not enable /swapfile (filesystem may not support swap files) — install aborted" >&2
+      exit 1
+    fi
+  fi
   if [[ $SWAP_DECLINE -eq 1 ]]; then
     echo
     echo "==================================================================="
