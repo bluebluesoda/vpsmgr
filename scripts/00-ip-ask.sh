@@ -180,6 +180,8 @@ ask_ipv6(){
   # external reachability probe is powered by Globalping.
   echo
   echo "  (Powered by Globalping)"
+  echo "自动测试已开始，如果您不够了解IPv6，请在接下来的选项中一路默认"
+  echo "Auto test running, recommened you KEEP ALL Default Settings later on."
   log "running check-ipv6-support.sh to probe this host..."
   DET=$(run_detector)
   log "detector verdict: $DET"
