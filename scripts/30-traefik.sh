@@ -13,7 +13,7 @@ SCRATCH="$(mktemp -d /tmp/vpsmgr-traefik.XXXXXX)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
 # fixed version + per-arch download URLs (no bundled binaries in the repo)
-TRAEFIK_VERSION=3.3.5
+TRAEFIK_VERSION=3.7.12
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)  TARCH=amd64 ;;
@@ -67,28 +67,40 @@ if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   log "installed traefik.service (unprivileged)"
 fi
 
-# v4 forwarding off (adopted config or VPSMGR_V4_FORWARD=0, IPv6-only box):
-# install traefik but keep it DISABLED — the domain proxy is not offered.
-# Config is kept so a later `vps config set net.v4_forward true` re-enables it.
-V4_FWD="${VPSMGR_V4_FORWARD:-1}"
-case "$V4_FWD" in
-  1|true)
-    systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
-    sleep 1
-    if systemctl is-active traefik >/dev/null 2>&1; then
-      log "traefik running"
-    else
-      systemctl status traefik --no-pager | tail -5
-      die "traefik failed to start"
-    fi
-    ;;
-  0|false)
-    systemctl disable --now traefik >/dev/null 2>&1 || true
-    log "v4 forwarding off — traefik installed but disabled (domains kept)"
-    ;;
-  *)
-    die "VPSMGR_V4_FORWARD must be 1/0/true/false (got '$V4_FWD')"
-    ;;
-esac
+# Effective net.traefik toggle: forced by the installer (VPSMGR_TRAEFIK=0 when
+# 80/443 is already taken, exported by install.sh from the 00-check marker),
+# else adopted from an existing config, else default (enabled).
+TRAEFIK_CFG=
+if [[ -n "${VPSMGR_TRAEFIK:-}" ]]; then
+  case "${VPSMGR_TRAEFIK,,}" in
+    1|true)  TRAEFIK_CFG=true ;;
+    0|false) TRAEFIK_CFG=false ;;
+    *) die "VPSMGR_TRAEFIK must be 1/0/true/false (got '$VPSMGR_TRAEFIK')" ;;
+  esac
+elif [[ -f /etc/vpsmgr/config.yaml ]]; then
+  TRAEFIK_CFG=$(grep -E '^\s+traefik:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+fi
+
+# Traefik disabled (port 80/443 conflict forced off, or adopted config with
+# net.traefik false): install the binary but keep it DISABLED — the domain
+# proxy is not offered. Config is kept so a later `vps config set net.traefik
+# true` re-enables it. Also covers v4_forward off (IPv6-only box): no domain
+# proxy there either.
+if [[ "$TRAEFIK_CFG" == "false" || "$TRAEFIK_CFG" == "0" ]]; then
+  systemctl disable --now traefik >/dev/null 2>&1 || true
+  log "net.traefik false — traefik installed but disabled (not started/autostarted; domains kept)"
+elif [[ "$TRAEFIK_CFG" == "true" || "$TRAEFIK_CFG" == "1" || "${VPSMGR_V4_FORWARD:-1}" == "1" || "${VPSMGR_V4_FORWARD:-1}" == "true" ]]; then
+  systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
+  sleep 1
+  if systemctl is-active traefik >/dev/null 2>&1; then
+    log "traefik running"
+  else
+    systemctl status traefik --no-pager | tail -5
+    die "traefik failed to start"
+  fi
+else
+  systemctl disable --now traefik >/dev/null 2>&1 || true
+  log "v4 forwarding off — traefik installed but disabled (domains kept)"
+fi
 
 echo "[30] traefik ready"

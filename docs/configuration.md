@@ -37,6 +37,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
+| `net.slot_range` | operator | next `vps add` / reinstall | container slot range (read the v4 last octet a new container may take), e.g. `2-201` = 200 containers; shrinkable to any sub-range of `2-201`; affects **new containers only** — existing ones keep their slot/ports |
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
 | `net.traefik` | runtime toggle | **applied immediately** | false = stop and disable Traefik; existing domains are retained, but new domains cannot be added |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
@@ -122,19 +123,46 @@ snapshots:
   limit: 1                                # 0 disables new snapshots
 ```
 
-## Port scheme (fixed)
-
-The port layout is fixed at install and immutable — there is no config knob:
+## Port scheme
+The port layout per container is fixed at install and not individually tunable,
+but its **span** follows the container slot range (`net.slot_range`):
 
 - **Panel port**: random free port in `2000-9999`, chosen on a fresh install
   and stored in `panel.listen`. Change it in the config only if you know why.
 - **SSH port**: each container gets one random port in `30000-31999` (TCP, DNAT
-  to container `:22`). Shown as `ssh -p <port>`.
-- **User ports**: each container owns a whole-hundred block of 100 ports in
-  `10000-29999`, assigned deterministically (`10000+(idx-1)*100` .. `+99`), DNAT
-  to the container (TCP and UDP). Displayed compactly as e.g. `107xx`.
-- **Capacity**: at most **200** containers (200 blocks × 100 ports = 20000).
+  to container `:22`). Independent of `idx`; always reserved regardless of the
+  slot range. Shown as `ssh -p <port>`.
+- **User ports**: each container owns a whole-hundred block of 100 ports,
+  assigned deterministically (`UserPortBase+(idx-1)*100` .. `+99`, where
+  `idx = v4-last-octet - 1`), DNAT to the container (TCP and UDP). Displayed
+  compactly as e.g. `107xx`.
 
+### Slot range (`net.slot_range`)
+
+The slot range bounds which `idx` a **new** container may take, and therefore
+how much of the user-port span (`10000-29999`) a host reserves. It is an
+inclusive pair of v4 last octets, e.g. `2-201` (= idx `1..200`). Set it at
+install (`00-ip-ask.sh` asks right after the subnet octet) or change it later:
+
+```sh
+vps config set net.slot_range 6-201
+```
+
+Rules:
+
+- The value must be `A-B` with each end an integer in `2..201` and `A <= B` —
+  i.e. always a **sub-range of the default**, so it can only increase the lower
+  edge and/or decrease the upper edge ("shrink"). Re-expanding within `2..201`
+  is allowed.
+- Capacity follows the range: the default `2-201` allows **200** containers;
+  `6-201` allows **196**, `20-100` allows **81**, and so on.
+- A shrunken install reserves far fewer host user ports, so its port-occupancy
+  check scans only the range's span (`10000+(lo-2)*100` .. `10000+(hi-2)*100+99`)
+  — not the whole `10000-29999`. `80/443` and SSH `30000-31999` are reserved
+  **regardless** of the range.
+- It affects **new containers only**: shrinking never renumbers or removes an
+  existing container (one that falls outside the narrowed range keeps its
+  slot/ports). The admin panel's capacity readout reflects the range.
 ## IPv4 inbound policy (`v4_forward`)
 
 `net.v4_forward` controls whether containers receive **shared IPv4 inbound**.
@@ -163,6 +191,13 @@ enabled by default. Set it with `vps config set net.traefik false` to stop
 Traefik and disable its boot autostart. Existing domain records and files are
 kept, but users cannot add new domains while it is disabled. Re-enabling the
 setting starts Traefik, restores autostart, and synchronizes the domain files.
+
+**Install-time auto-off:** if port `80` or `443` is already bound by a
+non-vpsmgr process during `install.sh`, the installer does **not** fail. Instead
+it proceeds with Traefik installed but `net.traefik: false` (not started, no
+boot autostart), so a host that already serves 80/443 stays usable. The
+`00-check.sh` port-occupancy scan reports it and installs Traefik disabled;
+re-enable later with `vps config set net.traefik true`.
 
 ## Port 25 (SMTP) is always blocked
 

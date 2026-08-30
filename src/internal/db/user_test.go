@@ -29,7 +29,7 @@ func TestNextFreeIdxRandom(t *testing.T) {
 	// picks at least some should be a non-trivial spread across the range.
 	seen := map[int]bool{}
 	for i := 0; i < 50; i++ {
-		n, err := d.NextFreeIdx()
+		n, err := d.NextFreeIdx(1, cfg.MaxUsers)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +106,7 @@ func TestNextFreeIdxExhausted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := d.NextFreeIdx(); err == nil {
+	if _, err := d.NextFreeIdx(1, cfg.MaxUsers); err == nil {
 		t.Fatal("NextFreeIdx on a full pool: expected error, got nil")
 	}
 }

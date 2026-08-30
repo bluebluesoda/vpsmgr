@@ -200,3 +200,93 @@ func TestFillAutoV4ForwardEnv(t *testing.T) {
 		t.Error("V4Forward should be false when VPSMGR_V4_FORWARD=0")
 	}
 }
+
+func TestSlotRange(t *testing.T) {
+	// Valid: any sub-range of [2,201] with lo <= hi, including the default.
+	cases := []struct {
+		in       string
+		lo, hi   int
+		slots, min, max int // min/max = idx bounds (octet-1)
+	}{
+		{"2-201", 2, 201, 200, 1, 200},
+		{"2-201", 2, 201, 200, 1, 200},
+		{"6-201", 6, 201, 196, 5, 200},
+		{"2-100", 2, 100, 99, 1, 99},
+		{"20-100", 20, 100, 81, 19, 99},
+		{"201-201", 201, 201, 1, 200, 200},
+	}
+	for _, c := range cases {
+		lo, hi, err := ParseSlotRange(c.in)
+		if err != nil {
+			t.Errorf("ParseSlotRange(%q): unexpected error: %v", c.in, err)
+			continue
+		}
+		if lo != c.lo || hi != c.hi {
+			t.Errorf("ParseSlotRange(%q) = %d-%d, want %d-%d", c.in, lo, hi, c.lo, c.hi)
+		}
+		cfg := Default()
+		cfg.Net.SlotRange = c.in
+		if n := cfg.SlotCount(); n != c.slots {
+			t.Errorf("SlotCount(%q) = %d, want %d", c.in, n, c.slots)
+		}
+		iMin, iMax := cfg.SlotIdxBounds()
+		if iMin != c.min || iMax != c.max {
+			t.Errorf("SlotIdxBounds(%q) = %d..%d, want %d..%d", c.in, iMin, iMax, c.min, c.max)
+		}
+	}
+
+	// Invalid: expanding beyond the default edges, lo > hi, malformed, non-int.
+	// (2-200 and 200-201 ARE valid sub-ranges; expanding past the edges is not.)
+	bad := []string{
+		"", " ", "1-201", "2-202", "2-300", "0-200", "3-2", "201-2",
+		"x-y", "2--201", "2-201-", "-2-201", "2.5-201", "201-200", "2-201 extra",
+		"2", "2,201", "0-0", "300-301", "-201", "2-", "2..201",
+	}
+	for _, s := range bad {
+		if _, _, err := ParseSlotRange(s); err == nil {
+			t.Errorf("ParseSlotRange(%q): expected error", s)
+		}
+	}
+}
+
+func TestFillAutoSlotRangeEnv(t *testing.T) {
+	c := Default()
+	c.Net.ExtIF = "eth0"
+	c.Panel.PublicIP = "203.0.113.10"
+	t.Setenv("VPSMGR_SLOT_RANGE", "6-201")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if c.Net.SlotRange != "6-201" {
+		t.Errorf("slot_range = %q, want 6-201", c.Net.SlotRange)
+	}
+
+	// A bad env value must fail loudly, not silently default.
+	t.Setenv("VPSMGR_SLOT_RANGE", "2-300")
+	if err := Default().FillAuto(); err == nil {
+		t.Error("FillAuto with VPSMGR_SLOT_RANGE=2-300 should fail")
+	}
+}
+
+func TestFillAutoTraefikEnv(t *testing.T) {
+	c := Default()
+	c.Net.ExtIF = "eth0"
+	c.Panel.PublicIP = "203.0.113.10"
+	// Install-time force-off (80/443 conflict) must write net.traefik false.
+	t.Setenv("VPSMGR_TRAEFIK", "0")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if c.Net.Traefik {
+		t.Error("net.traefik should be false when VPSMGR_TRAEFIK=0")
+	}
+	// VPSMGR_TRAEFIK=1 forces it on.
+	c.Net.Traefik = false
+	t.Setenv("VPSMGR_TRAEFIK", "true")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if !c.Net.Traefik {
+		t.Error("net.traefik should be true when VPSMGR_TRAEFIK=true")
+	}
+}

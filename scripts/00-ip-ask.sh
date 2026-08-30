@@ -304,6 +304,18 @@ if not o.isdigit() or not (1 <= int(o) <= 254):
 PY
 }
 
+# validate_range: exit 0 if arg is "A-B" with both ends integers within
+# 2..201 (the default slot range) and A <= B. This enforces the "only shrink
+# towards the defaults" rule: any sub-range of 2-201 is allowed, expanding
+# beyond either edge is rejected.
+validate_range(){
+  local s="$1"
+  [[ "$s" =~ ^[0-9]+-[0-9]+$ ]] || return 1
+  local lo="${s%%-*}" hi="${s##*-}"
+  (( lo >= 2 && lo <= 201 && hi >= 2 && hi <= 201 && lo <= hi )) || return 1
+  return 0
+}
+
 # overlaps_existing: exit 0 when 10.<octet>.0.0/24 does NOT overlap any existing
 # IPv4 network on the host (routes or interface addresses). On overlap it prints
 # the conflicting networks and exits 1.
@@ -410,5 +422,59 @@ ask_subnet(){
   log "container subnet: 10.$OCT.0.0/24"
 }
 
+# --- ask: container slot range (IPv4 last octet) -------------------------------
+# Bounds the idx a NEW container may take, which in turn bounds the user-port
+# block the host reserves (only-new-users effect; existing containers keep
+# their slots/ports). Default 2-201 = 200 slots. Operator-editable afterwards
+# via `vps config set net.slot_range`.
+ask_range(){
+  # env override: VPSMGR_SLOT_RANGE
+  if [[ -n "${VPSMGR_SLOT_RANGE:-}" ]]; then
+    if validate_range "$VPSMGR_SLOT_RANGE"; then
+      log "container slot range: $VPSMGR_SLOT_RANGE (from env)"
+      export VPSMGR_SLOT_RANGE
+      return 0
+    fi
+    die "VPSMGR_SLOT_RANGE='$VPSMGR_SLOT_RANGE' must be 'A-B' with each end in 2..201 and A<=B (e.g. 2-201, 6-201)"
+    return 1
+  fi
+
+  # Adoption: keep an existing slot_range instead of re-asking.
+  if [[ -f /etc/vpsmgr/config.yaml ]]; then
+    EXISTING=$(grep -E '^\s+slot_range:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+    if [[ -n "$EXISTING" ]]; then
+      if validate_range "$EXISTING"; then
+        log "existing config has slot_range=$EXISTING — keeping it"
+        export VPSMGR_SLOT_RANGE="$EXISTING"
+        return 0
+      fi
+      die "existing config has an invalid slot_range='$EXISTING'"
+      return 1
+    fi
+  fi
+
+  # Non-interactive with no env var: default range (full capacity).
+  if [[ ! -t 0 ]] && [[ -z "${FORCE_ASK:-}" ]]; then
+    log "non-interactive install — using default slot range 2-201"
+    export VPSMGR_SLOT_RANGE="2-201"
+    return 0
+  fi
+
+  # Interactive: only shrinkable within the default range, affects new containers.
+  echo
+  echo "容器槽位范围（即容器 v4 末段）— 限制新容器的 idx 与其占用的端口段，仅对新建容器有效。"
+  echo "Container slot range (== IPv4 last octet) — bounds new containers' slot & port block; new containers only."
+  echo "  (default 2-201 = 200 containers; shrink to e.g. 6-201 to leave higher ports free)"
+  read -r -p "范围 / Range A-B [default: 2-201]: " RANGE
+  RANGE="${RANGE:-2-201}"
+  if ! validate_range "$RANGE"; then
+    die "'$RANGE' invalid — must be 'A-B' with each end in 2..201 and A<=B (only shrink towards the defaults)"
+    return 1
+  fi
+  export VPSMGR_SLOT_RANGE="$RANGE"
+  log "container slot range: $RANGE"
+}
+
 ask_ipv6 || return 1
 ask_subnet || return 1
+ask_range || return 1

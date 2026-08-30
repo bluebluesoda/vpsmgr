@@ -248,6 +248,18 @@ var Fields = []Field{
 			c.Net.V4Forward = b
 			return nil
 		}},
+	{"net.slot_range", KindOperator, ApplyNextAdd,
+		"container slot range (== IPv4 last octet) a new user may take, e.g. 2-201 (up to 200 containers); shrinkable to any sub-range of 2-201; affects ONLY new users, never renumbers existing containers",
+		"2-201 (e.g. 6-201 to free ports on this host)",
+		getStr(func(c *Config) string { return c.Net.SlotRange }),
+		func(c *Config, v string) error {
+			lo, hi, err := ParseSlotRange(v)
+			if err != nil {
+				return err
+			}
+			c.Net.SlotRange = fmt.Sprintf("%d-%d", lo, hi)
+			return nil
+		}},
 	{"net.traefik", KindRuntime, ApplyImmediate,
 		"Traefik domain proxy: true = running and enabled at boot, false = stopped and disabled at boot",
 		"true or false",

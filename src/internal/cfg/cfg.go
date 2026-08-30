@@ -56,12 +56,25 @@ const (
 	// random SSH port from SSHPortBase..SSHPortBase+SSHPortCount-1, plus a
 	// whole-hundred block of PortsPerUser user ports starting at
 	// UserPortBase+(idx-1)*PortsPerUser. 10000..29999 holds exactly
-	// 200 blocks x 100 ports = 20000, so the range is fully packed.
+	// 200 blocks x 100 ports = 20000, so the range is fully packed — that is
+	// the total when the slot range is left at its maximum (2-201).
 	SSHPortBase  = 30000
 	SSHPortCount = 2000
 	UserPortBase = 10000
 	PortsPerUser = 100
-	MaxUsers     = 200
+	MaxUsers     = 200 // absolute slot ceiling; the effective ceiling is net.slot_range
+
+	// Slot range (net.slot_range "<lo>-<hi>"): the inclusive range of a new
+	// container's IPv4 last octet (== its slot number). The container index
+	// (idx, stored on the DB user) is octet-1, the gateway taking .1, so the
+	// default 2-201 maps to idx 1..200 = 200 slots. The range bounds the idx
+	// a new user may take, which in turn bounds the user-port span a host
+	// occupies (UserPortBase+(idx-1)*PortsPerUser). Only ever shrinkable to a
+	// sub-range of [DefaultSlotMin, DefaultSlotMax]; it affects ONLY new
+	// users — existing users keep their idx/ports untouched.
+	DefaultSlotRange = "2-201"
+	DefaultSlotMin   = 2
+	DefaultSlotMax   = 201
 
 	// MaxInitScriptBytes caps a user's custom init script (run inside the
 	// container after a reinstall). Bounds the DB row and the panel payload.
@@ -131,6 +144,12 @@ type NetCfg struct {
 	// IPv4 forwarding. When false, Traefik is stopped and not enabled at boot;
 	// existing domain records are retained but new domains cannot be added.
 	Traefik bool `yaml:"traefik"`
+	// SlotRange is the inclusive range of a new container's IPv4 last octet
+	// ("<lo>-<hi>", default 2-201). The container's idx is octet-1, so this
+	// bounds which idx a new user is drawn from — and therefore how much of
+	// the user-port block 10000-29999 the host reserves. Only-new-users
+	// effect: existing containers never renumber. See DefaultSlotMin/Max.
+	SlotRange string `yaml:"slot_range"`
 	// IPv6Subnet is the global prefix handed out to containers (e.g.
 	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
 	// Empty means IPv6 pass-through is disabled.
@@ -212,7 +231,7 @@ type SnapshotsCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, SlotRange: DefaultSlotRange}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1}
 	return c
@@ -239,6 +258,57 @@ func (c *Config) TraefikDir() string {
 }
 
 // SubnetIP returns the IP portion of the subnet CIDR.
+// ParseSlotRange parses "<lo>-<hi>" into inclusive v4-last-octet bounds.
+// Rules (strict): exactly one '-' separator, both ends non-empty integers,
+// each within [DefaultSlotMin, DefaultSlotMax] (2..201), and lo <= hi. This
+// mirrors the "only shrink towards the edges of the default range" rule: any
+// sub-range of [2, 201] is valid; expanding beyond either edge is rejected.
+func ParseSlotRange(s string) (lo, hi int, err error) {
+	s = strings.TrimSpace(s)
+	parts := strings.Split(s, "-")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return 0, 0, fmt.Errorf("invalid slot range %q: must be \"<lo>-<hi>\" (e.g. 2-201)", s)
+	}
+	a, err1 := strconv.Atoi(parts[0])
+	b, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return 0, 0, fmt.Errorf("invalid slot range %q: both ends must be integers", s)
+	}
+	if a < DefaultSlotMin || a > DefaultSlotMax || b < DefaultSlotMin || b > DefaultSlotMax {
+		return 0, 0, fmt.Errorf("invalid slot range %q: each end must be within %d..%d (the default range)", s, DefaultSlotMin, DefaultSlotMax)
+	}
+	if a > b {
+		return 0, 0, fmt.Errorf("invalid slot range %q: lo (%d) must be <= hi (%d)", s, a, b)
+	}
+	return a, b, nil
+}
+
+// SlotRangeBounds returns the configured inclusive v4-last-octet bounds of the
+// container slot range, falling back to the default 2-201 if it does not parse
+// (a validated config never hits this; guard against hand-edits).
+func (c *Config) SlotRangeBounds() (lo, hi int) {
+	lo, hi, err := ParseSlotRange(c.Net.SlotRange)
+	if err != nil {
+		return DefaultSlotMin, DefaultSlotMax
+	}
+	return lo, hi
+}
+
+// SlotCount returns how many container slots the configured range allows (
+// == max concurrently addressable new users within the range).
+func (c *Config) SlotCount() int {
+	lo, hi := c.SlotRangeBounds()
+	return hi - lo + 1
+}
+
+// SlotIdxBounds returns the inclusive idx (octet-1) bounds derived from the
+// configured slot range. idx is the stored per-user index used for
+// ContainerIP (ip[3] = idx+1) and the user-port block.
+func (c *Config) SlotIdxBounds() (idxMin, idxMax int) {
+	lo, hi := c.SlotRangeBounds()
+	return lo - 1, hi - 1
+}
+
 func (c *Config) SubnetIP() string {
 	ip, _, err := net.ParseCIDR(c.Net.Subnet)
 	if err != nil {
@@ -333,6 +403,22 @@ func (c *Config) FillAuto() error {
 	// script, so this just mirrors it.
 	if v := os.Getenv("VPSMGR_V4_FORWARD"); v != "" {
 		c.Net.V4Forward = v == "1" || strings.EqualFold(v, "true")
+	}
+	// VPSMGR_TRAEFIK (1/0/true/false) forces the Traefik domain-proxy toggle at
+	// install: 00-check.sh sets it to 0 when 80/443 is already taken so the
+	// install continues with Traefik installed but DISABLED (net.traefik
+	// false) instead of failing or fighting the occupant.
+	if v := os.Getenv("VPSMGR_TRAEFIK"); v != "" {
+		c.Net.Traefik = v == "1" || strings.EqualFold(v, "true")
+	}
+	// VPSMGR_SLOT_RANGE carries the container slot range chosen at install
+	// (e.g. 2-201); strictly validated so a bad value fails the install
+	// loudly instead of silently defaulting.
+	if v := os.Getenv("VPSMGR_SLOT_RANGE"); v != "" {
+		if _, _, err := ParseSlotRange(v); err != nil {
+			return fmt.Errorf("VPSMGR_SLOT_RANGE %q: %w", v, err)
+		}
+		c.Net.SlotRange = v
 	}
 	return nil
 }

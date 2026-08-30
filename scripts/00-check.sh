@@ -224,18 +224,44 @@ fi
 # panel and traefik are already running and owned by vpsmgr — those listeners
 # are excluded by process name. Checks TCP and UDP (the user port block is
 # DNAT-ed for both).
+#
+# 80/443 are handled specially: if either is already taken, the install does
+# NOT fail — it proceeds with Traefik installed but DISABLED (net.traefik
+# false, not started/autostarted), so a host that already serves 80/443 is
+# still usable; the operator can re-enable later via `vps config set
+# net.traefik true`. The user-port span (from net.slot_range) and the SSH
+# range (30000-31999) stay hard failures.
+#
+# 00-check runs as a separate bash process, so its env cannot reach the rest of
+# the installer. The decision therefore goes through a root-only marker file
+# that install.sh turns into an env var for 30-traefik.sh and the panel.
+# Clear any stale marker from a previous run so a reinstall re-detects.
+rm -f /etc/vpsmgr/.install-traefik-off 2>/dev/null || true
 if [[ "${VPSMGR_DISABLE_V4FORWARD:-0}" == "1" ]]; then
   log "v4 forwarding disabled by installer — skipping reserved port checks"
 else
-port_reserved(){
+# The user-port block only spans the configured slot range (net.slot_range,
+# exported by 00-ip-ask.sh as VPSMGR_SLOT_RANGE; default 2-201): each slot
+# idx (= octet-1) owns [10000+(idx-1)*100, +99]. So a shrunken range reserves
+# far fewer host ports, and only those must be free — checking the whole
+# 10000-29999 regardless of the range would block a small-footprint install
+# that never uses the upper ports. SSH (30000-31999) stays reserved no matter
+# the range (SSH ports are drawn independently of idx).
+SLOT_RANGE="${VPSMGR_SLOT_RANGE:-2-201}"
+RANGE_LO="${SLOT_RANGE%%-*}"
+RANGE_HI="${SLOT_RANGE##*-}"
+USER_LO_PORT=$(( 10000 + (RANGE_LO - 2) * 100 ))
+USER_HI_PORT=$(( 10000 + (RANGE_HI - 2) * 100 + 99 ))
+port_hard_reserved(){
   local p="$1"
-  [[ "$p" == "80" || "$p" == "443" ]] && return 0
-  (( p >= 10000 && p <= 29999 )) && return 0
+  (( p >= USER_LO_PORT && p <= USER_HI_PORT )) && return 0
   (( p >= 30000 && p <= 31999 )) && return 0
   return 1
 }
-log "checking reserved ports (80/443, 10000-29999, 30000-31999)..."
+log "checking reserved ports (80/443, $USER_LO_PORT-$USER_HI_PORT, 30000-31999)..."
 CONFLICTS=""
+PORT_80_443_TAKEN=0
+PORT_80_443_PROC=""
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   ADDR=$(awk '{print $4}' <<<"$line")
@@ -246,16 +272,41 @@ while IFS= read -r line; do
   case "${PROC##*/}" in
     vpsmgr|traefik) continue ;;
   esac
-  if port_reserved "$PORT"; then
+  if [[ "$PORT" == "80" || "$PORT" == "443" ]]; then
+    # 80/443 occupied by a non-vpsmgr process: not a hard failure — force
+    # Traefik OFF instead (still installed, kept stopped).
+    PORT_80_443_TAKEN=1
+    PORT_80_443_PROC="${PROC:-unknown process}"
+    continue
+  fi
+  if port_hard_reserved "$PORT"; then
     CONFLICTS+="  $PORT (${ADDR}) — bound by ${PROC:-unknown process}"$'\n'
   fi
 done < <(ss -H -tlnp 2>/dev/null; ss -H -ulnp 2>/dev/null)
 if [[ -n "$CONFLICTS" ]]; then
+  rm -f /etc/vpsmgr/.install-traefik-off 2>/dev/null || true
   die "ports reserved for vpsmgr are already in use:
 $CONFLICTS
 Free these ports (or remove the programs above) and re-run install."
 fi
-log "reserved ports are free"
+if [[ "$PORT_80_443_TAKEN" == "1" ]]; then
+  # Belt-and-suspenders for update/adoption: the scan already skips traefik's
+  # own listeners by process name, but if `ss` could not attribute the listener
+  # (PROC empty) while OUR traefik is already active, that active traefik is
+  # what holds 80/443 — do not misread it as a third-party conflict and turn
+  # our own proxy off.
+  if systemctl is-active --quiet traefik.service 2>/dev/null; then
+    log "80/443 held by the running vpsmgr traefik — keeping traefik enabled (no force-off)"
+  else
+    mkdir -p /etc/vpsmgr
+    touch /etc/vpsmgr/.install-traefik-off
+    log "port 80 and/or 443 is in use (${PORT_80_443_PROC}) — will NOT fail;"
+    log "traefik will be installed but DISABLED (net.traefik false, not started/autostarted)."
+    log "re-enable later with: vps config set net.traefik true"
+  fi
+else
+  log "reserved ports are free"
+fi
 fi
 
 # --- detect public ip / ext iface ---
