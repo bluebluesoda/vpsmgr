@@ -36,7 +36,8 @@ group `incus-admin`). For a local dev loop:
 # add the Zabbly LTS repo and install Incus (Debian 12/13, Ubuntu 22.04+)
 curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
 echo 'deb [signed-by=/etc/apt/keyrings/zabbly.asc] https://pkgs.zabbly.com/incus/lts-7.0/ trixie main' > /etc/apt/sources.list.d/zabbly-incus.list
-apt-get update && apt-get install -y incus
+apt-get update && apt-get install -y incus-base   # container-only build (no VM stack);
+# install the full `incus` package only if you also develop against VMs
 incus admin init --preseed < ...   # or use scripts/10-incus.sh
 usermod -aG incus-admin "$USER"    # socket access without root
 ```

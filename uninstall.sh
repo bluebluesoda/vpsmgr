@@ -133,6 +133,20 @@ if [[ $PURGE -eq 1 ]]; then
   if (( ${#INCUS_PACKAGES[@]} > 0 )); then
     DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${INCUS_PACKAGES[@]}" >/dev/null 2>&1 || true
   fi
+  # Installs predating the container-only switch pulled in VM-only
+  # dependencies (QEMU/SPICE/Ceph/ISO tooling) via the full `incus` package.
+  # Purge them too for a complete removal — but only the ones nothing else on
+  # the host still needs. Each package is checked against its installed
+  # reverse dependencies first, so a blanket `apt autoremove` (which can take
+  # unrelated desktop/media libraries with it) is never run.
+  VM_DEPS=(genisoimage libnuma1 libpixman-1-0 libpng16-16t64 librados2 librbd1 libseccomp2 libspice-server1 libusb-1.0-0 libusbredirparser1t64)
+  for pkg in "${VM_DEPS[@]}"; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || continue
+    # leaf check: no installed package may still depend on it
+    if ! apt-cache rdepends --installed "$pkg" 2>/dev/null | awk '/^Reverse Depends:/{f=1; next} f && NF' | grep -q .; then
+      DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "$pkg" >/dev/null 2>&1 || true
+    fi
+  done
   rm -rf /etc/incus /var/lib/incus /var/cache/incus /var/log/incus /var/lib/incus-lxcfs
   nft delete table inet incus 2>/dev/null || true
   nft delete table bridge incus 2>/dev/null || true
