@@ -50,7 +50,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
-| `snapshots.limit` | operator | restart panel | max snapshots a user may keep per container (`0` = disable new snapshots) |
+| `snapshots.limit` | operator | restart panel | max checkpoints a user may keep per container (`0` = disable new snapshots). Restoring to an older checkpoint auto-deletes the ones created after it (see below) |
 
 ### How "fixed at install" is enforced
 

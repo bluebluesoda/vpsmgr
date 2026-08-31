@@ -9,7 +9,7 @@ A lightweight Incus container hosting panel for small VPS instances and low-memo
 ## Feature Details
 
 - Admin panel: users, quotas, domains, IPv6 pool, SSH public keys, and audit logs; supports logging in as a user
-- User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16/Arch Linux reinstall, domain and SSH key management, encrypted sticky notes (exportable)
+- User panel: power control, self-service Debian 13/AlmaLinux 9/openSUSE Leap 16/Arch Linux reinstall, domain and SSH key management, encrypted sticky notes (exportable), and a time machine (checkpoint snapshots; rolling back discards the later checkpoints)
 - The admin can assign each user a dedicated accent color (click the username in the user list): that user's "log in" button and user-panel background use it, so impersonating operators can tell users apart at a glance
 - CPU, memory, and disk oversubscription; quota changes apply live without a container restart
 - Strict container network isolation; prefix mode assigns each container a dedicated `/112` IPv6 block that it can subdivide
