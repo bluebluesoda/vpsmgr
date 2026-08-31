@@ -1197,7 +1197,9 @@ func userQuota(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if err := mgr.ValidateName(name); err != nil {
+	// quota targets an existing user: use the legacy-compatible check so a
+	// pre-hyphen digit-ending username stays editable.
+	if err := mgr.ValidateExistingName(name); err != nil {
 		return err
 	}
 	provided := map[string]bool{}
@@ -1307,7 +1309,9 @@ func userQuota(args []string) error {
 // userPasswd resets a user's panel login password to a random 20-char
 // value and prints it once. The container root password is not touched.
 func userPasswd(name string) error {
-	if err := mgr.ValidateName(name); err != nil {
+	// passwd targets an existing user: legacy-compatible check so a
+	// pre-hyphen digit-ending username stays operable.
+	if err := mgr.ValidateExistingName(name); err != nil {
 		return err
 	}
 	c, err := cfg.Load()

@@ -180,7 +180,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z][a-z0-9]*" maxlength="31" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母和数字（31 位内，无连字符）{{else}}starts with a lowercase letter; lowercase letters and digits only (max 31, no hyphens){{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z])?" maxlength="31" required title="{{if eq .Lang "zh"}}以小写字母开头、以字母结尾，只能含小写字母、数字和连字符（31 位内，首尾不能是连字符）{{else}}starts and ends with a lowercase letter; lowercase letters, digits and hyphens only, no leading/trailing hyphen (max 31){{end}}"></div>
       <div class="field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
