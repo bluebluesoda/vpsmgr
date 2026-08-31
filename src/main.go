@@ -310,6 +310,14 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("apply swap ratio: %w", err)
 	}
+	// Restore-to-older-checkpoint ("time machine"): enable zfs.remove_snapshots
+	// on every existing container's root volume, so a single restore
+	// auto-discards the later snapshots. This is the upgrade path so a host
+	// updated via install.sh --update gets it immediately.
+	if err := m.ApplyZFSRemoveSnapshotsToAll(); err != nil {
+		d.Close()
+		return fmt.Errorf("apply zfs remove_snapshots: %w", err)
+	}
 	// Route inter-container IPv6 through the host (no L2 discovery / MITM),
 	// so a container can reach a peer whose address it knows. A user-controlled
 	// container may use an unsupported guest network stack; do not let that one

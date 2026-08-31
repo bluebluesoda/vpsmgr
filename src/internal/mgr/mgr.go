@@ -391,6 +391,13 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			_ = m.db.DeleteUser(createdID)
 		}
 	}
+	// Enable ZFS recursive-rollback restore on the root volume so restoring to
+	// an older checkpoint auto-discards the later ones (time machine). No-op on
+	// non-ZFS pools. On failure the fresh container is rolled back too.
+	if err := m.ensureZfsRollbackVolume(name); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("zfs snapshot rollback setup: %w", err)
+	}
 	if err := m.Provision(name, image, pass); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
@@ -957,11 +964,21 @@ func (m *Manager) SnapshotDelete(name, snapName string) error {
 }
 
 // SnapshotRestore restores the container disk from a snapshot, keeping the
-// current container configuration (quota, NICs, autostart). If the container
-// was running it is stopped first and started again afterwards; a failure in
-// the middle leaves the container stopped and returns the error so the caller
-// can see the partial state rather than pretending the restore succeeded.
-// opMu prevents a concurrent reinstall/delete from racing the restore.
+// current container configuration (quota, NICs, autostart). A snapshot is a
+// rollback point, so a manual snapshot behaves like a time machine that only
+// goes back: restoring to one that is NOT the newest discards every snapshot
+// created after it. If the container was running it is stopped first and
+// started again afterwards; a failure in the middle leaves the container
+// stopped and returns the error so the caller can see the partial state rather
+// than pretending the restore succeeded. opMu prevents a concurrent
+// reinstall/delete from racing the restore.
+//
+// Primary path: a single Incus restore. Every container's root volume carries
+// zfs.remove_snapshots=true (set at create and re-applied on every `vps
+// install`, including an --update upgrade), so Incus itself auto-destroys the
+// newer snapshots — no per-snapshot cleanup. Fallback: on a host that somehow
+// still lacks the option, Incus refuses with a "subsequent snapshot" error;
+// we then discard the newer snapshots ourselves and retry once.
 func (m *Manager) SnapshotRestore(name, snapName string) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
@@ -984,12 +1001,88 @@ func (m *Manager) SnapshotRestore(name, snapName string) error {
 		}
 	}
 	if err := m.lx.SnapshotRestore(u.Name, snapName); err != nil {
-		return err
+		// Restore to an older checkpoint is refused while later ones exist and
+		// the volume lacks zfs.remove_snapshots. Delete them and retry once.
+		if !strings.Contains(err.Error(), "subsequent snapshot") {
+			return err
+		}
+		if derr := m.discardNewerSnapshots(u.Name, snapName); derr != nil {
+			return derr
+		}
+		if err := m.lx.SnapshotRestore(u.Name, snapName); err != nil {
+			return err
+		}
 	}
 	if wasRunning {
 		return m.lx.Start(u.Name)
 	}
 	return nil
+}
+
+// ensureZfsRollbackVolume sets zfs.remove_snapshots on the container's root
+// volume so a single restore auto-discards the newer snapshots (see
+// lx.EnsureZFSRemoveSnapshots). Called on Add and Reinstall.
+func (m *Manager) ensureZfsRollbackVolume(name string) error {
+	return m.lx.EnsureZFSRemoveSnapshots(m.cfg.Incus.Pool, name)
+}
+
+// discardNewerSnapshots deletes every snapshot created strictly after the
+// target (matching Incus's own "subsequent snapshot" notion, judged by
+// creation timestamps), so the restore that follows is always a valid
+// rollback. The target itself and any older snapshot are kept; a snapshot
+// whose time cannot be parsed is left alone (safe degradation). If the target
+// is not found we delete nothing and let the restore call report the
+// authoritative error.
+func (m *Manager) discardNewerSnapshots(container, target string) error {
+	snaps, err := m.lx.SnapshotList(container)
+	if err != nil {
+		return err
+	}
+	for _, s := range newerSnapshotNames(snaps, target) {
+		if err := m.lx.SnapshotDelete(container, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// newerSnapshotNames returns the names of snapshots created strictly after
+// target, preserving list order. Timestamps are compared at full precision;
+// a snapshot whose creation time cannot be parsed is ignored (safe).
+func newerSnapshotNames(snaps []lx.SnapshotInfo, target string) []string {
+	var targetTime time.Time
+	found := false
+	for _, s := range snaps {
+		if s.Name == target {
+			targetTime = snapshotCreateTime(s)
+			found = !targetTime.IsZero()
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	var newer []string
+	for _, s := range snaps {
+		if s.Name == target {
+			continue
+		}
+		if t := snapshotCreateTime(s); !t.IsZero() && t.After(targetTime) {
+			newer = append(newer, s.Name)
+		}
+	}
+	return newer
+}
+
+// snapshotCreateTime parses an Incus snapshot creation timestamp (RFC3339,
+// with optional fractional seconds) and returns the zero time if it cannot.
+func snapshotCreateTime(s lx.SnapshotInfo) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, s.CreatedAt); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // ChangePanelPassword updates only the panel login hash and invalidates all
@@ -1126,6 +1219,12 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
+	}
+	// Enable ZFS recursive-rollback restore on the fresh root volume (time
+	// machine): a restore to an older checkpoint auto-discards the later ones.
+	if err := m.ensureZfsRollbackVolume(u.Name); err != nil {
+		rollback()
+		return "", fmt.Errorf("zfs snapshot rollback setup: %w", err)
 	}
 	pass := pw.Generate(20)
 	if err := m.Provision(u.Name, image, pass); err != nil {
@@ -1357,6 +1456,27 @@ func (m *Manager) ApplySwapToAll() error {
 	var firstErr error
 	for _, u := range users {
 		if err := m.lx.SetSwap(u.Name, u.MemMB); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ApplyZFSRemoveSnapshotsToAll enables the one-call snapshot restore (time
+// machine rollback) on every existing container's root volume. This is the
+// upgrade path: `vps install` runs it, so a host updated via `install.sh
+// --update` gets the automatic "restore discards the later checkpoints"
+// behaviour immediately, without reinstalling containers. No-op on non-ZFS
+// pools (dir test backend has no snapshots). Idempotent — volumes already
+// configured are skipped by EnsureZFSRemoveSnapshots.
+func (m *Manager) ApplyZFSRemoveSnapshotsToAll() error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, u := range users {
+		if err := m.lx.EnsureZFSRemoveSnapshots(m.cfg.Incus.Pool, u.Name); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

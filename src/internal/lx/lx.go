@@ -167,6 +167,14 @@ func (c *Client) patch(path string, body, out any) error {
 	return nil
 }
 
+// put sends a sync PUT. Storage-volume config updates are synchronous (they
+// return a "sync" response, not an operation), so unlike instance mutations
+// they must not go through sendOp.
+func (c *Client) put(path string, body any) error {
+	_, err := c.do(http.MethodPut, path, body)
+	return err
+}
+
 // sendOp triggers an async operation (POST/PUT/DELETE) and waits for it.
 // path is the API path; the operation location comes back in the response.
 func (c *Client) sendOp(method, path string, body any, timeout time.Duration) error {
@@ -1268,4 +1276,45 @@ func (c *Client) SnapshotDelete(name, snapName string) error {
 func (c *Client) SnapshotRestore(name, snapName string) error {
 	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name),
 		instanceRestoreReq{Restore: snapName, DiskOnly: true}, 5*time.Minute)
+}
+
+// EnsureZFSRemoveSnapshots enables ZFS recursive-rollback restore on a
+// container's root volume: setting zfs.remove_snapshots=true makes a single
+// restore to an older snapshot automatically destroy the newer ones (instead
+// of failing with "cannot be restored due to subsequent snapshot(s)"). It GETs
+// the volume and PUTs a merged config so any existing keys are preserved, and
+// is a no-op on non-ZFS pools (e.g. the dir test backend, which has no
+// snapshots anyway).
+func (c *Client) EnsureZFSRemoveSnapshots(pool, name string) error {
+	// Only the ZFS driver understands zfs.* volume options; skip other drivers
+	// silently so a dir-backed test host still installs/creates fine.
+	var p struct {
+		Driver string `json:"driver"`
+	}
+	if err := c.get("/1.0/storage-pools/"+url.PathEscape(pool), &p); err != nil {
+		return err
+	}
+	if p.Driver != "zfs" {
+		return nil
+	}
+	path := "/1.0/storage-pools/" + url.PathEscape(pool) + "/volumes/container/" + url.PathEscape(name)
+	var vol struct {
+		Description string            `json:"description"`
+		Config      map[string]string `json:"config"`
+	}
+	if err := c.get(path, &vol); err != nil {
+		return err
+	}
+	if vol.Config == nil {
+		vol.Config = map[string]string{}
+	}
+	if vol.Config["zfs.remove_snapshots"] == "true" {
+		return nil
+	}
+	vol.Config["zfs.remove_snapshots"] = "true"
+	body := struct {
+		Description string            `json:"description"`
+		Config      map[string]string `json:"config"`
+	}{Description: vol.Description, Config: vol.Config}
+	return c.put(path, body)
 }
