@@ -21,10 +21,17 @@ import (
 	"vpsmgr/internal/tfx"
 )
 
-// nameRe is stricter than Incus instance-name rules: lowercase letters and
-// digits only (no hyphens), max 31, and a leading-letter requirement so a
-// username can never start with a digit.
-var nameRe = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+// nameRe is the strict rule for NEW usernames: lowercase letters, digits and
+// hyphens, but it must both start and end with a lowercase letter (no
+// leading/trailing hyphen, no leading digit). Max 31.
+var nameRe = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z])?$`)
+
+// legacyNameRe is the union of every historically-valid username shape, used to
+// sanity-check the name on operations that act on an EXISTING user
+// (del/quota/passwd). Enforcing the stricter ValidateName there would lock out a
+// legacy username that ends in a digit (created before hyphens/end-letter were
+// decided). The authoritative existence check is GetUserByName.
+var legacyNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type Manager struct {
 	cfg *cfg.Config
@@ -74,7 +81,18 @@ func New(c *cfg.Config, d *db.DB) *Manager {
 
 func ValidateName(name string) error {
 	if len(name) > 31 || !nameRe.MatchString(name) {
-		return errors.New("invalid name: must start with a letter, then lowercase letters/digits only, max 31, no hyphens")
+		return errors.New("invalid name: must start and end with a lowercase letter, lowercase letters/digits/hyphens only, max 31, no leading/trailing hyphen")
+	}
+	return nil
+}
+
+// ValidateExistingName checks a name against every shape a user could legally
+// have been created with (the current strict rule and the pre-hyphen,
+// digit-ending one). Used by del/quota/passwd so a legacy user stays operable
+// even if their name now fails the stricter creation rule.
+func ValidateExistingName(name string) error {
+	if len(name) > 31 || !legacyNameRe.MatchString(name) {
+		return errors.New("invalid name")
 	}
 	return nil
 }
@@ -560,7 +578,9 @@ func (m *Manager) Del(name string) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
-	if err := ValidateName(name); err != nil {
+	// Acts on an existing user, so use the legacy-compatible check: a strict
+	// creation rule must not lock out a pre-hyphen digit-ending username.
+	if err := ValidateExistingName(name); err != nil {
 		return err
 	}
 	u, err := m.db.GetUserByName(name)
