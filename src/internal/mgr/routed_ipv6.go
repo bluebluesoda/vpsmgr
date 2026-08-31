@@ -2,6 +2,9 @@ package mgr
 
 import (
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"vpsmgr/internal/cfg"
@@ -69,8 +72,13 @@ func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix string) (string, error) {
 	if ipv6 == "" {
 		return "", nil
 	}
+	bridgeMAC := m.bridgeMAC()
 	if prefix == "" {
 		return m.poolContainerScript(ipv6)
+	}
+	localBlock, err := ipv6LocalBlock(ipv6)
+	if err != nil {
+		return "", err
 	}
 	flush := fmt.Sprintf(`for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
   case "$r" in
@@ -79,6 +87,12 @@ func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix string) (string, error) {
 done
 ip -6 route flush cache 2>/dev/null || true`, prefix)
 	script := fmt.Sprintf(`set -e
+# GATEWAY_MAC is the Incus bridge's MAC: the container's default route is
+# fe80::1 (the bridge gateway), but security.ipv6_filtering drops the guest's
+# NDP lookup for it, so we pin the neighbor. LOCAL_BLOCK is the container's
+# /112; it must be a local route for services to bind any address in it.
+GATEWAY_MAC=%q
+LOCAL_BLOCK=%q
 # Wait for systemd to be ready before touching it: right after boot the
 # /run/systemd/private bus socket may not exist yet, and systemctl then fails
 # with "Failed to connect to system scope bus". Bounded, cheap.
@@ -99,18 +113,40 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
     ipv6.addresses %s/128 \
     ipv6.gateway fe80::1 2>/dev/null || true
   [ -n "$CONN" ] && nmcli con up "$CONN" >/dev/null 2>&1 || true
+  [ -n "$GATEWAY_MAC" ] && ip -6 neigh replace fe80::1 lladdr "$GATEWAY_MAC" nud permanent dev eth0 2>/dev/null || true
 else
   CFG=/etc/systemd/network/eth0.network
+  mkdir -p /etc/systemd/network
+  [ -f "$CFG" ] || { printf '\n[Match]\nName=eth0\n' > "$CFG"; }
   changed=0
   # Rebuild the [IPv6AcceptRA] section from scratch — the only way to heal
   # both the mangled single-line residue buggy old versions wrote and sections
   # missing any option. Canonical contents: the parent prefix is never on-link
   # and never a route, no SLAAC address is generated, and the RA's Managed flag
-  # must not start a DHCPv6 client (a dynamic address would fall outside the
-  # routed block, which ipv6_filtering drops).
-  if ! grep -qs '^DHCPv6Client=no$' "$CFG" 2>/dev/null; then
+  # must not start a DHCPv6 client. UseGateway=false keeps an RA from installing
+  # a competing dynamic default route.
+  if ! grep -qs '^UseGateway=false$' "$CFG" 2>/dev/null || \
+     ! grep -qs '^DHCPv6Client=no$' "$CFG" 2>/dev/null; then
     awk 'BEGIN{s=0} /^n\[IPv6AcceptRA\]/{next} /^\[IPv6AcceptRA\]$/{s=1;next} s&&/^\[/{s=0} !s' "$CFG" > "$CFG.new" && mv "$CFG.new" "$CFG"
-    printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n' >> "$CFG"
+    cat >> "$CFG" <<RA
+[IPv6AcceptRA]
+UseGateway=false
+UseOnLinkPrefix=false
+UseRoutePrefix=false
+UseAutonomousPrefix=false
+DHCPv6Client=no
+RA
+    changed=1
+  fi
+  # Pin the gateway neighbor in networkd too (security.ipv6_filtering blocks
+  # the guest's own NDP lookup for the bridge's fe80::1).
+  if [ -n "$GATEWAY_MAC" ] && ! grep -qs '^LinkLayerAddress='"$GATEWAY_MAC"'$' "$CFG" 2>/dev/null; then
+    awk 'BEGIN{s=0} /^\[Neighbor\]$/{s=1;next} s&&/^\[/{s=0} !s' "$CFG" > "$CFG.new" && mv "$CFG.new" "$CFG"
+    cat >> "$CFG" <<NEIGH
+[Neighbor]
+Address=fe80::1
+LinkLayerAddress=$GATEWAY_MAC
+NEIGH
     changed=1
   fi
   # Statically bind the /128. A reinstall deletes the container but Incus's
@@ -118,14 +154,32 @@ else
   # recreated container a dynamic address instead — binding the /128 directly
   # makes IPv6 independent of that.
   if ! grep -qs '^Address=%s/128$' "$CFG" 2>/dev/null; then
-    printf '\n[Address]\nAddress=%s/128\n' %q >> "$CFG"
+    cat >> "$CFG" <<ADDR
+[Address]
+Address=%s/128
+ADDR
     changed=1
   fi
   # Static default route via the bridge's fixed link-local gateway: with RA
   # off-link/route-prefix off there is no RA-provided default, so without this
   # the container cannot reach out (only inbound works via the host's proxy).
   if ! grep -qs '^Gateway=fe80::1$' "$CFG" 2>/dev/null; then
-    printf '\n[Route]\nDestination=::/0\nGateway=fe80::1\n' >> "$CFG"
+    cat >> "$CFG" <<GW
+[Route]
+Destination=::/0
+Gateway=fe80::1
+GW
+    changed=1
+  fi
+  # Make the whole routed /112 local to the guest: a normal route only says
+  # where packets go; a local route makes every address in the block bindable,
+  # so services on block::4 etc. are reachable without adding each address.
+  if ! grep -qs '^Destination='"$LOCAL_BLOCK"'$' "$CFG" 2>/dev/null; then
+    cat >> "$CFG" <<LOCALR
+[Route]
+Destination=$LOCAL_BLOCK
+Type=local
+LOCALR
     changed=1
   fi
   # Drop DHCPv6: the dynamic address it would assign is outside the routed
@@ -137,9 +191,57 @@ else
   if [ "$changed" = 1 ]; then
     systemctl restart systemd-networkd || true
   fi
+  [ -n "$GATEWAY_MAC" ] && ip -6 neigh replace fe80::1 lladdr "$GATEWAY_MAC" nud permanent dev eth0 2>/dev/null || true
 fi
-%s`, ipv6, ipv6, ipv6, ipv6, flush)
+# Make the complete routed /112 local inside the guest for every image stack
+# (including NetworkManager), and re-apply it after a network restart via a
+# one-shot unit.
+ip -6 route replace local "$LOCAL_BLOCK" dev eth0
+mkdir -p /etc/systemd/system
+cat > /etc/systemd/system/vpsmgr-ipv6.service <<EOF
+[Unit]
+Description=vpsmgr routed IPv6 local prefix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip -6 route replace local $LOCAL_BLOCK dev eth0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload || true
+systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true
+systemctl restart vpsmgr-ipv6.service >/dev/null 2>&1 || true
+%s`, bridgeMAC, localBlock, ipv6, ipv6, ipv6, flush)
 	return script, nil
+}
+
+// ipv6LocalBlock returns the /112 the container's primary address belongs to.
+func ipv6LocalBlock(ipv6 string) (string, error) {
+	ip := net.ParseIP(ipv6)
+	if ip == nil || ip.To16() == nil || ip.To4() != nil {
+		return "", fmt.Errorf("invalid IPv6 address %q", ipv6)
+	}
+	mask := net.CIDRMask(blockBits, 128)
+	return (&net.IPNet{IP: ip.To16().Mask(mask), Mask: mask}).String(), nil
+}
+
+// bridgeMAC returns the Incus bridge's MAC (used to pin the guest's fe80::1
+// gateway neighbor), or "" when the bridge has no Ethernet address.
+func (m *Manager) bridgeMAC() string {
+	path := filepath.Join("/sys/class/net", m.cfg.Incus.Bridge, "address")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	mac, err := net.ParseMAC(strings.TrimSpace(string(b)))
+	if err != nil || len(mac) != 6 {
+		return ""
+	}
+	return mac.String()
 }
 
 // poolContainerScript renders the guest-side network config for a pool

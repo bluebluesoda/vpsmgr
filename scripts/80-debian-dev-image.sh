@@ -80,7 +80,7 @@ systemctl enable ssh
 # host, so the parent prefix must not be treated as on-link
 if [ -f /etc/systemd/network/eth0.network ]; then
   sed -i "s/^DHCP=true$/DHCP=ipv4/" /etc/systemd/network/eth0.network
-  printf "\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
+  printf "\n[IPv6AcceptRA]\nUseGateway=false\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
 fi
 # --- Go 1.26.7 (manual install, arch-aware, checksum-verified) ---
 GO_VERSION=1.26.7

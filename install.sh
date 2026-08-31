@@ -199,18 +199,6 @@ export VPSMGR_IPV4_SUBNET="${VPSMGR_IPV4_SUBNET:-}"
 export VPSMGR_IPV6_MODE="${VPSMGR_IPV6_MODE:-}"
 export VPSMGR_IPV6_POOL="${VPSMGR_IPV6_POOL:-}"
 
-# NDP proxy for IPv6 pass-through. Prefix mode: each container owns a /112
-# block and ndppd relays neighbor discovery on the upstream interface for it.
-# Pool mode: kernel proxy_ndp handles each /128 (no ndppd needed). Only
-# needed in prefix mode; small, no data-plane involvement.
-if [[ "${VPSMGR_IPV6_MODE:-}" == "prefix" && -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
-  echo
-  echo "===== installing ndppd (IPv6 NDP proxy) ====="
-  apt-get update -qq 2>/dev/null || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ndppd
-  systemctl enable ndppd.service >/dev/null 2>&1 || true
-fi
-
 for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
   echo
   echo "===== $step ====="
