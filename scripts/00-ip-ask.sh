@@ -488,9 +488,9 @@ ask_range(){
 
   # Interactive: only shrinkable within the default range, affects new containers.
   echo
-  echo "容器槽位范围（即容器 v4 末段）— 限制新容器的 idx 与其占用的端口段，仅对新建容器有效。"
-  echo "Container slot range (== IPv4 last octet) — bounds new containers' slot & port block; new containers only."
-  echo "  (default 2-201 = 200 containers; shrink to e.g. 6-201 to leave higher ports free)"
+  echo "容器槽位范围设置（即容器 v4 末段）Container slot range (== IPv4 last octet)"
+  echo "2-201将上限200容器，占用宿主机1w-3w端口。102-201将上限100容器，占用2w-3w端口"
+  echo "2-201 = 200 containers(port 10000-29999); shrink to e.g. 102-201 to avoid 10000-19999 ports be used)"
   read -r -p "范围 / Range A-B [default: 2-201]: " RANGE
   RANGE="${RANGE:-2-201}"
   if ! validate_range "$RANGE"; then
