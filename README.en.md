@@ -41,10 +41,14 @@ sudo ./install.sh --disable-v4forward
 
 This option asks for confirmation at the beginning. Once confirmed, it writes `net.v4_forward=false`, skips vpsmgr's reserved-port check, and only needs one randomly selected panel entry port. Traefik is still installed but remains stopped. IPv4 inbound forwarding can later be restored with `vps config set net.v4_forward true`.
 
-ZFS is the default storage backend. For disposable test machines, you can explicitly choose the `dir` backend. It does not provide ZFS quotas, snapshots, or cloning:
+ZFS is the default storage backend. `btrfs` is supported as an alternative
+(on a btrfs host the pool becomes a native subvolume; elsewhere a loop file)
+and `dir` for disposable test machines only (it provides no quotas, snapshots,
+or cloning):
 
 ```sh
-sudo VPSMGR_STORAGE=dir ./install.sh
+sudo VPSMGR_STORAGE=btrfs ./install.sh
+sudo VPSMGR_STORAGE=dir   ./install.sh
 ```
 
 ### IPv6

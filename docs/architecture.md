@@ -37,8 +37,9 @@ src/      Go source (single binary: CLI + panel)
 - **Go binary** — CLI commands (`vps add/show/del/...`) and the HTTPS panel
   (`vps.service`). The web templates are embedded (`//go:embed`).
 - **Incus** (Zabbly LTS 7.0, Debian package) — runs the containers. Storage
-  pool `vpsmgr` (ZFS), bridge `incusbr0` (10.<n>.0.0/24, octet chosen at
-  install, default 115). The panel talks to the daemon over its
+  pool `vpsmgr` (ZFS by default; `btrfs` and the throwaway `dir` backend are
+  alternatives, see “Storage”), bridge `incusbr0` (10.<n>.0.0/24, octet chosen
+  at install, default 115). The panel talks to the daemon over its
   **Unix-socket REST API** (`internal/lx`, one reusable HTTP connection, no
   `incus` process spawn per call). **Every** operation including `exec`
   (provisioning scripts and readiness probes) goes over the API websocket
@@ -118,8 +119,9 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   also refuses a name/IP already claimed by a live Incus instance, so orphaned
   containers cannot cause bridge IP conflicts.
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
-  (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
-  shrink.
+  (MiB), disk (GiB). Disk maps onto the storage driver's quota (ZFS space
+  accounting, btrfs qgroups, or the accepted-but-unenforced `dir` case) and
+  can only grow, never shrink.
 - **Container swap**: Incus 7 on cgroup v2 writes `memory.swap.max=0` for every
   container unless `limits.memory.swap` carries an explicit byte amount
   (`true`/`false` both end up as 0), so without an explicit value containers
@@ -208,19 +210,20 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   that only goes back**: restoring to a checkpoint that is NOT the newest
   discards the current data and every checkpoint created after it.
 
-  Restore is a single Incus call. Every container's root storage volume carries
-  `zfs.remove_snapshots=true`, so Incus performs a **ZFS recursive rollback**
-  that auto-destroys the newer snapshots in one operation — mirroring the ZFS
-  rule that you cannot roll back to an older snapshot while newer ones
-  exist (`cannot be restored due to subsequent snapshot(s)`). The setting is
-  applied to the root volume when a container is added or reinstalled, and by
-  an `ApplyZFSRemoveSnapshotsToAll` pass that `vps install` runs, so a host
-  upgraded via `install.sh --update` gets the behaviour immediately without
-  reinstalling containers. It only applies to the ZFS pool; the `dir` test
-  backend is skipped (it has no snapshots at all). As a belt-and-braces
-  fallback, `SnapshotRestore` checks for the "subsequent snapshot" refusal on
-  a container that somehow lacks the option, deletes the newer snapshots by
-  creation time, and retries once.
+  Restore is a single Incus call. On the ZFS pool every container's root
+  storage volume carries `zfs.remove_snapshots=true`, so Incus performs a
+  **ZFS recursive rollback** that auto-destroys the newer snapshots in one
+  operation — mirroring the ZFS rule that you cannot roll back to an older
+  snapshot while newer ones exist (`cannot be restored due to subsequent
+  snapshot(s)`). The setting is applied to the root volume when a container is
+  added or reinstalled, and by an `ApplyZFSRemoveSnapshotsToAll` pass that
+  `vps install` runs, so a host upgraded via `install.sh --update` gets the
+  behaviour immediately without reinstalling containers. It only applies to
+  the ZFS pool; btrfs and dir are skipped (the btrfs driver restores by
+  subvolume copy, which newer snapshots never block, so nothing extra is
+  needed there). As a belt-and-braces fallback, `SnapshotRestore` checks for
+  the "subsequent snapshot" refusal on a container that somehow lacks the
+  option, deletes the newer snapshots by creation time, and retries once.
 
   Restoring a checkpoint keeps the current container configuration (quotas,
   NICs, autostart) — only the disk is rolled back, so the restore never
@@ -230,26 +233,47 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 
 ## Storage
 
-- The pool is ZFS by default. On first install, `10-incus.sh` adopts an existing
-  pool or creates a **sparse loop-file pool** sized to a share of the free space
-  on `/`: 80% by default, 90% when ≥ 20 GiB free. New installations never scan,
-  select, format, or modify secondary disks. The loop file only allocates
-  blocks as the pool actually fills. On very small hosts, cap the ZFS ARC
-  (`zfs.arc_max`) so container memory keeps priority over the pool's cache.
-- A **dir backend** is available for throwaway test boxes only: set
-  `VPSMGR_STORAGE=dir` when running `install.sh` (default is `zfs`). It is a
-  deliberate switch, never an automatic fallback — a failed ZFS pool aborts the
-  install. `dir` has **no quotas, snapshots or clone-on-create**: the admin's
-  disk-limit setting is accepted but not enforced, every container costs a full
-  image copy, and `--purge` still removes the pool via `incus storage delete`.
-  In dir mode `00-check.sh` skips `zfsutils-linux` and the DKMS module build
+Three backends, all selected by setting `VPSMGR_STORAGE` when running
+`install.sh` (default `zfs`): `zfs`, `btrfs`, `dir`. `zfs` and `btrfs` both
+provide the full disk model (per-container disk quotas, snapshots,
+clone-on-create); `dir` provides none of it. The choice is made explicitly at
+install and a failed pool is a hard abort — never an automatic fallback. In
+the Go panel, container management is **storage-driver-transparent**: there is
+no driver branch in the panel code, and the single driver-aware helper
+(`lx.EnsureZFSRemoveSnapshots`) is a no-op on non-ZFS pools.
+
+- **ZFS (default)**. On first install, `10-incus.sh` adopts an existing pool or
+  creates a **sparse loop-file pool** sized to a share of the free space on `/`:
+  80% by default, 90% when ≥ 20 GiB free. New installations never scan, select,
+  format, or modify secondary disks. The loop file only allocates blocks as the
+  pool actually fills. On very small hosts, cap the ZFS ARC (`zfs.arc_max`) so
+  container memory keeps priority over the pool's cache.
+- **btrfs (beta)**. Selecting `VPSMGR_STORAGE=btrfs` is flagged as beta and
+  `install.sh` asks for an explicit confirmation up front (default yes — on a
+  btrfs root there is no ZFS fallback). When `/` is itself a btrfs filesystem,
+  the pool is created as a **native subvolume** directly on the host
+  filesystem (`incus storage create vpsmgr btrfs
+  source=/var/lib/incus/storage-pools/vpsmgr`): reflink clones, no
+  loop-device overhead, no double space accounting, and the whole root's free
+  space is available to the pool. On any other host it becomes a sparse
+  loop-file pool sized exactly like ZFS. Per-container disk limits use btrfs
+  qgroups; snapshots and clone-on-create work natively. `00-check.sh` installs
+  `btrfs-progs` (and skips the ZFS DKMS/kernel-header toolchain entirely). On a
+  btrfs root the swap file is created with `btrfs filesystem mkswapfile` (a
+  plain fallocate+mkswap swapfile fails there — swap must be NODATACOW and
+  preallocated).
+- **dir (throwaway test boxes only)**. Set `VPSMGR_STORAGE=dir`. `dir` has **no
+  quotas, snapshots or clone-on-create**: the admin's disk-limit setting is
+  accepted but not enforced, every container costs a full image copy, and
+  `--purge` still removes the pool via `incus storage delete`. In dir mode
+  `00-check.sh` skips `zfsutils-linux`/`btrfs-progs` and the ZFS module build
   entirely (no kernel module needed).
-- Containers are ZFS clones of the image: the image's blocks are shared
-  (copy-on-write), so a well-provisioned image costs one copy no matter how
-  many containers. Because Incus's `refquota` counts inherited blocks, image
-  bloat also eats into every container's disk quota — images must stay slim.
-  (Clone-on-create only exists on ZFS; dir mode copies the full image per
-  container.)
+- Containers are copy-on-write **clones** of the image (ZFS clones, btrfs
+  reflinks), so the image's blocks are shared: a well-provisioned image costs
+  one copy no matter how many containers. Because Incus's space accounting
+  counts inherited blocks, image bloat also eats into every container's disk
+  quota — images must stay slim. (Clone-on-create only exists on ZFS/btrfs;
+  dir mode copies the full image per container.)
 
 ## Image (`vpsmgr/debian-sshd`)
 

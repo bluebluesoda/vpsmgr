@@ -28,17 +28,43 @@ if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
   export VPSMGR_DISABLE_V4FORWARD=1
 fi
 
-# Storage backend: zfs (default) or dir. dir has no quotas/snapshots/clones —
-# only meant for throwaway test boxes. Never fall back automatically.
+# Storage backend: zfs (default), btrfs, or dir. zfs and btrfs both provide
+# quotas/snapshots/clone-on-create; dir has none and is only meant for
+# throwaway test boxes. Never fall back automatically.
 export VPSMGR_STORAGE="${VPSMGR_STORAGE:-zfs}"
 case "$VPSMGR_STORAGE" in
-  zfs|dir) ;;
-  *) echo "error: VPSMGR_STORAGE must be zfs or dir (got '$VPSMGR_STORAGE')" >&2; exit 1 ;;
+  zfs|btrfs|dir) ;;
+  *) echo "error: VPSMGR_STORAGE must be zfs, btrfs or dir (got '$VPSMGR_STORAGE')" >&2; exit 1 ;;
 esac
 
 if [[ $EUID -ne 0 ]]; then
   echo "error: must run as root (sudo ./install.sh)" >&2
   exit 1
+fi
+
+# --- btrfs backend confirmation (beta) ---
+# The btrfs storage backend is a newer, beta feature. It is expressed by
+# choosing VPSMGR_STORAGE=btrfs. On a btrfs host this is effectively the only
+# full-featured option (a ZFS pool cannot be initialized on top of btrfs), so
+# default to YES — but the operator is explicitly told before proceeding.
+# Non-btrfs installs never reach this block (their default stays zfs, so a
+# plain `./install.sh` behaves exactly as before).
+if [[ "$VPSMGR_STORAGE" == "btrfs" ]]; then
+  echo
+  echo "!! Btrfs storage backend selected (VPSMGR_STORAGE=btrfs) !!"
+  echo "   Btrfs is a BETA feature. On a Btrfs host a ZFS pool cannot be created,"
+  echo "   so this is the standard way to install there; on other hosts it falls"
+  echo "   back to a loop-file btrfs pool."
+  if [[ ! -t 0 ]]; then
+    echo "[install] non-interactive — proceeding with the Btrfs (beta) storage backend"
+  else
+    read -r -p "Continue with the Btrfs storage backend? [Y/n] " BTRFS_CONFIRM
+    case "$BTRFS_CONFIRM" in
+      ''|y|Y|yes|YES) ;;
+      n|N|no|NO) echo "[install] aborted by user (declined the Btrfs backend)"; exit 1 ;;
+      *) echo "error: please answer Y or n" >&2; exit 1 ;;
+    esac
+  fi
 fi
 
 if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
@@ -110,11 +136,35 @@ else
     SWAP_MB=$(( SWAP_GIB * 1024 ))
     if [[ ! -e /swapfile ]]; then
       echo "[install] creating ${SWAP_GIB} GiB swap file (this can take a moment)..."
-      if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
-        dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+      # btrfs swapfiles are fussy: they must be NODATACOW (no CoW), fully
+      # preallocated (no holes), single-device/single-profile, and cannot sit on
+      # a compressed file. The generic fallocate-then-mkswap path frequently
+      # fails on btrfs with "swapon: Invalid argument".
+      ROOTFS="$(findmnt -no FSTYPE / 2>/dev/null)"
+      if [[ "$ROOTFS" == "btrfs" ]]; then
+        # btrfs-progs >= 6.1 ships `btrfs filesystem mkswapfile`, which does the
+        # whole job correctly (prealloc + nodatacow + format) in one step. On
+        # older btrfs-progs fall back to manual: truncate empty, set the
+        # NODATACOW attr, then WRITE the file with dd — deliberately NOT
+        # fallocate, whose preallocated extents swapon can reject.
+        if btrfs filesystem mkswapfile --help >/dev/null 2>&1; then
+          btrfs filesystem mkswapfile --size "${SWAP_MB}M" /swapfile 2>/dev/null \
+            || { echo "[install] error: btrfs mkswapfile failed — install aborted" >&2; exit 1; }
+        else
+          truncate -s 0 /swapfile
+          chattr +C /swapfile 2>/dev/null || true
+          dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+          chmod 600 /swapfile
+          mkswap /swapfile >/dev/null 2>&1
+        fi
+      else
+        # Non-btrfs: existing behavior (sparse fallocate, dd fallback).
+        if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
+          dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+        fi
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null 2>&1
       fi
-      chmod 600 /swapfile
-      mkswap /swapfile >/dev/null 2>&1
     fi
     if swapon /swapfile 2>/dev/null; then
       grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab

@@ -12,7 +12,7 @@
 #   --local-build   force local Go compilation of the panel binary
 #   --disable-v4forward  install with IPv4 inbound forwarding disabled
 # Env:
-#   VPSMGR_STORAGE=zfs|dir   storage backend (default zfs)
+#   VPSMGR_STORAGE=zfs|btrfs|dir   storage backend (default zfs)
 #   VPSMGR_BRANCH=<branch>   branch/tag to fetch (default main)
 set -euo pipefail
 
