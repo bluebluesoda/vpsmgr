@@ -104,17 +104,26 @@ cleanup_go(){
   log "go toolchain removed; host left clean"
 }
 
+# stop_holders stops every vpsmgr unit that keeps /usr/local/bin/vps mapped
+# (running), so the binary can be replaced without ETXTBSY ("Text file busy").
+# vps.service is the panel; on the dev-ndp branch vps-ipv6.service is a
+# long-lived `vps ipv6-proxy` process that ALSO maps the binary — stopping only
+# the panel leaves it holding the file and cp then fails. Unconditional:
+# stopping a unit that is not present is a harmless no-op.
+stop_holders(){
+  systemctl stop vps.service >/dev/null 2>&1 || true
+  systemctl stop vps-ipv6.service >/dev/null 2>&1 || true
+  log "stopped services holding the vps binary"
+}
+
 build_local(){
   ensure_go || die "go toolchain install failed"
   log "building vpsmgr from source..."
   bash "$ROOT/build.sh" || die "build failed"
   # Replacing a running binary fails with ETXTBSY ("Text file busy") on an
-  # adopted install where vps.service is already active. Stop the service
-  # first, then copy, then let the installer re-enable it below.
-  if systemctl is-active --quiet vps.service 2>/dev/null; then
-    systemctl stop vps.service >/dev/null 2>&1 || true
-    log "stopped vps.service to replace the running binary"
-  fi
+  # adopted install where a vpsmgr unit is already active. Stop the services
+  # that map the binary first, then copy, then let the installer re-enable.
+  stop_holders
   if ! cp "$ROOT/bin/vps" /usr/local/bin/vps; then
     die "could not copy built binary to /usr/local/bin/vps"
   fi
@@ -151,13 +160,11 @@ install_prebuilt(){
   else
     log "warn: could not fetch checksums, skipping verification"
   fi
-  # Replace a running binary (ETXTBSY): stop the service first, then copy,
-  # then let the installer re-enable it below. This runs only after the
-  # download verified, so a failed download never takes the panel down.
-  if systemctl is-active --quiet vps.service 2>/dev/null; then
-    systemctl stop vps.service >/dev/null 2>&1 || true
-    log "stopped vps.service to replace the running binary"
-  fi
+  # Replace a running binary (ETXTBSY): stop the units that map it first,
+  # then copy, then let the installer re-enable them below. This runs only
+  # after the download verified, so a failed download never takes the panel
+  # down.
+  stop_holders
   cp "$dir/vps-$arch" /usr/local/bin/vps
   chmod 755 /usr/local/bin/vps
   log "installed /usr/local/bin/vps from release ($(/usr/local/bin/vps version))"
