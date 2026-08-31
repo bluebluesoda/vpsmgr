@@ -81,15 +81,30 @@ elif [[ -f /etc/vpsmgr/config.yaml ]]; then
   TRAEFIK_CFG=$(grep -E '^\s+traefik:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
 fi
 
-# Traefik disabled (port 80/443 conflict forced off, or adopted config with
-# net.traefik false): install the binary but keep it DISABLED — the domain
-# proxy is not offered. Config is kept so a later `vps config set net.traefik
-# true` re-enables it. Also covers v4_forward off (IPv6-only box): no domain
-# proxy there either.
-if [[ "$TRAEFIK_CFG" == "false" || "$TRAEFIK_CFG" == "0" ]]; then
+# Effective v4 forwarding for this install. On a fresh install nothing forces
+# it off (default: enabled); on adoption 00-ip-ask.sh re-exports the recorded
+# config value so we keep the existing policy.
+V4ON=1
+case "${VPSMGR_V4_FORWARD:-1}" in
+  1|true|True)  V4ON=1 ;;
+  *)           V4ON=0 ;;
+esac
+
+# Traefik (the domain proxy) only ever runs while BOTH IPv4 ingress is on AND
+# net.traefik is on. With v4 forwarding OFF (an IPv6-only box) there is no
+# SSH/port DNAT and domains are not served, so traefik must be installed but
+# DISABLED (not started, no boot autostart) even if net.traefik is kept true —
+# re-enabling v4 later (`vps config set net.v4_forward true`) restores it.
+# The same disabling applies when net.traefik is false on its own (forced off
+# by a port 80/443 conflict, or an adopted config). Domain files are kept in
+# both cases so a later re-enable restores them.
+if [[ "$V4ON" -eq 0 ]]; then
+  systemctl disable --now traefik >/dev/null 2>&1 || true
+  log "v4 forwarding off — traefik installed but disabled (domains kept)"
+elif [[ "$TRAEFIK_CFG" == "false" || "$TRAEFIK_CFG" == "0" ]]; then
   systemctl disable --now traefik >/dev/null 2>&1 || true
   log "net.traefik false — traefik installed but disabled (not started/autostarted; domains kept)"
-elif [[ "$TRAEFIK_CFG" == "true" || "$TRAEFIK_CFG" == "1" || "${VPSMGR_V4_FORWARD:-1}" == "1" || "${VPSMGR_V4_FORWARD:-1}" == "true" ]]; then
+else
   systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
   sleep 1
   if systemctl is-active traefik >/dev/null 2>&1; then
@@ -98,9 +113,6 @@ elif [[ "$TRAEFIK_CFG" == "true" || "$TRAEFIK_CFG" == "1" || "${VPSMGR_V4_FORWAR
     systemctl status traefik --no-pager | tail -5
     die "traefik failed to start"
   fi
-else
-  systemctl disable --now traefik >/dev/null 2>&1 || true
-  log "v4 forwarding off — traefik installed but disabled (domains kept)"
 fi
 
 echo "[30] traefik ready"
