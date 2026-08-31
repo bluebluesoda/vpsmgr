@@ -163,6 +163,25 @@ install_prebuilt(){
   log "installed /usr/local/bin/vps from release ($(/usr/local/bin/vps version))"
 }
 
+install_completions(){
+  # Bash tab completion for the `vps` CLI: `vps config set <TAB>` completes
+  # config keys (read live from `vps config completions` so they match the
+  # registry), plus top-level commands and container names. Installed into the
+  # Debian/Ubuntu bash-completion load path; sourced automatically in a new
+  # shell. Non-fatal: if the dir is unavailable the binary still works.
+  local dest="/usr/share/bash-completion/completions/vps"
+  local src="$ROOT/configs/completions/vps.bash"
+  if ! install -d -m 0755 "$(dirname "$dest")" 2>/dev/null; then
+    log "warn: could not create bash-completion dir; skipping CLI completion"
+    return 0
+  fi
+  if cp "$src" "$dest" && chmod 644 "$dest"; then
+    log "installed shell completion: $dest"
+  else
+    log "warn: could not install shell completion to $dest"
+  fi
+}
+
 if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
   # --local-build always rebuilds from this repo (never reuse an installed
   # stable binary), so what runs is exactly what the shown branch compiled.
@@ -186,6 +205,8 @@ elif [[ ! -x /usr/local/bin/vps ]]; then
 else
   log "vps already installed, skipping ($(/usr/local/bin/vps version))"
 fi
+
+install_completions
 
 log "running vps install (config/cert/db/nft/systemd)..."
 # Capture the install output so the one-time admin password printed by a fresh

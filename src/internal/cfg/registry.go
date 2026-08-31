@@ -453,6 +453,19 @@ func parseBool(v string) (bool, bool) {
 	return false, false
 }
 
+// EditableKeys returns the sorted keys an operator may pass to `vps config
+// set` (Editable() != "no"), in registry order. Used to generate tab
+// completions so the offered keys always match what `vps config set` accepts.
+func EditableKeys() []string {
+	var keys []string
+	for _, f := range Fields {
+		if f.Editable() != "no" {
+			keys = append(keys, f.Key)
+		}
+	}
+	return keys
+}
+
 // FieldFor returns the registry entry for a key, or nil.
 func FieldFor(key string) *Field {
 	for i := range Fields {
