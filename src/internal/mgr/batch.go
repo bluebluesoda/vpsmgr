@@ -212,6 +212,10 @@ func resourceStateName(state int) string {
 	}
 }
 
+// HumanBytes renders a byte count as a short human string (e.g. "184 MiB").
+// Exportable because the panel shows snapshot sizes.
+func HumanBytes(b int64) string { return humanBytes(b) }
+
 // humanBytes renders a byte count as a short human string (e.g. "184 MiB").
 func humanBytes(b int64) string {
 	const unit = 1024

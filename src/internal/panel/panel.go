@@ -114,6 +114,7 @@ type domainRow struct {
 type snapshotRow struct {
 	Name      string
 	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
+	Size      string // human-readable disk usage, e.g. "184 MiB"; may be empty
 }
 
 // sshKeyRow is one public key shown in the SSH-key management panel.
@@ -368,9 +369,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	// Snapshots come from Incus (one list call). A failure is non-fatal: the
 	// page still renders, and the snapshot modal shows the empty state.
 	if snaps, err := s.mgr.SnapshotList(u.Name); err == nil {
-		for _, sn := range snaps {
-			d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt})
-		}
+	for _, sn := range snaps {
+		d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt, Size: mgr.HumanBytes(sn.Size)})
+	}
 	}
 	d.SnapshotLimit = s.mgr.SnapshotLimit()
 	keys, _ := s.db.ListSSHKeys(u.ID)

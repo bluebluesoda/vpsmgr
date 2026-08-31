@@ -802,6 +802,14 @@ func cmdConfig(args []string) error {
 	case "help":
 		configHelp()
 		return nil
+	case "completions":
+		// Hidden helper: prints the keys accepted by `vps config set`, one per
+		// line, for the bash completion script. Editing it would be wrong —
+		// this is a completion generator, not a config operation.
+		for _, k := range cfg.EditableKeys() {
+			fmt.Println(k)
+		}
+		return nil
 	default:
 		configUsage()
 		return nil
