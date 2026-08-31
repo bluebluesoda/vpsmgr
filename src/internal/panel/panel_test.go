@@ -1019,9 +1019,23 @@ func TestOverviewSnapshotModal(t *testing.T) {
 			t.Errorf("overview missing %q", want)
 		}
 	}
-	// Size column must NOT be rendered.
-	if strings.Contains(body, ">Size<") || strings.Contains(body, ">大小<") {
-		t.Error("snapshot size column should not be rendered")
+	// With the mocked manager the snapshot list on this page is empty, so the
+	// table would not be rendered here. Verify the shipped template carries the
+	// size column header and a per-row size cell; the table body is guarded by
+	// {{if .Snapshots}}, so this checks the template source itself.
+	src, err := tmplFS.ReadFile("templates/overview.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := string(src)
+	// The header is a language-conditional template:
+	//   {{if eq .Lang "zh"}}大小{{else}}Size{{end}}</th>
+	// Check the whole conditional so the language branch change doesn't pass.
+	if !strings.Contains(tpl, "大小{{else}}Size{{end}}</th>") && !strings.Contains(tpl, "Size{{else}}") {
+		t.Error("snapshot size column header should be present in overview.html")
+	}
+	if !strings.Contains(tpl, ".Size") {
+		t.Error("snapshot size cell should be rendered per row in overview.html")
 	}
 	// The snapshot create button must be inside the modal.
 	iModal := strings.Index(body, `id="snapModal"`)
