@@ -59,12 +59,13 @@ fi
 # install there.
 
 # --- storage backend ---
-# zfs (default) or dir, chosen by install.sh / VPSMGR_STORAGE. dir has no
-# quotas/snapshots/clone-on-create and is meant for throwaway test boxes only.
+# zfs (default), btrfs, or dir, chosen by install.sh / VPSMGR_STORAGE. zfs and
+# btrfs both provide quotas/snapshots/clone-on-create; dir has none and is
+# meant for throwaway test boxes only.
 STORAGE="${VPSMGR_STORAGE:-zfs}"
 case "$STORAGE" in
-  zfs|dir) ;;
-  *) die "VPSMGR_STORAGE must be zfs or dir (got '$STORAGE')" ;;
+  zfs|btrfs|dir) ;;
+  *) die "VPSMGR_STORAGE must be zfs, btrfs or dir (got '$STORAGE')" ;;
 esac
 log "storage backend: $STORAGE"
 
@@ -115,8 +116,14 @@ if [[ "$STORAGE" == "zfs" ]]; then
       apt-get update -qq
     fi
   fi
+elif [[ "$STORAGE" == "btrfs" ]]; then
+  # The btrfs driver needs the userspace tools (btrfs / mkfs.btrfs): Incus uses
+  # mkfs.btrfs when it creates a loop-backed pool and the btrfs tool to manage
+  # subvolumes/snapshots/quotas for the native-subvolume case alike.
+  BASE_DEPS="$BASE_DEPS btrfs-progs"
+  log "btrfs backend selected — installing btrfs-progs; no ZFS module/kernel headers needed"
 else
-  log "dir backend — no ZFS tools/module needed; WARNING: disk quotas, snapshots and clone-on-create are NOT available"
+  log "dir backend — no ZFS/btrfs tools needed; WARNING: disk quotas, snapshots and clone-on-create are NOT available"
 fi
 for p in $BASE_DEPS; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then

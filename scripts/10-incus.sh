@@ -120,48 +120,84 @@ done
 [[ -S /var/lib/incus/unix.socket ]] || die "incus daemon socket not ready"
 
 # --- storage pool ---
-# zfs (default) or dir, chosen by install.sh / VPSMGR_STORAGE. ZFS gives Incus
-# quotas, snapshots and clone-on-create — the whole disk model. The dir backend
-# has none of those and is only offered for throwaway test boxes; it is NEVER a
-# fallback (a failed zfs pool is a hard error, not a silent downgrade).
-# New installations use a sparse loop-file ZFS pool on /. Incus does NOT bundle
-# the ZFS userspace tools, so zfsutils-linux must be installed (00-check.sh
-# ensures it).
+# zfs (default), btrfs or dir, chosen by install.sh / VPSMGR_STORAGE. zfs and
+# btrfs give Incus quotas, snapshots and clone-on-create — the whole disk
+# model. Both can be backed by a sparse loop file anywhere, and btrfs can also
+# live as a native subvolume on a btrfs host filesystem. The dir backend has
+# none of those features and is only offered for throwaway test boxes; it is
+# NEVER a fallback (a failed pool is a hard error, not a silent downgrade).
+# New installations use a sparse loop-file pool on / (zfs, or btrfs when the
+# host is not itself btrfs). Incus does NOT bundle the ZFS userspace tools, so
+# zfsutils-linux must be installed (00-check.sh ensures it); btrfs-progs is
+# ensured the same way for btrfs.
 STORAGE="${VPSMGR_STORAGE:-zfs}"
 case "$STORAGE" in
-  zfs|dir) ;;
-  *) die "VPSMGR_STORAGE must be zfs or dir (got '$STORAGE')" ;;
+  zfs|btrfs|dir) ;;
+  *) die "VPSMGR_STORAGE must be zfs, btrfs or dir (got '$STORAGE')" ;;
 esac
 if [[ "$STORAGE" == "zfs" ]]; then
   command -v zpool >/dev/null 2>&1 || die "zfsutils-linux is not installed (zpool missing) — 00-check.sh should have installed it; run it or: apt-get install -y zfsutils-linux"
+fi
+if [[ "$STORAGE" == "btrfs" ]]; then
+  command -v btrfs >/dev/null 2>&1 || die "btrfs-progs is not installed (btrfs missing) — 00-check.sh should have installed it; run it or: apt-get install -y btrfs-progs"
 fi
 POOL=vpsmgr
 POOL_EXISTS=0
 if incus storage show "$POOL" >/dev/null 2>&1; then
   POOL_EXISTS=1
   DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
-  if [[ "$STORAGE" == "zfs" && "$DRIVER" != "zfs" ]]; then
-    die "existing storage pool '$POOL' uses driver '$DRIVER' — zfs mode requires ZFS (dir has no quotas)"
+  if { [[ "$STORAGE" == "zfs" || "$STORAGE" == "btrfs" ]] && [[ "$DRIVER" != "$STORAGE" ]]; }; then
+    die "existing storage pool '$POOL' uses driver '$DRIVER' — ${STORAGE} mode requires ${STORAGE} (dir has no quotas)"
   fi
   log "storage pool '$POOL' exists ($DRIVER)"
 fi
 
 # Decide how to configure the pool in preseed.
-# New installations always use a sparse loop-file ZFS pool on /. The installer
-# deliberately never scans, selects, formats, or modifies secondary block
-# devices: virtual CD/ISO devices and provider-specific disk layouts are left
-# completely untouched. Existing vpsmgr pools are adopted unchanged.
+# New installations always use a sparse loop-file pool on / (zfs, or btrfs
+# when the host is not itself btrfs), PLUS a native btrfs subvolume when a
+# btrfs host chooses the btrfs backend. The installer deliberately never scans,
+# selects, formats, or modifies secondary block devices: virtual CD/ISO
+# devices and provider-specific disk layouts are left completely untouched.
+# Existing vpsmgr pools are adopted unchanged.
 DRIVER=$STORAGE
 POOL_SIZE_MB=""
+LOOP_BACKED=0
+BTRFS_SOURCE=""
 if [[ $POOL_EXISTS -eq 1 ]]; then
   # Adopt existing pool.
   DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
   SRC_LINE="    source: \"$POOL\""
   SIZE_LINE=""
 elif [[ "$STORAGE" == "zfs" ]]; then
-  # Loop-file pool: the pool is sparse and grows on demand inside /. Before
-  # sizing it, reclaim caches and build artifacts when free space is tight so
-  # the pool, Incus image store, and host remain usable.
+  LOOP_BACKED=1
+elif [[ "$STORAGE" == "btrfs" ]]; then
+  # On a btrfs host, prefer a native subvolume directly on the filesystem:
+  # reflink clones, no loop-device overhead, no double space accounting, and
+  # the whole root's free space is available to the pool. Incus only accepts a
+  # btrfs source path of `<dataDir>/storage-pools/<pool>`, which it creates
+  # ITSELF as the subvolume — so the source is NOT created here and must not
+  # already exist (a pre-existing path makes Incus refuse with "already
+  # exists"). Any other host is a loop file, exactly like zfs.
+  BTRFS_MNT=$(findmnt -no FSTYPE /)
+  if [[ "$BTRFS_MNT" == "btrfs" ]]; then
+    BTRFS_SOURCE=/var/lib/incus/storage-pools/$POOL
+    SRC_LINE="    source: \"$BTRFS_SOURCE\""
+    SIZE_LINE=""
+    log "btrfs native subvolume '$POOL' on the btrfs host filesystem (source: $BTRFS_SOURCE, created by Incus)"
+  else
+    LOOP_BACKED=1
+  fi
+else
+  log "dir pool '$POOL' (no quotas, snapshots or clone-on-create)"
+  SRC_LINE="    {}"
+  SIZE_LINE=""
+fi
+
+# Shared loop-file sizing for zfs and (btrfs on a non-btrfs host). The pool is
+# sparse and grows on demand inside /. Before sizing it, reclaim caches and
+# build artifacts when free space is tight so the pool, Incus image store, and
+# host remain usable.
+if [[ $LOOP_BACKED -eq 1 ]]; then
   FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
   if (( FREE_KB < 25 * 1024 * 1024 )); then
     log "free space on / is $(( FREE_KB / 1024 / 1024 )) GiB (< 25 GiB) — reclaiming caches before sizing the pool..."
@@ -208,13 +244,9 @@ elif [[ "$STORAGE" == "zfs" ]]; then
     PCT=90
   fi
   POOL_SIZE_MB=$(( FREE_KB * PCT / 100 / 1024 ))
-  log "loop-file zfs pool '$POOL' on / (~${POOL_SIZE_MB} MiB = ${PCT}% of free)"
+  log "loop-file ${STORAGE} pool '$POOL' on / (~${POOL_SIZE_MB} MiB = ${PCT}% of free)"
   SRC_LINE=""
   SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
-else
-  log "dir pool '$POOL' (no quotas, snapshots or clone-on-create)"
-  SRC_LINE="    {}"
-  SIZE_LINE=""
 fi
 
 # --- incus admin init (preseed) ---
@@ -283,12 +315,23 @@ EOF
       incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none dns.mode=none
     fi
     if ! incus storage show "$POOL" >/dev/null 2>&1; then
-      if [[ "$STORAGE" == "zfs" ]]; then
-        [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool"
-        incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
-      else
-        incus storage create "$POOL" dir || die "dir pool creation failed"
-      fi
+      case "$STORAGE" in
+        zfs)
+          [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool"
+          incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
+          ;;
+        btrfs)
+          if [[ -n "$BTRFS_SOURCE" ]]; then
+            incus storage create "$POOL" btrfs source="$BTRFS_SOURCE" || die "btrfs native-subvolume pool creation failed"
+          else
+            [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the btrfs pool"
+            incus storage create "$POOL" btrfs size="${POOL_SIZE_MB}MiB" || die "btrfs pool creation (loop file) failed"
+          fi
+          ;;
+        dir)
+          incus storage create "$POOL" dir || die "dir pool creation failed"
+          ;;
+      esac
     fi
   fi
 else
@@ -314,12 +357,15 @@ incus network set incusbr0 dns.mode=none 2>/dev/null || true
 
 DRIVER_NOW=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"
-if [[ "$STORAGE" == "zfs" ]]; then
-  if [[ "$DRIVER_NOW" != "zfs" ]]; then
-    die "storage pool '$POOL' is not ZFS ('$DRIVER_NOW') — zfs mode requires ZFS (quotas, snapshots, clones)"
-  fi
-else
-  log "  warn: dir backend — disk quotas, snapshots and clone-on-create are NOT enforced"
-fi
+case "$STORAGE" in
+  zfs|btrfs)
+    if [[ "$DRIVER_NOW" != "$STORAGE" ]]; then
+      die "storage pool '$POOL' is not ${STORAGE^^} ('$DRIVER_NOW') — ${STORAGE} mode requires ${STORAGE} (quotas, snapshots, clones)"
+    fi
+    ;;
+  dir)
+    log "  warn: dir backend — disk quotas, snapshots and clone-on-create are NOT enforced"
+    ;;
+esac
 
 echo "[10] incus ready"

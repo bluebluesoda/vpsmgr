@@ -37,9 +37,13 @@ repo (`10-incus.sh`) — never snap, never the `lxc` CLI.
 - `internal/lx` is the ONLY package that talks to Incus. Exec is done over the
   API websocket transport (`Exec`/`ExecSH`/`RunInitScript`) — there must be no
   `incus`/`lxc` CLI calls in the panel runtime path.
-- Storage pool `vpsmgr` (ZFS by default, bridge `incusbr0`). A `dir` backend
+- Storage pool `vpsmgr` (ZFS by default, bridge `incusbr0`). `btrfs` is
+  supported as an alternative backend (on a btrfs host it becomes a native
+  subvolume; elsewhere a loop file) — `VPSMGR_STORAGE=btrfs`. A `dir` backend
   exists only as an explicit `VPSMGR_STORAGE=dir` opt-in for test boxes — never
-  a fallback; a failed ZFS pool must abort, not downgrade.
+  a fallback; a failed pool (ZFS/btrfs) must abort, not downgrade. Container
+  management is storage-driver-transparent in the Go panel; the only driver-
+  aware code is `lx.EnsureZFSRemoveSnapshots`, which is a no-op off ZFS.
 - A remote-qualified fallback image (`images:debian/13`) must go through
   `lx.EnsureImage` before `lx.Launch` — the API cannot auto-fetch it inside the
   create call (unlike the old `lxc launch` CLI).
