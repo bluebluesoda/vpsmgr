@@ -411,7 +411,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 
 <div class="overlay" id="snapModal">
-<div class="modal">
+<div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}时光机{{else}}Time machine{{end}}</h3>
 <p class="muted">{{if eq .Lang "zh"}}时光机只能回到过去，不能前往未来。恢复到某个检查点会丢失当前数据，以及在此之后创建的所有检查点。每容器最多 {{.SnapshotLimit}} 个检查点。{{else}}A time machine only goes back in time. Restoring to a checkpoint loses the current data and every checkpoint created after it. Up to {{.SnapshotLimit}} per container.{{end}}</p>
 <div class="btnrow">
@@ -419,12 +419,13 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 {{if .Snapshots}}
 <table class="domtable">
-<thead><tr><th>{{if eq .Lang "zh"}}检查点{{else}}Checkpoint{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th></th></tr></thead>
+<thead><tr><th>{{if eq .Lang "zh"}}检查点{{else}}Checkpoint{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th>{{if eq .Lang "zh"}}大小{{else}}Size{{end}}</th><th></th></tr></thead>
 <tbody>
 {{range .Snapshots}}
 <tr>
 <td><code>{{.Name}}</code></td>
 <td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
+<td><span class="muted">{{.Size}}</span></td>
 <td>
 <button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
 <button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
