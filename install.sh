@@ -85,6 +85,36 @@ if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
   esac
 fi
 
+# Defensive guard: a plain (no-flag) ./install.sh downloads the prebuilt
+# RELEASE binary, which always comes from the `main` branch — regardless of
+# which branch is checked out. If this is a real git checkout sitting on a
+# non-`main` branch, that is almost certainly not what the operator intends
+# (they usually expect the dev branch's code to be installed). Prompt for
+# confirmation. Tarball / one-click pipe installs have no .git directory and
+# therefore skip this check entirely. The branch is read directly from
+# .git/HEAD so no git(1) binary is required.
+if [[ "$BUILD_MODE" == "release" && -d "$ROOT/.git" ]]; then
+  RELEASE_BRANCH="$(sed -n 's|^ref: refs/heads/||p' "$ROOT/.git/HEAD" 2>/dev/null)"
+  if [[ "$RELEASE_BRANCH" != "main" ]]; then
+    if [[ -z "$RELEASE_BRANCH" ]]; then
+      RELEASE_BRANCH="(detached HEAD)"
+    fi
+    echo
+    echo "!! You are on branch '$RELEASE_BRANCH', but a plain ./install.sh installs the !!"
+    echo "   prebuilt RELEASE binary from the main branch — NOT this branch's code."
+    echo "   (use ./install.sh --local-build to compile this checkout's branch instead)"
+    if [[ ! -t 0 ]]; then
+      echo "[install] non-interactive — proceeding with the release (prebuild) install"
+    else
+      read -r -p "Continue anyway? (y/N) " RELEASE_CONFIRM
+      case "$RELEASE_CONFIRM" in
+        y|Y|yes|YES) ;;
+        *) echo "[install] aborted by user — release install declined (branch '$RELEASE_BRANCH'); use --local-build to install this branch"; exit 1 ;;
+      esac
+    fi
+  fi
+fi
+
 # Local build: make it obvious WHICH branch will be compiled, and give the user
 # a chance to abort — some people want a dev build but end up building stable.
 if [[ "$BUILD_MODE" == "local" ]]; then
