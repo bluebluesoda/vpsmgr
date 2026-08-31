@@ -450,7 +450,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		msg = "error: " + err.Error()
 	} else {
 		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.create")
-		msg = "ok: snapshot created"
+		msg = "ok: checkpoint created"
 	}
 	s.redirect(w, r, s.p(""), msg)
 }
@@ -468,7 +468,7 @@ func (s *Server) handleSnapshotDel(w http.ResponseWriter, r *http.Request) {
 		msg = "error: " + err.Error()
 	} else {
 		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.delete")
-		msg = "ok: snapshot deleted"
+		msg = "ok: checkpoint deleted"
 	}
 	s.redirect(w, r, s.p(""), msg)
 }
@@ -487,7 +487,7 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 		msg = "error: " + err.Error()
 	} else {
 		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.restore")
-		msg = "ok: snapshot restored"
+		msg = "ok: checkpoint restored"
 	}
 	s.redirect(w, r, s.p(""), msg)
 }
