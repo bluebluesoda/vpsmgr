@@ -201,6 +201,32 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   soft `color-mix()` tint that stays readable in both light and dark mode. Only
   the admin can set it; users cannot. Setting/clearing is audited as
   `color.update` under `000+<user>`.
+- **Snapshots ("时光机" / time machine)**: each user can keep up to
+  `snapshots.limit` disk-only checkpoints (named `snap-<UTC>...`) of their
+  container and create / delete / restore them from the panel. The panel calls
+  them **检查点/checkpoints** and frames the whole feature as a **time machine
+  that only goes back**: restoring to a checkpoint that is NOT the newest
+  discards the current data and every checkpoint created after it.
+
+  Restore is a single Incus call. Every container's root storage volume carries
+  `zfs.remove_snapshots=true`, so Incus performs a **ZFS recursive rollback**
+  that auto-destroys the newer snapshots in one operation — mirroring the ZFS
+  rule that you cannot roll back to an older snapshot while newer ones
+  exist (`cannot be restored due to subsequent snapshot(s)`). The setting is
+  applied to the root volume when a container is added or reinstalled, and by
+  an `ApplyZFSRemoveSnapshotsToAll` pass that `vps install` runs, so a host
+  upgraded via `install.sh --update` gets the behaviour immediately without
+  reinstalling containers. It only applies to the ZFS pool; the `dir` test
+  backend is skipped (it has no snapshots at all). As a belt-and-braces
+  fallback, `SnapshotRestore` checks for the "subsequent snapshot" refusal on
+  a container that somehow lacks the option, deletes the newer snapshots by
+  creation time, and retries once.
+
+  Restoring a checkpoint keeps the current container configuration (quotas,
+  NICs, autostart) — only the disk is rolled back, so the restore never
+  desyncs the Incus configuration from the vpsmgr DB. Reinstalling the
+  container deletes every checkpoint, which the reinstall dialog warns about
+  with the exact count.
 
 ## Storage
 
