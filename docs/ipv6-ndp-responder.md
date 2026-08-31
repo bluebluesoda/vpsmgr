@@ -118,6 +118,40 @@ The real **data-plane** change is confined to prefix mode and to the NDP
 handling around it. Login, snapshots, quotas, pool mode, IPv4 and the panel are
 untouched.
 
+## Relationship to the existing isolation layer
+
+The responder is not the first NDP-related mechanism in vpsmgr; the container
+isolation layer predates it by far (introduced with the Incus port,
+`security.port_isolation` + `security.ipv4/ipv6_filtering`, in
+`src/internal/lx/lx.go`). These two address **different directions** and do not
+conflict:
+
+| Layer | Direction | Defence target | Mechanism |
+|---|---|---|---|
+| Isolation Layer | **east-west** on the bridge | isolate containers, stop ARP/NDP spoofing, protect the host's own neighbour cache | Incus bridge input rules (`security.ipv4/v6_filtering`, `port_isolation`) |
+| This responder | **north-south** on the upstream NIC (`eth0`) | let strict upstreams resolve container /112 addresses | host-side in-tree raw-socket NA replies for inbound NS |
+
+The responder listens on the host's upstream interface for NS aimed at the
+routed /112 block; the isolation rules filter *guest*-originated neighbour
+packets inside the bridge. Different directions, so they do not overlap in
+normal prefix-mode topologies.
+
+### The interaction point: gateway-neighbour pinning
+
+`security.ipv6_filtering` has a deliberate side effect: it drops the **guest's
+own NDP lookup** for the bridge gateway `fe80::1` (that reply claims an address
+the guest does not own, so the rule discards it). Without a dance-around, a
+guest cannot resolve its default route's neighbour — the earlier fix's
+filtering breaks the new requirement of egress through the host.
+
+The responder work treats this explicitly, not as a conflict but as a
+constraint to plan around: the guest pins `fe80::1` to the bridge MAC (`ip -6
+neigh replace \u2026 nud permanent` in the runtime script, and `[Neighbor]` in
+networkd), with `UseGateway=false` guarding against a competing RA default
+route. So the new code **relies on** the isolation layer's behaviour and
+coexists with it — one closes the neighbour-spoofing hole, the other makes
+strict upstreams able to reach the block through the existing design.
+
 ## Notes on a few deliberate decisions
 
 - **File name kept as `ndppd.conf`.** The format (bare `rule <cidr> {}`) is
@@ -171,3 +205,5 @@ routed prefix:
 - Base behaviour and prefix/pool modes: [ipv6.md](ipv6.md).
 - This document's rationale: the original provider bug report plus the
   `dev-ndp` branch review (issues A and B).
+- The isolation layer this responder coexists with: `src/internal/lx/lx.go`
+  (`nicIsolation`) and `security.ipv6_filtering`.
