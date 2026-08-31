@@ -25,6 +25,7 @@ import (
 	"vpsmgr/internal/fw"
 	"vpsmgr/internal/inter"
 	"vpsmgr/internal/mgr"
+	"vpsmgr/internal/ndp"
 	"vpsmgr/internal/panel"
 	"vpsmgr/internal/pw"
 	"vpsmgr/internal/su"
@@ -91,6 +92,31 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 `
 
+// ipv6ProxyUnit is the PREFIX-mode boot unit: it rebuilds the host routes and
+// the guest static IPv6 config once (ExecStartPre), then runs the long-lived
+// in-process NDP responder whose NA source is the advertised global address
+// (ndppd and Linux proxy_ndp use a link-local source that this class of
+// provider rejects). Runs as root (raw AF_PACKET socket) and is restarted on
+// failure; RestartSec=2 keeps a genuinely broken ext_if from hot-looping. The
+// responder re-reads the NDP rule file while it runs, so vps add/del never
+// restarts it.
+const ipv6ProxyUnit = `# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
+Description=vps IPv6 pass-through routes and NDP responder
+After=network-online.target incus.service vps-nft.service
+Wants=network-online.target
+Before=vps.service
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/vps ipv6-reapply
+ExecStart=/usr/local/bin/vps ipv6-proxy
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+`
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
@@ -142,6 +168,11 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
+	case "ipv6-proxy":
+		// Root-only systemd worker for prefix-mode NDP. It must emit the
+		// advertised global address as the NA source; ndppd and Linux's
+		// proxy_ndp use a link-local source, which this provider rejects.
+		err = cmdIPv6Proxy()
 	case "ip6":
 		// Root helper behind the sudoers whitelist: validates every argument
 		// before running the pinned ip -6 operations (see main_ip6.go).
@@ -175,7 +206,7 @@ usage:
   vps config list|set|help         inspect/change config.yaml (per-field validated edits)
   vps version
 system:
-  vps install | serve | ipv6-reapply
+  vps install | serve | ipv6-reapply | ipv6-proxy
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
@@ -361,19 +392,43 @@ func cmdInstall() error {
 	if err := writeUnit("vps-nft.service", nftUnit); err != nil {
 		return err
 	}
-	// IPv6 pass-through boot unit (re-applies routes/proxy after reboot).
+	// IPv6 pass-through boot unit. Prefix mode runs the long-lived in-tree NDP
+	// responder (ipv6ProxyUnit); pool mode re-applies routes/proxy at boot via
+	// the oneshot ipv6Unit. Stop the old unit before replacing it so an upgrade
+	// from the previous oneshot/ndppd implementation actually starts the new
+	// responder, and (for the prefix responder) so a bad ext_if fails the
+	// install clearly instead of the service hot-looping under Restart=always.
+	_ = exec.Command("systemctl", "disable", "--now", "vps-ipv6.service").Run()
+	proxyUsable := true
 	if c.IPv6Enabled() {
-		if err := writeUnit("vps-ipv6.service", ipv6Unit); err != nil {
-			return err
+		unit := ipv6Unit
+		if c.IPv6ModeEffective() == cfg.IPv6ModePrefix {
+			unit = ipv6ProxyUnit
+			if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
+				log.Printf("warning: prefix-mode IPv6 needs an Ethernet ext_if (%s): %v — NDP responder not enabled; fix net.ext_if and re-run `vps install`", c.Net.ExtIF, err)
+				proxyUsable = false
+			}
 		}
+		if proxyUsable {
+			if err := writeUnit("vps-ipv6.service", unit); err != nil {
+				return err
+			}
+		} else {
+			_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
+		}
+	} else {
+		_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
 	}
+	// Prefix mode uses the vpsmgr raw NDP responder; a distro ndppd listener
+	// would emit competing (link-local-source) NAs, so disable it explicitly.
+	_ = exec.Command("systemctl", "disable", "--now", "ndppd.service").Run()
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("daemon-reload: %s", strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("systemctl", "enable", "--now", "vps-nft.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vps-nft: %s", strings.TrimSpace(string(out)))
 	}
-	if c.IPv6Enabled() {
+	if c.IPv6Enabled() && proxyUsable {
 		if out, err := exec.Command("systemctl", "enable", "--now", "vps-ipv6.service").CombinedOutput(); err != nil {
 			return fmt.Errorf("enable vps-ipv6: %s", strings.TrimSpace(string(out)))
 		}
@@ -460,6 +515,49 @@ func writeUnit(name, content string) error {
 	return os.Rename(tmp, p)
 }
 
+// ethernetMAC returns the 6-byte hardware address of iface by name, or an
+// error when it is missing or has no Ethernet MAC (a tunnel, bare ifb, some
+// cloud vtaps, bond without a slave, ...). Prefix-mode NDP needs a real L2 MAC
+// to answer neighbor solicitations with, so this is checked both at install
+// (so the responder is not enabled on an interface that can never work) and
+// in cmdIPv6Proxy (fail clearly rather than looping).
+func ethernetMAC(ifname string) (net.HardwareAddr, error) {
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return nil, fmt.Errorf("interface %s: %w", ifname, err)
+	}
+	if len(iface.HardwareAddr) != 6 {
+		return nil, fmt.Errorf("interface %s has no Ethernet MAC (%v)", ifname, iface.HardwareAddr)
+	}
+	return net.HardwareAddr(append([]byte(nil), iface.HardwareAddr...)), nil
+}
+
+// cmdIPv6Proxy runs the prefix-mode NDP responder. Root-only (raw AF_PACKET
+// socket); started by vps-ipv6.service's ExecStart. It only ever answers for
+// addresses inside the operator's routed prefix (see ndp.Run's `allowed`), so a
+// compromised rules-file writer cannot turn the host into an NDP spoofer for
+// arbitrary external addresses. Returns nil when IPv6 is not prefix mode, so
+// the unit is harmlessly idle outside prefix deployments.
+func cmdIPv6Proxy() error {
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if !c.IPv6Enabled() || c.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+		return nil
+	}
+	if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
+		return err
+	}
+	n, err := c.IPv6Network()
+	if err != nil {
+		return err
+	}
+	// n is the parent routed prefix; hand it to the responder as the only
+	// address space it may advertise into.
+	return ndp.Run("/etc/vpsmgr/ndppd.conf", c.Net.ExtIF, n)
+}
+
 // ensureVPSUser sets up the unprivileged 'vps' account the panel daemon runs
 // as. Idempotent, called by `vps install`:
 //   - creates the system user if missing
@@ -535,16 +633,9 @@ vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet vps.service
 # ip — the panel never gets bare ip -6 wildcard rights.
 vps ALL=(root) NOPASSWD: /usr/local/bin/vps ip6 *
 vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
-vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
-vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start
-vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd stop
-vps ALL=(root) NOPASSWD: /usr/bin/pkill -x ndppd
-vps ALL=(root) NOPASSWD: /usr/sbin/ndppd -d -p /var/run/ndppd.pid
-# ndppd reads /etc/ndppd.conf by default (no -c in the init script), but the
-# panel renders the config under /etc/vpsmgr — these pinned commands keep the
-# root-owned symlink /etc/ndppd.conf -> /etc/vpsmgr/ndppd.conf in sync.
-vps ALL=(root) NOPASSWD: /bin/ln -sf /etc/vpsmgr/ndppd.conf /etc/ndppd.conf
-vps ALL=(root) NOPASSWD: /bin/rm -f /etc/ndppd.conf
+# Prefix-mode IPv6 NDP is served by the in-tree responder (root systemd unit,
+# vps-ipv6.service) reading /etc/vpsmgr/ndppd.conf — the panel no longer
+# starts/stops the distro ndppd daemon, so no ndppd/ln-sf grants are needed.
 `
 	if err := os.MkdirAll("/etc/sudoers.d", 0o750); err != nil {
 		return fmt.Errorf("mkdir /etc/sudoers.d: %w", err)
