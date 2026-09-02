@@ -31,6 +31,7 @@ fi
 # Storage backend: zfs (default), btrfs, or dir. zfs and btrfs both provide
 # quotas/snapshots/clone-on-create; dir has none and is only meant for
 # throwaway test boxes. Never fall back automatically.
+VPSMGR_STORAGE_SET="${VPSMGR_STORAGE:-}"
 export VPSMGR_STORAGE="${VPSMGR_STORAGE:-zfs}"
 case "$VPSMGR_STORAGE" in
   zfs|btrfs|dir) ;;
@@ -42,14 +43,58 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# --- storage backend on a btrfs root filesystem ---
+# A ZFS pool cannot be safely created on a btrfs root: its backing loop file
+# would sit on a copy-on-write filesystem, which corrupts the pool. On such a
+# host btrfs is the only full-featured backend (a native subvolume), so:
+#   - VPSMGR_STORAGE unset (default zfs) -> warn and switch to btrfs after an
+#     explicit confirmation (this doubles as the beta confirmation);
+#   - explicit VPSMGR_STORAGE=zfs        -> hard abort (no ZFS on btrfs);
+#   - explicit btrfs / dir               -> unchanged (dir stays the explicit
+#     test-box opt-in, with a note).
+# Non-btrfs roots never reach this block; a plain `./install.sh` there behaves
+# exactly as before.
+BTRFS_CONFIRMED=0
+ROOTFS="$(findmnt -no FSTYPE / 2>/dev/null)" || ROOTFS=""
+if [[ "$ROOTFS" == "btrfs" ]]; then
+  if [[ -z "$VPSMGR_STORAGE_SET" ]]; then
+    echo
+    echo "!! This host's root filesystem is BTRFS !!"
+    echo "   A ZFS pool cannot be created on a btrfs root — its backing loop file"
+    echo "   would sit on a copy-on-write filesystem and corrupt the pool. The"
+    echo "   installer will use the Btrfs (beta) storage backend instead, as a"
+    echo "   native subvolume."
+    if [[ ! -t 0 ]]; then
+      echo "[install] non-interactive — switching to the Btrfs (beta) storage backend (btrfs root)"
+    else
+      read -r -p "Switch to the Btrfs (beta) storage backend? [Y/n] " BTRFS_CONFIRM
+      case "$BTRFS_CONFIRM" in
+        ''|y|Y|yes|YES) ;;
+        n|N|no|NO) echo "[install] aborted by user (declined the Btrfs backend)"; exit 1 ;;
+        *) echo "error: please answer Y or n" >&2; exit 1 ;;
+      esac
+    fi
+    export VPSMGR_STORAGE=btrfs
+    BTRFS_CONFIRMED=1
+  elif [[ "$VPSMGR_STORAGE" == "zfs" ]]; then
+    echo "error: VPSMGR_STORAGE=zfs cannot be used on a btrfs root filesystem" >&2
+    echo "   a ZFS pool cannot be created on btrfs (the copy-on-write backing loop" >&2
+    echo "   file would corrupt the pool); use VPSMGR_STORAGE=btrfs ./install.sh" >&2
+    exit 1
+  elif [[ "$VPSMGR_STORAGE" == "dir" ]]; then
+    echo "   note: dir backend on a btrfs root — quotas, snapshots and clone-on-create are unavailable (test boxes only)"
+  fi
+fi
+
 # --- btrfs backend confirmation (beta) ---
 # The btrfs storage backend is a newer, beta feature. It is expressed by
-# choosing VPSMGR_STORAGE=btrfs. On a btrfs host this is effectively the only
-# full-featured option (a ZFS pool cannot be initialized on top of btrfs), so
-# default to YES — but the operator is explicitly told before proceeding.
-# Non-btrfs installs never reach this block (their default stays zfs, so a
-# plain `./install.sh` behaves exactly as before).
-if [[ "$VPSMGR_STORAGE" == "btrfs" ]]; then
+# choosing VPSMGR_STORAGE=btrfs (or auto-selected on a btrfs root, confirmed
+# above). On a btrfs host this is effectively the only full-featured option (a
+# ZFS pool cannot be initialized on top of btrfs), so default to YES — but the
+# operator is explicitly told before proceeding. Non-btrfs installs never reach
+# this block (their default stays zfs, so a plain `./install.sh` behaves
+# exactly as before).
+if [[ "$VPSMGR_STORAGE" == "btrfs" && "$BTRFS_CONFIRMED" == "0" ]]; then
   echo
   echo "!! Btrfs storage backend selected (VPSMGR_STORAGE=btrfs) !!"
   echo "   Btrfs is a BETA feature. On a Btrfs host a ZFS pool cannot be created,"
