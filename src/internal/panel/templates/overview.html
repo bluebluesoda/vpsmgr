@@ -261,7 +261,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div class="card">
 <h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}</h2>
-<p class="muted">{{if eq .Lang "zh"}}域名 80/443 转发到容器；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 to your container; get the cert yourself.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到容器80/443端口；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
 <table class="domtable">
