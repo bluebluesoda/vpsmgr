@@ -94,7 +94,7 @@ curl -fsSL -O "https://go.dev/dl/${GO_TAR}"
 # go.dev does not serve a plain .sha256 file for the tarball (the URL
 # redirects to the download page), so the checksum is read from the dl JSON
 # API and compared with jq.
-GO_SHA=$(curl -fsSL "https://go.dev/dl/?mode=json" | jq -r --arg v "go${GO_VERSION}" --arg f "${GO_TAR}" ".[] | select(.version == \$v) | .files[] | select(.filename == \$f) | .sha256")
+GO_SHA=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all" | jq -r --arg v "go${GO_VERSION}" --arg f "${GO_TAR}" ".[] | select(.version == \$v) | .files[] | select(.filename == \$f) | .sha256")
 [ -n "$GO_SHA" ] && [ "$(sha256sum "${GO_TAR}" | cut -d" " -f1)" = "$GO_SHA" ] || { echo "go checksum mismatch for ${GO_TAR}" >&2; exit 1; }
 rm -rf /usr/local/go
 tar -C /usr/local -xzf "${GO_TAR}"
