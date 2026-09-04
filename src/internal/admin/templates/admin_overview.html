@@ -118,8 +118,6 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 .toast.err{background:#991b1b}
 .toast.hide{opacity:0}
 /* plan presets (S/M/L cards above the create-user form) */
-.plan-hint{font-size:12px;color:#6b7280;margin:-4px 0 10px}
-@media (prefers-color-scheme: dark){.plan-hint{color:#9aa0a8}}
 .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}
 .plan{border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;background:#fafafa;transition:border-color .25s, box-shadow .25s}
 @media (prefers-color-scheme: dark){.plan{background:#181b20;border-color:#2c3036}}
@@ -193,7 +191,6 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
-    <div class="plan-hint" id="planHint">{{if eq .Lang "zh"}}套餐预设保存在本机浏览器，仅作为快捷填表用。{{else}}Plan presets are stored in this browser as form shortcuts.{{end}}</div>
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z])?" maxlength="31" required title="{{if eq .Lang "zh"}}以小写字母开头、以字母结尾，只能含小写字母、数字和连字符（31 位内，首尾不能是连字符）{{else}}starts and ends with a lowercase letter; lowercase letters, digits and hyphens only, no leading/trailing hyphen (max 31){{end}}"></div>
@@ -394,7 +391,7 @@ var P = "{{.Prefix}}";
 var COPY_OK = {{if eq .Lang "zh"}}"已复制 ✓"{{else}}"Copied ✓"{{end}};
 var COPY_LBL = {{if eq .Lang "zh"}}"复制"{{else}}"Copy"{{end}};
 var CREATE_ING = {{if eq .Lang "zh"}}"创建中…"{{else}}"Creating…"{{end}};
-{{if eq .Lang "zh"}}var PLAN_LBL = {name:'名称', cpu:'CPU', mem:'内存', disk:'磁盘', bw:'流量', apply:'套用', edit:'编辑', save:'保存', cancel:'取消', editTitle:'编辑套餐预设', hint:'点击「套用」将套餐规格填入下方表单（流量为每月限额）'};{{else}}var PLAN_LBL = {name:'Name', cpu:'CPU', mem:'Memory', disk:'Disk', bw:'Bandwidth', apply:'Apply', edit:'Edit', save:'Save', cancel:'Cancel', editTitle:'Edit plan preset', hint:'Press "Apply" to fill the plan specs into the form below (bandwidth is the monthly quota)'};{{end}}
+{{if eq .Lang "zh"}}var PLAN_LBL = {name:'名称', cpu:'CPU', mem:'内存', disk:'磁盘', bw:'流量', apply:'套用', edit:'编辑', save:'保存', cancel:'取消', editTitle:'编辑套餐预设'};{{else}}var PLAN_LBL = {name:'Name', cpu:'CPU', mem:'Memory', disk:'Disk', bw:'Bandwidth', apply:'Apply', edit:'Edit', save:'Save', cancel:'Cancel', editTitle:'Edit plan preset'};{{end}}
 function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); hideLoginAs(); }
 // The "log in as this user" button appears only in the post-create modal.
