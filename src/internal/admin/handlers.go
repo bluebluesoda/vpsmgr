@@ -182,11 +182,11 @@ func (s *Server) loadUsers(d *pageData) {
 	}
 	d.Users = vs
 	d.UserCount = len(vs)
-	// Capacity follows the configured slot range, not a fixed 200: a shrunken
-	// net.slot_range lowers the ceiling, and existing users that fall outside
-	// it (from a wider earlier setting) can push the count past 100% — shown
-	// honestly as over-capacity.
-	d.MaxUsers = s.cfg.SlotCount()
+	// Capacity follows the configured user-port block count, not a fixed 200: a
+	// narrowed net.user_ports lowers the ceiling, and existing users that fall
+	// outside it (from a wider earlier setting) can push the count past 100% —
+	// shown honestly as over-capacity.
+	d.MaxUsers = s.cfg.UserPortCount()
 	if d.MaxUsers > 0 {
 		d.CapacityPct = d.UserCount * 100 / d.MaxUsers
 		// With only a handful of containers the true percentage (e.g. 1/200)

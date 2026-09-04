@@ -94,12 +94,16 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 - User `i` (the container's slot, `idx = v4-last-octet - 1`): container IP
   `10.<n>.0.(i+1)` (subnet `10.<n>.0.0/24`, second octet chosen at install,
   default 115), a random SSH port in `30000-31999` (DNAT to container 22),
-  and a whole-hundred block of 100 user ports `10000 + (i-1)*100 .. +99`
-  (DNAT to the container, TCP+UDP). The `i` a **new** container may take is
-  bounded by `net.slot_range` (an inclusive pair of v4 last octets, default
-  `2-201` = idx `1..200` = 200 containers); shrinking it reduces capacity and
-  the user-port span a host reserves, and affects **new containers only** —
-  existing ones keep their slot/ports even outside the narrowed range.
+  and a whole-hundred block of 100 user ports (DNAT to the container, TCP+UDP).
+  The block a **new** container takes is drawn from `net.user_ports` (default
+  `10000-29999` = 200 blocks = 200 containers), a comma-separated set of
+  inclusive port ranges auto-aligned to whole hundreds; narrowing the ranges
+  reduces capacity and the user-port span a host reserves, and affects **new
+  containers only** — existing ones keep their port blocks even outside the
+  current ranges. The IP slot `idx` (1..200) and the port block are allocated
+  independently: `NextFreeIdx` picks the IPv4, `allocUserPortBlock` picks a
+  free 100-port block inside the configured ranges (start_port UNIQUE is the
+  cross-process backstop).
 - **IPv4 inbound policy (`v4_forward`)**: the SSH/port-block DNAT above only
   exists while `net.v4_forward` is true. When false (IPv6-only box), no DNAT
   rules are written and traefik is stopped (domains kept but not served); the
@@ -454,7 +458,8 @@ returns an error when any container could not be repaired.
   containers, the storage pool and the Incus package.
 - `install.sh` detects an existing `/etc/vpsmgr/config.yaml` and adopts it
   (users/domains survive). `00-ip-ask.sh` reuses a previously configured
-  `ipv6_subnet` / `subnet` / `slot_range` instead of re-asking.
+  `ipv6_subnet` / `subnet` / `user_ports` instead of re-asking; a legacy
+  `slot_range` is converted to `user_ports` once and the new key persisted.
 - `install.sh --local-build` prints the current git branch and waits 10 s
   (Ctrl-C to abort) before starting, and always rebuilds rather than reusing
   an installed stable binary. `install.sh --update` explicitly re-downloads

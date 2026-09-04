@@ -236,8 +236,15 @@ fi
 # NOT fail — it proceeds with Traefik installed but DISABLED (net.traefik
 # false, not started/autostarted), so a host that already serves 80/443 is
 # still usable; the operator can re-enable later via `vps config set
-# net.traefik true`. The user-port span (from net.slot_range) and the SSH
-# range (30000-31999) stay hard failures.
+# net.traefik true`. The user-port ranges (from net.user_ports, exported by
+# 00-ip-ask.sh as VPSMGR_USER_PORTS; default 10000-29999) stay hard failures.
+#
+# SSH ports (30000-31999) are deliberately NOT checked here: they are allocated
+# per-container at `vps add` time with a "probe the port, reassign on conflict"
+# loop (mgr.allocSSHPort binds the candidate to detect a live listener), so an
+# occupied port no longer blocks the install — the host simply skips it. This
+# keeps the install usable on machines that happen to run something in that
+# range.
 #
 # 00-check runs as a separate bash process, so its env cannot reach the rest of
 # the installer. The decision therefore goes through a root-only marker file
@@ -247,25 +254,34 @@ rm -f /etc/vpsmgr/.install-traefik-off 2>/dev/null || true
 if [[ "${VPSMGR_DISABLE_V4FORWARD:-0}" == "1" ]]; then
   log "v4 forwarding disabled by installer — skipping reserved port checks"
 else
-# The user-port block only spans the configured slot range (net.slot_range,
-# exported by 00-ip-ask.sh as VPSMGR_SLOT_RANGE; default 2-201): each slot
-# idx (= octet-1) owns [10000+(idx-1)*100, +99]. So a shrunken range reserves
-# far fewer host ports, and only those must be free — checking the whole
-# 10000-29999 regardless of the range would block a small-footprint install
-# that never uses the upper ports. SSH (30000-31999) stays reserved no matter
-# the range (SSH ports are drawn independently of idx).
-SLOT_RANGE="${VPSMGR_SLOT_RANGE:-2-201}"
-RANGE_LO="${SLOT_RANGE%%-*}"
-RANGE_HI="${SLOT_RANGE##*-}"
-USER_LO_PORT=$(( 10000 + (RANGE_LO - 2) * 100 ))
-USER_HI_PORT=$(( 10000 + (RANGE_HI - 2) * 100 + 99 ))
-port_hard_reserved(){
+# Only the ports the configured user-port ranges actually reserve must be
+# free — checking the whole 10000-29999 regardless of the ranges would block a
+# small-footprint install that never uses the upper ports. VPSMGR_USER_PORTS is
+# the comma-separated (already whole-hundred aligned) ranges exported by
+# 00-ip-ask.sh; default 10000-29999. SSH ports (30000-31999) are NOT checked
+# here — they are probed per-container at add time (see allocSSHPort).
+USER_PORTS="${VPSMGR_USER_PORTS:-10000-29999}"
+port_in_user_ranges(){
   local p="$1"
-  (( p >= USER_LO_PORT && p <= USER_HI_PORT )) && return 0
-  (( p >= 30000 && p <= 31999 )) && return 0
+  local r lo hi
+  while IFS=',' read -ra RS; do
+    for r in "${RS[@]}"; do
+      r="${r// /}"
+      [[ -z "$r" ]] && continue
+      lo="${r%%-*}"; hi="${r##*-}"
+      if (( p >= lo && p <= hi )); then
+        return 0
+      fi
+    done
+  done <<<"$USER_PORTS"
   return 1
 }
-log "checking reserved ports (80/443, $USER_LO_PORT-$USER_HI_PORT, 30000-31999)..."
+port_hard_reserved(){
+  local p="$1"
+  port_in_user_ranges "$p"
+  return $?
+}
+log "checking reserved ports (80/443, $USER_PORTS)..."
 CONFLICTS=""
 PORT_80_443_TAKEN=0
 PORT_80_443_PROC=""

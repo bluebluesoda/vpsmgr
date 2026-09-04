@@ -42,8 +42,8 @@ type Manager struct {
 
 	// opMu serializes Add/Del/Reinstall within this process (the panels share
 	// one Manager), so two simultaneous creates cannot race for the same
-	// index/IP. Cross-process CLI races are still caught by the users.idx
-	// UNIQUE constraint plus Add's rollback.
+	// index/IP. Cross-process CLI races are still caught by the users.idx and
+	// users.start_port UNIQUE constraints plus Add's rollback.
 	opMu sync.Mutex
 
 	// throttled tracks which containers currently carry a bandwidth throttle
@@ -141,10 +141,12 @@ func ContainerIP(subnet string, idx int) (string, error) {
 	return ip.String(), nil
 }
 
-// allocSSHPort picks a random free port from the SSH range. It tries random
-// picks first, then falls back to the lowest free one; the ssh_port UNIQUE
-// constraint in the DB is the backstop against a cross-process race (the
-// in-process opMu already serializes adds).
+// allocSSHPort picks a random free port from the SSH range. Two occupancy
+// sets are checked: the DB (ports already handed to other users) and the host
+// itself (a live listener on the port — our DNAT would otherwise silently
+// hijack its traffic). It tries random picks first, then falls back to the
+// lowest free one; the ssh_port UNIQUE constraint in the DB is the backstop
+// against a cross-process race (the in-process opMu already serializes adds).
 func (m *Manager) allocSSHPort() (int, error) {
 	used, err := m.db.UsedSSHPorts()
 	if err != nil {
@@ -153,22 +155,66 @@ func (m *Manager) allocSSHPort() (int, error) {
 	if len(used) >= cfg.SSHPortCount {
 		return 0, errors.New("no free ssh port (pool exhausted)")
 	}
-	for i := 0; i < 32; i++ {
+	avail := func(p int) bool { return !used[p] && sshPortFree(p) }
+	for i := 0; i < 64; i++ {
 		n, err := rand.Int(rand.Reader, big.NewInt(cfg.SSHPortCount))
 		if err != nil {
 			break
 		}
 		p := cfg.SSHPortBase + int(n.Int64())
-		if !used[p] {
+		if avail(p) {
 			return p, nil
 		}
 	}
 	for p := cfg.SSHPortBase; p < cfg.SSHPortBase+cfg.SSHPortCount; p++ {
-		if !used[p] {
+		if avail(p) {
 			return p, nil
 		}
 	}
 	return 0, errors.New("no free ssh port")
+}
+
+// sshPortFree probes whether a port can be bound on all interfaces. A bind
+// failure means a live process already listens there — skipping it keeps the
+// container's DNAT from silently shadowing another service. The probe bind is
+// released immediately and is never part of the ruleset.
+func sshPortFree(p int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+// allocUserPortBlock picks a random free whole-hundred block start from the
+// configured user-port ranges (net.user_ports), excluding blocks already held
+// by existing users. Existing users outside the current ranges keep their
+// blocks — they are simply not in the candidate set here. The start_port
+// UNIQUE constraint is the backstop against a cross-process race.
+func (m *Manager) allocUserPortBlock() (int, error) {
+	starts := m.cfg.UserPortBlockStarts()
+	if len(starts) == 0 {
+		return 0, errors.New("no user-port blocks configured (net.user_ports)")
+	}
+	used, err := m.db.UsedStartPorts()
+	if err != nil {
+		return 0, err
+	}
+	free := make([]int, 0, len(starts))
+	for _, s := range starts {
+		if !used[s] {
+			free = append(free, s)
+		}
+	}
+	if len(free) == 0 {
+		return 0, errors.New("user-port blocks exhausted (all blocks in net.user_ports are taken)")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(free))))
+	if err != nil {
+		return 0, err
+	}
+	return free[n.Int64()], nil
 }
 
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by
@@ -309,8 +355,10 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	idMin, idMax := m.cfg.SlotIdxBounds()
-	idx, err := m.db.NextFreeIdx(idMin, idMax)
+	// IPv4 slot: a random unused idx in 1..MaxUsers (the /24 host range). The
+	// port block is allocated independently from the configured user-port
+	// ranges (allocUserPortBlock) — the two are no longer coupled.
+	idx, err := m.db.NextFreeIdx(1, cfg.MaxUsers)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +381,10 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	startPort := cfg.UserPortBase + (idx-1)*cfg.PortsPerUser
+	startPort, err := m.allocUserPortBlock()
+	if err != nil {
+		return nil, err
+	}
 	// IPv6 assignment depends on the mode:
 	//   - prefix: deterministic /112-derived address (existing behavior)
 	//   - pool:   explicit choice, first free pool address, or "" when the
@@ -600,7 +651,8 @@ func (m *Manager) Del(name string) error {
 	}
 	// If the container cannot actually be removed, keep the DB record and let
 	// the admin retry. Deleting the row anyway would orphan the container and
-	// let NextFreeIdx reuse its IP/ports for a new user — a bridge IP conflict.
+	// let NextFreeIdx reuse its IP (and a new block its ports) for a new user
+	// — a bridge IP conflict.
 	if err := m.lx.Delete(name); err != nil {
 		return fmt.Errorf("delete container: %w", err)
 	}
