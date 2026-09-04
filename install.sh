@@ -176,6 +176,23 @@ if [[ -f /etc/vpsmgr/config.yaml ]]; then
   echo "[install] found existing /etc/vpsmgr/config.yaml — adopting previous setup"
 fi
 
+# incus.image decides whether 50-image.sh must run. A config that sets it to
+# anything other than the default vpsmgr/debian-sshd means the operator runs
+# custom container images (an advanced setup): 50-image.sh would pull Debian
+# 13 and rebuild a default sshd image nobody launches, so it is skipped on
+# both install and upgrade. The default value (or a fresh install with no
+# config yet) still runs 50-image to build the stock image.
+CFG_IMAGE=""
+if [[ -f /etc/vpsmgr/config.yaml ]]; then
+  CFG_IMAGE=$(grep -E '^\s+image:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"' || true)
+fi
+export VPSMGR_SKIP_IMAGE=0
+if [[ -n "$CFG_IMAGE" && "$CFG_IMAGE" != "vpsmgr/debian-sshd" ]]; then
+  echo "[install] incus.image is '$CFG_IMAGE' (not the default vpsmgr/debian-sshd) —"
+  echo "          skipping the Debian 13 sshd image build (50-image.sh); using your custom image"
+  export VPSMGR_SKIP_IMAGE=1
+fi
+
 echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE, storage: $VPSMGR_STORAGE)"
 echo
 
@@ -275,6 +292,12 @@ export VPSMGR_IPV6_MODE="${VPSMGR_IPV6_MODE:-}"
 export VPSMGR_IPV6_POOL="${VPSMGR_IPV6_POOL:-}"
 
 for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
+  # Advanced setup: incus.image is a custom (non-default) alias — no Debian 13
+  # sshd image build. Skipped the same way on install and upgrade.
+  if [[ "$step" == "50-image" && "${VPSMGR_SKIP_IMAGE:-0}" == "1" ]]; then
+    echo "[install] skipping $step (custom incus.image configured)"
+    continue
+  fi
   echo
   echo "===== $step ====="
   bash "$ROOT/scripts/$step.sh"
