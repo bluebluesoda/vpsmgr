@@ -138,7 +138,10 @@ func (m *Manager) SaveAdminKeys(in []SSHKeyInput) ([]db.AdminKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	type pending struct{ name, key string; active bool }
+	type pending struct {
+		name, key string
+		active    bool
+	}
 	seen := map[string]bool{}
 	kept := map[int64]bool{}
 	var toAdd []pending

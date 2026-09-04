@@ -75,31 +75,31 @@ type hostView struct {
 
 // userView is one row of the admin user table.
 type userView struct {
-	Name       string
+	Name string
 	// Color is the operator-assigned accent color ("" = default). It colors
 	// the bold username and the "login panel" button for quick user spotting.
-	Color      string
-	State      string
+	Color string
+	State string
 	// Status is the persistent lifecycle state (ready/creating/reinstalling/
 	// failed). Non-ready states are shown to the operator so a crashed
 	// Add/Reinstall is visible instead of looking like a healthy user.
-	Status     string
-	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort string // compact form, e.g. 107xx
-	SSHPort    string
-	QuotaCPU   string
-	QuotaMem   string
-	QuotaDisk  string
-	BandwidthGB  int // monthly bandwidth quota GiB, 0 = unlimited
-	CPUUse     string
-	MemUse     string
-	DiskUsed   string
-	UpGB       string
-	DownGB     string
-	BWTotal    string // up+down this month, GB — used for table sorting
-	IPv6       string
-	Procs      int64  // live process count (0 when stopped)
-	ProcsLimit string // per-container pids.max cap, e.g. "4096"
+	Status      string
+	Ports       string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort  string // compact form, e.g. 107xx
+	SSHPort     string
+	QuotaCPU    string
+	QuotaMem    string
+	QuotaDisk   string
+	BandwidthGB int // monthly bandwidth quota GiB, 0 = unlimited
+	CPUUse      string
+	MemUse      string
+	DiskUsed    string
+	UpGB        string
+	DownGB      string
+	BWTotal     string // up+down this month, GB — used for table sorting
+	IPv6        string
+	Procs       int64  // live process count (0 when stopped)
+	ProcsLimit  string // per-container pids.max cap, e.g. "4096"
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
@@ -158,26 +158,26 @@ func (s *Server) loadUsers(d *pageData) {
 	for _, st := range statuses {
 		u := st.User
 		vs = append(vs, userView{
-			Name:       u.Name,
-			Color:      u.Color,
-			State:      st.State,
-			Status:     u.Status,
-			Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
-			PortsShort: mgr.UserPortsShort(u.StartPort),
-			SSHPort:    strconv.Itoa(u.SSHPort),
-			QuotaCPU:   mgr.FormatCPU(u.CPU),
-			QuotaMem:   strconv.Itoa(u.MemMB) + " MiB",
-			QuotaDisk:  strconv.Itoa(u.DiskGB) + " GiB",
-			BandwidthGB:  u.BandwidthQuotaGB,
-			CPUUse:     st.CPUUse,
-			MemUse:     st.MemUse,
-			DiskUsed:   st.DiskUsed,
-			UpGB:       st.UpGB,
-			DownGB:     st.DownGB,
-			BWTotal:    st.BWTotal,
-			IPv6:       st.IPv6,
-			Procs:      st.Procs,
-			ProcsLimit: lx.DefaultProcessesLimit,
+			Name:        u.Name,
+			Color:       u.Color,
+			State:       st.State,
+			Status:      u.Status,
+			Ports:       mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+			PortsShort:  mgr.UserPortsShort(u.StartPort),
+			SSHPort:     strconv.Itoa(u.SSHPort),
+			QuotaCPU:    mgr.FormatCPU(u.CPU),
+			QuotaMem:    strconv.Itoa(u.MemMB) + " MiB",
+			QuotaDisk:   strconv.Itoa(u.DiskGB) + " GiB",
+			BandwidthGB: u.BandwidthQuotaGB,
+			CPUUse:      st.CPUUse,
+			MemUse:      st.MemUse,
+			DiskUsed:    st.DiskUsed,
+			UpGB:        st.UpGB,
+			DownGB:      st.DownGB,
+			BWTotal:     st.BWTotal,
+			IPv6:        st.IPv6,
+			Procs:       st.Procs,
+			ProcsLimit:  lx.DefaultProcessesLimit,
 		})
 	}
 	d.Users = vs
@@ -399,10 +399,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.AddAuditLog("000+"+name, "user.create")
-	// The password is always auto-generated and shown once.
+	// The password is always auto-generated and shown once. The panel address
+	// is taken from the request's own Host (see panelURL), so it matches
+	// whatever origin the operator actually used to reach the admin panel.
 	cred := "user:      " + res.User.Name +
 		"\npassword:  " + res.Password +
-		"\npanel:     " + s.cfg.PanelURL("/"+s.cfg.Panel.URLPath)
+		"\npanel:     " + s.panelURL(r, "/"+s.cfg.Panel.URLPath)
 	// Carry the username as flash data so the modal can offer "log in as".
 	s.redirectModalData(w, r, s.p(""), cred, res.User.Name)
 }
@@ -536,7 +538,7 @@ func (s *Server) handleResetPanelPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	panel := s.cfg.PanelURL("/" + s.cfg.Panel.URLPath)
+	panel := s.panelURL(r, "/"+s.cfg.Panel.URLPath)
 	_ = s.db.AddAuditLog("000+"+name, "passwd.reset")
 	s.redirectModal(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel))
 }
@@ -622,6 +624,16 @@ func (s *Server) handleLoginAs(w http.ResponseWriter, r *http.Request) {
 	})
 	_ = s.db.AddAuditLog("000+"+u.Name, "session.login")
 	http.Redirect(w, r, userPrefix+"/", http.StatusFound)
+}
+
+// panelURL renders the user-panel address as the browser sees it: https plus
+// the request's own Host (not the configured listen port). This keeps the
+// address shown in admin modals correct when the panel is reached through a
+// reverse proxy on a custom domain or a different port. The scheme is always
+// https — the panel only serves TLS and its session cookie is Secure, so it
+// cannot function over plain http regardless of the transport in between.
+func (s *Server) panelURL(r *http.Request, prefix string) string {
+	return "https://" + r.Host + prefix
 }
 
 // parseMem parses a memory string ("512" or "1G") into MiB, mirroring the CLI.

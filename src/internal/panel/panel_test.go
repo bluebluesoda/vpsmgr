@@ -224,9 +224,9 @@ func TestOverviewShowsMonthlyBandwidth(t *testing.T) {
 func TestOverviewDomSaveHiddenByDefault(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User:     &db.User{Name: "alice"},
-		Prefix:   "/" + testSecret,
-		Domains:  []domainRow{{Domain: "example.com", ProxyProtocol: false}},
+		User:      &db.User{Name: "alice"},
+		Prefix:    "/" + testSecret,
+		Domains:   []domainRow{{Domain: "example.com", ProxyProtocol: false}},
 		V4Forward: true,
 	})
 	if !strings.Contains(html, `id="domSave" hidden`) {
@@ -298,10 +298,10 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 func TestOverviewShowsBandwidthQuota(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User:           &db.User{Name: "alice"},
-		UpGB:           "3.0",
-		DownGB:         "1.0",
-		Prefix:         "/" + testSecret,
+		User:             &db.User{Name: "alice"},
+		UpGB:             "3.0",
+		DownGB:           "1.0",
+		Prefix:           "/" + testSecret,
 		BandwidthQuotaGB: 100,
 		BandwidthUsedGB:  "4.0",
 		BandwidthPct:     4,
@@ -316,14 +316,14 @@ func TestOverviewShowsBandwidthQuota(t *testing.T) {
 	}
 	// Over quota: the throttled badge appears.
 	throttled := srv.renderToString(t, "overview.html", pageData{
-		User:           &db.User{Name: "alice"},
-		UpGB:           "60.0",
-		DownGB:         "41.0",
-		Prefix:         "/" + testSecret,
+		User:             &db.User{Name: "alice"},
+		UpGB:             "60.0",
+		DownGB:           "41.0",
+		Prefix:           "/" + testSecret,
 		BandwidthQuotaGB: 100,
 		BandwidthUsedGB:  "101.0",
 		BandwidthPct:     100,
-		Throttled:      true,
+		Throttled:        true,
 	})
 	for _, want := range []string{"limited to 1Mbps", "width:100%"} {
 		if !strings.Contains(throttled, want) {
@@ -1092,11 +1092,11 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 	var resp struct {
 		Points []struct {
-			M   int64   `json:"m"`
-			C   float64 `json:"c"`
-			Y   int64   `json:"y"`
-			R   int64   `json:"r"`
-			T   int64   `json:"t"`
+			M int64   `json:"m"`
+			C float64 `json:"c"`
+			Y int64   `json:"y"`
+			R int64   `json:"r"`
+			T int64   `json:"t"`
 		} `json:"points"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
@@ -1308,8 +1308,8 @@ func TestOverviewAdminKeysDisclosure(t *testing.T) {
 		Prefix: "/" + testSecret,
 		Lang:   langZh,
 		AdminSSHKeys: []sshKeyRow{
-			{ID: 1, Name: "ops", Key: k1, Active: true},  // already granted
-			{ID: 2, Name: "ci", Key: k2, Active: false},   // not granted
+			{ID: 1, Name: "ops", Key: k1, Active: true}, // already granted
+			{ID: 2, Name: "ci", Key: k2, Active: false}, // not granted
 		},
 		AdminKeysAnyActive: true, // one key granted -> default expanded
 	})

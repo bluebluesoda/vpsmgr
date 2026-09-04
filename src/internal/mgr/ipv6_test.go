@@ -166,11 +166,11 @@ func TestIPv6ContainerScript(t *testing.T) {
 		"DHCP=ipv4",                           // DHCPv6 off
 		"s/^DHCP=true$/DHCP=ipv4/",            // flips the baked DHCP=true
 		"n\\[IPv6AcceptRA\\]",                 // heals mangled old configs (awk regex)
-		"2602:fada:6*",                    // stale on-link route flush
+		"2602:fada:6*",                        // stale on-link route flush
 		"ip -6 route flush cache",
-		"ipv6.method manual",              // RHEL: NM owns the IPv6 stack
+		"ipv6.method manual",                         // RHEL: NM owns the IPv6 stack
 		"ipv6.addresses 2602:fada:6::2bd8:6c9:1/128", // deterministic /128
-		"ipv6.gateway fe80::1",            // bridge's fixed link-local gateway
+		"ipv6.gateway fe80::1",                       // bridge's fixed link-local gateway
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
@@ -249,15 +249,15 @@ func TestPoolContainerScript(t *testing.T) {
 	}
 	// Both stacks: the branch selection and the address/gateway/DHCP markers.
 	for _, want := range []string{
-		"nmcli",                    // RHEL path present
-		"ipv6.method manual",       // RHEL: NM owns the IPv6 stack
+		"nmcli",                           // RHEL path present
+		"ipv6.method manual",              // RHEL: NM owns the IPv6 stack
 		"ipv6.addresses " + addr + "/128", // public /128 bound on eth0
-		"ipv6.gateway fe80::1",     // routed-NIC gateway
-		"ipv4.method disabled",     // v4 lives on eth1 only
-		"systemd-networkd",         // Debian path present
-		"Address=" + addr + "/128", // Debian: static bind
-		"Gateway=fe80::1",          // Debian: default route
-		"DHCP=ipv4",                // eth1 DHCPv4 on both stacks
+		"ipv6.gateway fe80::1",            // routed-NIC gateway
+		"ipv4.method disabled",            // v4 lives on eth1 only
+		"systemd-networkd",                // Debian path present
+		"Address=" + addr + "/128",        // Debian: static bind
+		"Gateway=fe80::1",                 // Debian: default route
+		"DHCP=ipv4",                       // eth1 DHCPv4 on both stacks
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)

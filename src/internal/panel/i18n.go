@@ -81,11 +81,11 @@ func (s *Server) t(r *http.Request, key string, args ...any) string {
 // zh and one en variant toggled by {{if eq .Lang "zh"}}.
 func tr(l, key string, args ...any) string {
 	m := map[string][2]string{ // key -> [zh, en]
-		"err_bad_login":     {"用户名或密码错误", "invalid credentials"},
-		"err_too_many":      {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
-		"err_pass_mismatch": {"两次输入的密码不一致", "The two passwords do not match"},
-		"new_root_password": {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
-		"reinstall_done":    {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
+		"err_bad_login":       {"用户名或密码错误", "invalid credentials"},
+		"err_too_many":        {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
+		"err_pass_mismatch":   {"两次输入的密码不一致", "The two passwords do not match"},
+		"new_root_password":   {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
+		"reinstall_done":      {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
 		"ssh_keys_apply_warn": {"容器当前不可达，密钥已保存，将在下次重装后写入。", "Container unreachable — keys saved and will be applied on the next reinstall."},
 	}
 	pair, ok := m[key]

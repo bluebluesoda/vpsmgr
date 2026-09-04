@@ -27,8 +27,8 @@ func TestParsePublicKey(t *testing.T) {
 		{"ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFEZ", "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFEZ", "", true},
 		// invalid
 		{"", "", "", false},
-		{"ssh-ed25519 AAAA", "", "", false},                 // body too short
-		{"ssh-ed25519 AAAA!!notbase64!!", "", "", false},    // bad body chars
+		{"ssh-ed25519 AAAA", "", "", false},                   // body too short
+		{"ssh-ed25519 AAAA!!notbase64!!", "", "", false},      // bad body chars
 		{"ssh-ed25519 AAAA bogus\n; rm -rf /", "", "", false}, // shell chars are not base64 but the regex body is greedy over base64... see below
 		{"random text", "", "", false},
 		{"ssh-rsa", "", "", false},

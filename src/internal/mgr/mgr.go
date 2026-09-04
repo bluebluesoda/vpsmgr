@@ -487,14 +487,17 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			}
 		}
 	} else {
-		if err := m.WireIPv6(name); err != nil {
-			cleanup()
-			return nil, fmt.Errorf("wire ipv6: %w", err)
-		}
-		// Host-routed peer IPv6 (no L2 discovery / MITM between containers).
+		// Host-routed peer IPv6 (no L2 discovery / MITM between containers):
+		// bring the guest's /128 + local /112 up FIRST, then publish the NDP
+		// rule. Publishing last means an outside client's first SYN never
+		// races the guest still half-configured during `vps add`.
 		if err := m.ConfigureContainerIPv6(name, ""); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("config container ipv6: %w", err)
+		}
+		if err := m.WireIPv6(name); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
 	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr)
@@ -1315,13 +1318,15 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 			}
 		}
 	} else {
-		if err := m.WireIPv6(u.Name); err != nil {
-			rollback()
-			return "", fmt.Errorf("wire ipv6: %w", err)
-		}
+		// Configure the guest's IPv6 first, then publish the NDP rule, so the
+		// outside world only learns the /112 once the container is ready.
 		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
+		}
+		if err := m.WireIPv6(u.Name); err != nil {
+			rollback()
+			return "", fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
 	// User-defined init script (if any): run it detached inside the container,

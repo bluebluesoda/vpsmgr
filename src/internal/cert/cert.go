@@ -28,9 +28,9 @@ func Ensure(certPath, keyPath, ip string) error {
 	}
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	cn := ip
-        if net.ParseIP(ip) == nil {
-                cn = "localhost"
-        }
+	if net.ParseIP(ip) == nil {
+		cn = "localhost"
+	}
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: cn},
@@ -41,7 +41,7 @@ func Ensure(certPath, keyPath, ip string) error {
 		DNSNames:     []string{cn},
 	}
 	if parsed := net.ParseIP(ip); parsed != nil {
-        tmpl.IPAddresses = []net.IP{parsed}
+		tmpl.IPAddresses = []net.IP{parsed}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {

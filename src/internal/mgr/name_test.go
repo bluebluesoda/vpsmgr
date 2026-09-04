@@ -15,7 +15,7 @@ func TestValidateName(t *testing.T) {
 		// Must end with a letter, so digit- and hyphen-terminated names are out.
 		"", "1alice", "1", "Alice", "ALICE", "alice_", "alice.",
 		"-alice", "alice-", "a-", "-a", "al-ice-", "al ice", "alice@x",
-		"al.bob", "alice1", "a1", "vps12345678", "a1b2", strings.Repeat("a", 32), strings.Repeat("a", 31)+"-",
+		"al.bob", "alice1", "a1", "vps12345678", "a1b2", strings.Repeat("a", 32), strings.Repeat("a", 31) + "-",
 	}
 	for _, n := range valid {
 		if err := ValidateName(n); err != nil {
