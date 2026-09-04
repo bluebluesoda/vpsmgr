@@ -419,9 +419,11 @@ func cmdInstall() error {
 	} else {
 		_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
 	}
-	// Prefix mode uses the vpsmgr raw NDP responder; a distro ndppd listener
-	// would emit competing (link-local-source) NAs, so disable it explicitly.
+	// Prefix mode uses the vpsmgr raw NDP responder; a distro ndppd or npd6
+	// listener would emit competing (link-local-source) NAs, so disable both
+	// explicitly. systemctl on a unit that is not present is a harmless no-op.
 	_ = exec.Command("systemctl", "disable", "--now", "ndppd.service").Run()
+	_ = exec.Command("systemctl", "disable", "--now", "npd6.service").Run()
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("daemon-reload: %s", strings.TrimSpace(string(out)))
 	}

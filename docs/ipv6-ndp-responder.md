@@ -194,8 +194,9 @@ routed prefix:
 6. **Broken `ext_if` fails loudly** — on a host whose ext_if has no MAC,
    `vps install` (prefix mode) must *warn and not enable* the responder,
    never spin in a start loop.
-7. **No competing daemon** — `ndppd.service` is inactive (it is disabled at
-   install); a competing link-local NA would break the whole fix.
+7. **No competing daemon** — `ndppd.service` and `npd6.service` are both
+   inactive (they are disabled at install); a competing link-local NA would
+   break the whole fix.
 8. **Guest gateway neighbor + local route** — inside a container,
    `ip neigh` shows `fe80::1` pinned to the bridge MAC and
    `ip -6 route show table local` contains the /112.

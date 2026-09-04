@@ -139,7 +139,7 @@ host does not proxy the private subnet.
 ## Uninstall cleanup
 
 `uninstall.sh` reads the prefix from the config before removal, then: stops
-and disables `ndppd` and removes `/etc/ndppd.conf`, removes any leftover
+and disables `ndppd` / `npd6` and removes `/etc/ndppd.conf`, removes any leftover
 kernel `proxy_ndp` entries and `/128` routes matching the prefix, resets
 `incusbr0` IPv6 to disabled, and restores forwarding sysctls.
 
