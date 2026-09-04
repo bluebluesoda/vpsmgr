@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -298,26 +299,13 @@ func (m *Manager) enableProxyNDP() error {
 const ndppdConfPath = "/etc/vpsmgr/ndppd.conf"
 const ndppdConfLink = "/etc/ndppd.conf"
 
-// linkNDPPDConf points the daemon's default config path at vpsmgr's rendered
-// file. Pinned sudo command (no wildcards), idempotent.
-func (m *Manager) linkNDPPDConf() error {
-	_, err := su.Run("/bin/ln", "-sf", ndppdConfPath, ndppdConfLink)
-	return err
-}
-
-// unlinkNDPPDConf removes the root-owned symlink (pinned sudo rm). A missing
-// file is not an error.
-func (m *Manager) unlinkNDPPDConf() error {
-	_, err := su.Run("/bin/rm", "-f", ndppdConfLink)
-	return err
-}
-
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
-// under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
-// address in a container's block are relayed to the Incus bridge (the container
-// answers for the addresses it binds). `add` / `drop` let a single user be
-// added or removed without racing the DB transaction in Add/Del. Empty when
-// IPv6 is disabled or no container has a block.
+// under a `proxy <ext_if>` section, so the in-tree NDP responder knows which
+// /112 blocks to answer for on the external link. `add` / `drop` let a single
+// user be added or removed without racing the DB transaction in Add/Del.
+// Empty when IPv6 is disabled or no container has a block. The format is kept
+// ndppd-compatible (each rule line is a bare `rule <cidr> {`), even though the
+// daemon is no longer used in prefix mode.
 func (m *Manager) ndppdConf(add, drop string) (string, error) {
 	if !m.cfg.IPv6Enabled() {
 		return "", nil
@@ -362,62 +350,51 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 	return b.String(), nil
 }
 
-// restartNDPPD (re)starts the ndppd daemon after a config write. ndppd 0.2.x
-// has no live reload (SIGHUP terminates it), so a restart is required and its
-// liveness is verified afterwards. The distro init script can wedge in a stale
-// "active (exited)" state, so a failed start falls back to launching the
-// daemon directly. All calls go through the sudoers whitelist.
-func (m *Manager) restartNDPPD() error {
-	if _, err := exec.LookPath("ndppd"); err != nil {
-		return fmt.Errorf("ndppd is not installed (install.sh installs it when IPv6 is enabled)")
-	}
-	_, _ = su.Run("/usr/sbin/service", "ndppd", "restart")
-	if m.ndppdAlive() {
-		return nil
-	}
-	_, _ = su.Run("/usr/sbin/service", "ndppd", "start")
-	if m.ndppdAlive() {
-		return nil
-	}
-	// Last resort: start the daemon directly, bypassing the init script.
-	_, _ = su.Run("/usr/bin/pkill", "-x", "ndppd")
-	_ = os.Remove("/var/run/ndppd.pid")
-	if _, err := su.Run("/usr/sbin/ndppd", "-d", "-p", "/var/run/ndppd.pid"); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ndppdAlive reports whether an ndppd process is running.
-func (m *Manager) ndppdAlive() bool {
-	out, err := exec.Command("pgrep", "-x", "ndppd").Output()
-	return err == nil && len(out) > 0
-}
-
 // writeNDPPD renders the config for the current container set (plus/minus one
-// container) and restarts the daemon. When no container has IPv6 routing the
-// daemon is stopped, so a stale config can never misroute.
+// container) and atomically rewrites the file. The in-tree NDP responder
+// re-reads the file while it runs (vps add/del never restarts it), so the
+// rewrite must be atomic: a unique temp file in the (vps-writable) config dir
+// is renamed over the target, so the responder never reads a half-written rule
+// set and the unprivileged panel never depends on overwriting a possibly
+// root-owned old file (rename checks the parent dir, not the target). When no
+// container has IPv6 routing the file is removed, so a stale rule can never
+// misroute.
 func (m *Manager) writeNDPPD(add, drop string) error {
 	conf, err := m.ndppdConf(add, drop)
 	if err != nil {
 		return err
 	}
 	if conf == "" {
-		_, _ = su.Run("/usr/sbin/service", "ndppd", "stop")
 		_ = os.Remove(ndppdConfPath)
-		_ = m.unlinkNDPPDConf()
 		return nil
 	}
-	if err := os.WriteFile(ndppdConfPath, []byte(conf), 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(ndppdConfPath), ".ndppd.conf.*")
+	if err != nil {
 		return err
 	}
-	// Point the daemon's default config path at the rendered file BEFORE the
-	// restart, or ndppd exits with "Failed to load configuration file
-	// '/etc/ndppd.conf'" and every WireIPv6/UnwireIPv6 fails.
-	if err := m.linkNDPPDConf(); err != nil {
+	tmpPath := tmp.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
 		return err
 	}
-	return m.restartNDPPD()
+	if _, err := tmp.WriteString(conf); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, ndppdConfPath); err != nil {
+		return err
+	}
+	removeTemp = false
+	return nil
 }
 
 // WireIPv6 registers a container's /112 with the NDP proxy so its addresses

@@ -75,7 +75,7 @@ systemctl enable ssh
 # deterministic block would hand a fresh container that useless address.
 if [ -f /etc/systemd/network/eth0.network ]; then
   sed -i "s/^DHCP=true\$/DHCP=ipv4/" /etc/systemd/network/eth0.network
-  printf "\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
+  printf "\n[IPv6AcceptRA]\nUseGateway=false\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
 fi
 # vpsmgr TCP tuning: BBR congestion control, larger autotuned buffers, window
 # scaling on, and no slow-start reset after idle (better for long-lived SSH and

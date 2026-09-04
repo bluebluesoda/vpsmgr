@@ -927,8 +927,8 @@ func TestAdminOverviewColorUI(t *testing.T) {
 		`name="color" value="#e11d48"`, `name="color" value="#3b82f6"`,
 		`name="color" value="#c026d3"`, `name="color" value="#db2777"`,
 		`style="--ubtn:#16a34a;color:#fff"`,
-		`button.neutral { --ubtn: #1c1e21;`, // neutral light default
-		`class="primary neutral" id="cfBtn"`,   // create user: no blue
+		`button.neutral { --ubtn: #1c1e21;`,         // neutral light default
+		`class="primary neutral" id="cfBtn"`,        // create user: no blue
 		`class="primary neutral" id="adminPassBtn"`, // change admin pw: no blue
 	} {
 		if !strings.Contains(html, want) {

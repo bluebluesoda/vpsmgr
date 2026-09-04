@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
-
 )
 
 type User struct {
