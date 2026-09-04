@@ -946,6 +946,47 @@ func TestAdminOverviewColorUI(t *testing.T) {
 	}
 }
 
+// TestAdminOverviewPlanPresets checks the S/M/L plan-preset UI in the
+// overview's create-user card: the preset container and edit modal render in
+// both languages, the three default plan names are language-correct, and the
+// apply/edit actions are wired to the plan slots.
+func TestAdminOverviewPlanPresets(t *testing.T) {
+	srv, _ := newTestServer(t)
+	zh := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langZh})
+	en := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langEn})
+	for _, want := range []string{
+		`id="planHint"`, `id="plans"`, `id="planModal"`, `id="planForm"`,
+		`id="planName"`, `id="planCpu"`, `id="planMem"`, `id="planDisk"`, `id="planBw"`,
+		`id="cfBandwidth"`, `function closePlan()`, `vpsmgr_admin_plans`,
+		// apply/edit buttons and the fixed S/M/L slot defaults are generated in JS
+	} {
+		if !strings.Contains(zh, want) {
+			t.Errorf("zh admin overview missing %q", want)
+		}
+		if !strings.Contains(en, want) {
+			t.Errorf("en admin overview missing %q", want)
+		}
+	}
+	// Default plan names follow the UI language (small/medium/large).
+	for _, want := range []string{"小号", "中号", "大号", "套用", "编辑", "编辑套餐预设"} {
+		if !strings.Contains(zh, want) {
+			t.Errorf("zh admin overview missing plan label %q", want)
+		}
+	}
+	for _, want := range []string{"Small", "Medium", "Large", "Apply", "Edit", "Edit plan preset"} {
+		if !strings.Contains(en, want) {
+			t.Errorf("en admin overview missing plan label %q", want)
+		}
+	}
+	// English must not contain Chinese default names and vice versa.
+	if strings.Contains(en, "小号") {
+		t.Error("en admin overview contains Chinese plan name 小号")
+	}
+	if strings.Contains(zh, "Small") {
+		t.Error("zh admin overview contains English plan name Small")
+	}
+}
+
 // renderToString executes a named admin template into a string for assertions.
 func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
 	t.Helper()
