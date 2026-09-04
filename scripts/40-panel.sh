@@ -16,6 +16,11 @@ ensure_go(){
   # already exists; otherwise install the official Go from go.dev directly.
   # No distro package: Debian 12's golang-go is 1.19 (can't even parse
   # go.mod's `toolchain` directive) and the official tarball is one curl away.
+  #
+  # Some hosts resolve go.dev/dl through an IPv6 path that returns 404 for the
+  # download files (the site and manifest work, the tarball CDN does not), so
+  # every fetch below first tries the default address family and falls back to
+  # forcing IPv4 (`curl -4`) on failure.
   if command -v go >/dev/null 2>&1; then
     if GO_VER=$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//'); then
       major=${GO_VER%%.*}; minor=${GO_VER#*.}; minor=${minor%%.*}
@@ -36,22 +41,37 @@ ensure_go(){
     aarch64) arch=arm64 ;;
     *) die "no official Go for arch $(uname -m)" ;;
   esac
+  # curl_retry: fetch a URL, trying the default address family first (works on
+  # normal hosts and IPv6-first ones) and falling back to forcing IPv4 when the
+  # IPv6 path is broken. Args: <max-time> <url> <outfile>.
+  curl_retry(){
+    local max_time="$1" url="$2" out="$3"
+    if curl -fsSL --max-time "$max_time" -o "$out" "$url" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$out"
+    log "  IPv6 path failed, retrying via IPv4: $url"
+    curl -4 -fsSL --max-time "$max_time" -o "$out" "$url" 2>/dev/null
+  }
   # Read the official stable-download manifest instead of trusting the
   # VERSION endpoint alone. During a new release, VERSION can briefly name a
   # version whose architecture tarball is not available through every CDN
   # edge yet, which otherwise turns a transient 404 into a failed install.
-  local candidates candidate latest filename
-  mapfile -t candidates < <(curl -fsSL --max-time 30 https://go.dev/dl/?mode=json 2>/dev/null | \
-    python3 -c 'import json,sys
+  local candidates candidate filename manifest
+  manifest="/tmp/go-manifest-$$.json"
+  if curl_retry 30 "https://go.dev/dl/?mode=json" "$manifest"; then
+    mapfile -t candidates < <(python3 -c 'import json,sys
 try:
-    releases=json.load(sys.stdin)
+    releases=json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(1)
 for release in releases:
     for f in release.get("files", []):
-        if f.get("os") == "linux" and f.get("arch") == sys.argv[1] and f.get("kind") == "archive":
+        if f.get("os") == "linux" and f.get("arch") == sys.argv[2] and f.get("kind") == "archive":
             print(release["version"] + " " + f["filename"])
-            break' "$arch")
+            break' "$manifest" "$arch")
+    rm -f "$manifest"
+  fi
   # Keep a known previous toolchain as a last-resort candidate if the manifest
   # endpoint is temporarily unavailable. The download loop below still retries
   # every candidate before failing.
@@ -60,13 +80,12 @@ for release in releases:
   fi
   local downloaded=0
   for candidate in "${candidates[@]}"; do
-    latest="${candidate%% *}"
     filename="${candidate#* }"
     tarball="/tmp/${filename}"
     url="https://go.dev/dl/${filename}"
     for attempt in 1 2 3; do
       log "  downloading $url (attempt $attempt/3)"
-      if curl -fsSL --max-time 300 -o "$tarball" "$url"; then
+      if curl_retry 300 "$url" "$tarball"; then
         downloaded=1
         break 2
       fi
