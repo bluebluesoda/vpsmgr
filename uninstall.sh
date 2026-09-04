@@ -21,8 +21,9 @@ if [[ -f /etc/vpsmgr/config.yaml ]]; then
 fi
 if [[ -n "$V6SUBNET" ]]; then
   log "cleaning IPv6 pass-through ($V6SUBNET)..."
-  # stop and disable the NDP proxy (ndppd) and drop its generated config
+  # stop and disable the NDP proxies (ndppd / npd6) and drop generated config
   systemctl disable --now ndppd.service >/dev/null 2>&1 || service ndppd stop >/dev/null 2>&1 || true
+  systemctl disable --now npd6.service >/dev/null 2>&1 || service npd6 stop >/dev/null 2>&1 || true
   rm -f /etc/vpsmgr/ndppd.conf
   rm -f /etc/ndppd.conf   # root-owned symlink -> /etc/vpsmgr/ndppd.conf (created at install)
   # remove proxy_ndp entries on the ext iface for the prefix
