@@ -143,6 +143,7 @@ if [[ "$STORAGE" == "btrfs" ]]; then
 fi
 POOL=vpsmgr
 POOL_EXISTS=0
+PRESEED_SKIP=0
 if incus storage show "$POOL" >/dev/null 2>&1; then
   POOL_EXISTS=1
   DRIVER=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
@@ -245,8 +246,69 @@ if [[ $LOOP_BACKED -eq 1 ]]; then
   fi
   POOL_SIZE_MB=$(( FREE_KB * PCT / 100 / 1024 ))
   log "loop-file ${STORAGE} pool '$POOL' on / (~${POOL_SIZE_MB} MiB = ${PCT}% of free)"
-  SRC_LINE=""
-  SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
+  # --- --zfs-prealloc (INTERNAL TESTING): physically claim the backing file ---
+  # install.sh gates this behind a strictly-fresh ZFS install and an interactive
+  # confirmation; here we only act when explicitly requested and the pool does
+  # not already exist. Instead of handing Incus a sparse backing file that grows
+  # on demand (which on an oversold host can silently run into a full physical
+  # disk), fill the file with incompressible data (openssl AES-CTR, so no host
+  # zero-detection can turn it sparse), create the ZFS pool on that file, then
+  # hand the existing pool to Incus. Incus never touches the file again: pool
+  # growth only ever reuses blocks we already claimed.
+  if [[ "${VPSMGR_ZFS_PREALLOC:-0}" == "1" && "$STORAGE" == "zfs" && "$POOL_EXISTS" -eq 0 ]]; then
+    [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool (--zfs-prealloc)"
+    command -v openssl >/dev/null 2>&1 || die "--zfs-prealloc needs openssl (not found)"
+    POOL_FILE="/var/lib/incus/disks/$POOL.img"
+    if [[ -e "$POOL_FILE" ]]; then
+      die "--zfs-prealloc refuses to run: $POOL_FILE already exists (refusing to overwrite)"
+    fi
+    log "--zfs-prealloc: filling $POOL_FILE with ${POOL_SIZE_MB} MiB of incompressible data (this can take a while)..."
+    mkdir -p "$(dirname "$POOL_FILE")"
+    if ! openssl enc -aes-256-ctr -pass pass:vpsmgr-prealloc -nosalt </dev/zero 2>/dev/null \
+      | dd of="$POOL_FILE" bs=1M count="$POOL_SIZE_MB" oflag=direct conv=fdatasync status=none; then
+      rm -f "$POOL_FILE"
+      die "--zfs-prealloc: backing file fill failed at ${POOL_SIZE_MB} MiB — the host likely does not have the physical space; partial file removed, nothing was created"
+    fi
+    log "--zfs-prealloc: creating ZFS pool '$POOL' on the preallocated file"
+    if ! zpool create -f "$POOL" "$POOL_FILE"; then
+      rm -f "$POOL_FILE"
+      die "--zfs-prealloc: zpool create on the preallocated file failed; backing file removed, nothing was created"
+    fi
+    # autoexpand is intentionally NOT set: the backing file has a fixed logical
+    # size, so an autoexpand trigger could never grow it anyway.
+    log "--zfs-prealloc: handing the existing pool to Incus"
+    incus storage create "$POOL" zfs source="$POOL" || {
+      log "--zfs-prealloc: incus adopt failed — destroying the preallocated pool and aborting"
+      zpool destroy "$POOL"
+      die "--zfs-prealloc: incus storage create source=$POOL failed (adopt)"
+    }
+    # The pool is now Incus-managed and physically claimed. We deliberately do
+    # NOT run the preseed below: re-declaring an existing pool in preseed relies
+    # on Incus's "merge existing entities" semantics, which is a documented
+    # failure/rollback path when the declared config differs (e.g. an empty
+    # `config:` vs the pool's `source`). Instead we create the bridge ourselves
+    # (same parameters preseed would use) and let the profile-patch block at the
+    # end of this script attach the root disk + eth0.
+    log "--zfs-prealloc: creating the incusbr0 bridge"
+    if ! incus network show incusbr0 >/dev/null 2>&1; then
+      V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
+      if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
+        incus network create incusbr0 ipv4.address="$V4_GW" ipv4.nat=true ipv6.address=none ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none \
+          || die "--zfs-prealloc: incus network create incusbr0 failed"
+      else
+        incus network create incusbr0 ipv4.address="$V4_GW" ipv4.nat=true ipv6.address=none dns.mode=none \
+          || die "--zfs-prealloc: incus network create incusbr0 failed"
+      fi
+    fi
+    # Pool + network are in place; skip the entire preseed block below.
+    POOL_EXISTS=1
+    PRESEED_SKIP=1
+    SRC_LINE=""
+    SIZE_LINE=""
+  else
+    SRC_LINE=""
+    SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
+  fi
 fi
 
 # --- incus admin init (preseed) ---
@@ -264,7 +326,10 @@ fi
 # Container IPv4 subnet (10.<n>.0.0/24): the bridge gateway is .1. Defaults to
 # 10.115.0.1/24; 00-ip-ask.sh exports the chosen subnet before this step.
 V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
-if [[ $POOL_EXISTS -eq 0 ]] || ! incus network show incusbr0 >/dev/null 2>&1; then
+# --zfs-prealloc sets PRESEED_SKIP: the pool and bridge were created manually
+# above (re-declaring an existing pool in preseed is a documented rollback
+# path), so skip the whole preseed and rely on the profile-patch block below.
+if [[ "${PRESEED_SKIP:-0}" == "0" ]] && { [[ $POOL_EXISTS -eq 0 ]] || ! incus network show incusbr0 >/dev/null 2>&1; }; then
   PRESEED="$(mktemp /tmp/vpsmgr-preseed.XXXXXX.yaml)"
   trap 'rm -f "$PRESEED"' EXIT
   cat > "$PRESEED" <<EOF

@@ -5,6 +5,7 @@
 #   ./install.sh --local-build    # force local Go compilation of the panel binary
 #   ./install.sh --update         # force re-download of the prebuilt release binary over an existing one
 #   ./install.sh --disable-v4forward  # install IPv6-only inbound policy; skip reserved-port checks
+#   ./install.sh --zfs-prealloc  # INTERNAL TESTING: preallocate the zfs backing file (oversold hosts)
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -12,11 +13,13 @@ ROOT="$PWD"
 
 BUILD_MODE=release
 DISABLE_V4FORWARD=0
+ZFS_PREALLOC=0
 for arg in "$@"; do
   case "$arg" in
     --local-build) BUILD_MODE=local ;;
     --update)      BUILD_MODE=update ;;
     --disable-v4forward) DISABLE_V4FORWARD=1 ;;
+    --zfs-prealloc) ZFS_PREALLOC=1 ;;
   esac
 done
 export VPSMGR_BUILD_MODE="$BUILD_MODE"
@@ -128,6 +131,64 @@ if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
     n|N|no|NO) echo "[install] aborted by user"; exit 1 ;;
     *) echo "error: please answer Y or n" >&2; exit 1 ;;
   esac
+fi
+
+# --- --zfs-prealloc: INTERNAL TESTING ONLY ---
+# Preallocate the ZFS backing file with incompressible data before creating the
+# pool, so the physical space is claimed up front instead of growing sparsely.
+# This is for experimental use on oversold hosts (the backing file's physical
+# footprint is the only thing the operator can truly reserve there). It MUST
+# only ever run on a strictly fresh, ZFS-backed install: an existing pool, pool
+# file, Incus storage pool, or /etc/vpsmgr config means there is data to lose,
+# and there is deliberately NO force override.
+if [[ "$ZFS_PREALLOC" == "1" ]]; then
+  # --zfs-prealloc is only meaningful when the final storage backend is zfs.
+  # This is checked AFTER the btrfs-root block above, which may have switched a
+  # default (unset) VPSMGR_STORAGE to btrfs.
+  if [[ "$VPSMGR_STORAGE" != "zfs" ]]; then
+    echo "error: --zfs-prealloc requires the zfs storage backend (current: $VPSMGR_STORAGE)" >&2
+    echo "   preallocating a backing file only applies to the zfs loop-file pool." >&2
+    exit 1
+  fi
+
+  # Strict fresh-install gate. Any of these means prior state exists; refusing
+  # is safer than guessing. No --force exists on purpose.
+  echo "[install] --zfs-prealloc: checking for an existing install (strict fresh-install gate)"
+  if [[ -f /etc/vpsmgr/config.yaml ]]; then
+    echo "error: --zfs-prealloc refuses to run: /etc/vpsmgr/config.yaml already exists (prior install)" >&2
+    exit 1
+  fi
+  if [[ -e /var/lib/incus/disks/vpsmgr.img ]]; then
+    echo "error: --zfs-prealloc refuses to run: pool backing file /var/lib/incus/disks/vpsmgr.img already exists" >&2
+    exit 1
+  fi
+  if command -v zpool >/dev/null 2>&1 && zpool list vpsmgr >/dev/null 2>&1; then
+    echo "error: --zfs-prealloc refuses to run: a zpool named 'vpsmgr' already exists" >&2
+    exit 1
+  fi
+  if command -v incus >/dev/null 2>&1 && incus storage show vpsmgr >/dev/null 2>&1; then
+    echo "error: --zfs-prealloc refuses to run: an Incus storage pool named 'vpsmgr' already exists" >&2
+    exit 1
+  fi
+  echo "[install] fresh-install gate passed (no config, no pool file, no zpool, no Incus pool)"
+
+  echo
+  echo "!! --zfs-prealloc: INTERNAL TESTING INSTALL !!"
+  echo "   This preallocates the ZFS backing file with incompressible data"
+  echo "   (openssl AES-CTR) so the space is physically claimed on the host now,"
+  echo "   then creates the ZFS pool on that file. It is intended for experimental"
+  echo "   use on oversold hosts and is NOT a supported production install path."
+  if [[ ! -t 0 ]]; then
+    echo "error: --zfs-prealloc requires an interactive confirmation" >&2
+    exit 1
+  fi
+  read -r -p "Continue with the internal-testing --zfs-prealloc install? [y/N] " PREALLOC_CONFIRM
+  case "$PREALLOC_CONFIRM" in
+    y|Y|yes|YES) ;;
+    *) echo "[install] aborted by user (declined --zfs-prealloc)"; exit 1 ;;
+  esac
+  export VPSMGR_ZFS_PREALLOC=1
+  echo "[install] --zfs-prealloc enabled"
 fi
 
 # Defensive guard: a plain (no-flag) ./install.sh downloads the prebuilt

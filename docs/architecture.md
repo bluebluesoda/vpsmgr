@@ -252,6 +252,18 @@ no driver branch in the panel code, and the single driver-aware helper
   format, or modify secondary disks. The loop file only allocates blocks as the
   pool actually fills. On very small hosts, cap the ZFS ARC (`zfs.arc_max`) so
   container memory keeps priority over the pool's cache.
+
+  **Internal-testing preallocation (`install.sh --zfs-prealloc`)**. Experimental
+  mode for oversold hosts whose "disk" is itself a sparse/thin image: there, a
+  sparse vpsmgr pool grows into a physical disk that other tenants share, and a
+  full host surfaces as an unpredictable read-only filesystem rather than a
+  clean quota error. `--zfs-prealloc` fills the pool's backing file with
+  incompressible data (openssl AES-CTR, so host-side zero-detection cannot
+  re-sparsify it) before creating the pool, claiming the physical space up
+  front. It is gated to a strictly fresh, ZFS-backed install only — an existing
+  `/etc/vpsmgr/config.yaml`, pool backing file, `vpsmgr` zpool, or Incus storage
+  pool aborts the install, and there is deliberately no force override. It is
+  not a supported production install path.
 - **btrfs (beta)**. Selecting `VPSMGR_STORAGE=btrfs` is flagged as beta and
   `install.sh` asks for an explicit confirmation up front (default yes — on a
   btrfs root there is no ZFS fallback). When `/` is itself a btrfs filesystem,
