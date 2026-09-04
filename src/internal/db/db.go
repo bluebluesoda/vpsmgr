@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 12
+const schemaVersion = 13
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -234,6 +234,14 @@ var migrations = []struct {
 	// can tell users apart at a glance. Only the admin can set it.
 	{12, []string{
 		`ALTER TABLE users ADD COLUMN color TEXT NOT NULL DEFAULT ''`,
+	}},
+	// v13: port blocks are no longer derived from idx (net.user_ports
+	// decoupled them), so start_port uniqueness must be enforced directly — a
+	// cross-process race (CLI + panel daemon) could otherwise hand the same
+	// block to two users. Existing rows are already unique (they came from the
+	// old idx derivation), so the index applies cleanly.
+	{13, []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_start_port ON users(start_port)`,
 	}},
 }
 

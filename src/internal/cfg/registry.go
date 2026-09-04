@@ -248,16 +248,20 @@ var Fields = []Field{
 			c.Net.V4Forward = b
 			return nil
 		}},
-	{"net.slot_range", KindOperator, ApplyNextAdd,
-		"container slot range (== IPv4 last octet) a new user may take, e.g. 2-201 (up to 200 containers); shrinkable to any sub-range of 2-201; affects ONLY new users, never renumbers existing containers",
-		"2-201 (e.g. 6-201 to free ports on this host)",
-		getStr(func(c *Config) string { return c.Net.SlotRange }),
+	{"net.user_ports", KindOperator, ApplyNextAdd,
+		"user-port ranges a NEW container's 100-port block is drawn from; comma-separated inclusive ranges (e.g. 10000-29999, or 10000-20000, 25000-30000 for discontiguous spans); auto-aligned to whole hundreds; affects ONLY new users, never changes existing containers' ports",
+		"10000-29999 (e.g. 10000-20000, 25000-30000)",
+		getStr(func(c *Config) string { return c.Net.UserPorts }),
 		func(c *Config, v string) error {
-			lo, hi, err := ParseSlotRange(v)
+			rs, err := ParseUserPorts(v)
 			if err != nil {
 				return err
 			}
-			c.Net.SlotRange = fmt.Sprintf("%d-%d", lo, hi)
+			parts := make([]string, len(rs))
+			for i, r := range rs {
+				parts[i] = fmt.Sprintf("%d-%d", r.Lo, r.Hi)
+			}
+			c.Net.UserPorts = strings.Join(parts, ", ")
 			return nil
 		}},
 	{"net.traefik", KindRuntime, ApplyImmediate,

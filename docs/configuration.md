@@ -37,7 +37,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
-| `net.slot_range` | operator | next `vps add` / reinstall | container slot range (read the v4 last octet a new container may take), e.g. `2-201` = 200 containers; shrinkable to any sub-range of `2-201`; affects **new containers only** — existing ones keep their slot/ports |
+| `net.user_ports` | operator | next `vps add` / reinstall | user-port ranges a **new** container's 100-port block is drawn from; comma-separated inclusive ranges (e.g. `10000-29999` = 200 containers, or `10000-20000, 25000-30000`); auto-aligned to whole hundreds; affects **new containers only** — existing ones keep their ports |
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
 | `net.traefik` | runtime toggle | **applied immediately** | false = stop and disable Traefik; existing domains are retained, but new domains cannot be added |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
@@ -125,44 +125,57 @@ snapshots:
 
 ## Port scheme
 The port layout per container is fixed at install and not individually tunable,
-but its **span** follows the container slot range (`net.slot_range`):
+but the **span** new containers may use follows `net.user_ports`:
 
 - **Panel port**: random free port in `2000-9999`, chosen on a fresh install
   and stored in `panel.listen`. Change it in the config only if you know why.
 - **SSH port**: each container gets one random port in `30000-31999` (TCP, DNAT
-  to container `:22`). Independent of `idx`; always reserved regardless of the
-  slot range. Shown as `ssh -p <port>`.
-- **User ports**: each container owns a whole-hundred block of 100 ports,
-  assigned deterministically (`UserPortBase+(idx-1)*100` .. `+99`, where
-  `idx = v4-last-octet - 1`), DNAT to the container (TCP and UDP). Displayed
-  compactly as e.g. `107xx`.
+  to container `:22`). Independent of the user-port ranges. Not reserved at
+  install — each port is probed at `vps add` time, and a candidate already
+  listened on by another process is skipped for another. Shown as `ssh -p
+  <port>`.
+- **User ports**: each container owns a whole-hundred block of 100 ports, drawn
+  at create time from the configured `net.user_ports` ranges, DNAT to the
+  container (TCP and UDP). Displayed compactly as e.g. `107xx`.
 
-### Slot range (`net.slot_range`)
+### User-port ranges (`net.user_ports`)
 
-The slot range bounds which `idx` a **new** container may take, and therefore
-how much of the user-port span (`10000-29999`) a host reserves. It is an
-inclusive pair of v4 last octets, e.g. `2-201` (= idx `1..200`). Set it at
-install (`00-ip-ask.sh` asks right after the subnet octet) or change it later:
+`net.user_ports` names the port ranges a **new** container's 100-port block may
+be drawn from, e.g. `10000-29999` (full) or `10000-20000, 25000-30000` (leave a
+gap for the host). Set it at install (`00-ip-ask.sh` asks right after the
+subnet octet) or change it later:
 
 ```sh
-vps config set net.slot_range 6-201
+vps config set net.user_ports 10000-20000, 25000-30000
 ```
 
 Rules:
 
-- The value must be `A-B` with each end an integer in `2..201` and `A <= B` —
-  i.e. always a **sub-range of the default**, so it can only increase the lower
-  edge and/or decrease the upper edge ("shrink"). Re-expanding within `2..201`
-  is allowed.
-- Capacity follows the range: the default `2-201` allows **200** containers;
-  `6-201` allows **196**, `20-100` allows **81**, and so on.
-- A shrunken install reserves far fewer host user ports, so its port-occupancy
-  check scans only the range's span (`10000+(lo-2)*100` .. `10000+(hi-2)*100+99`)
-  — not the whole `10000-29999`. `80/443` and SSH `30000-31999` are reserved
-  **regardless** of the range.
-- It affects **new containers only**: shrinking never renumbers or removes an
-  existing container (one that falls outside the narrowed range keeps its
-  slot/ports). The admin panel's capacity readout reflects the range.
+- Comma-separated inclusive ranges `A-B` (integers, `A <= B`). Ends may extend
+  outside `10000-29999` — only the overlap with the usable domain counts, and a
+  fully-outside range contributes nothing.
+- Values are **auto-aligned to whole hundreds**: the low end rounds up to a
+  block start and the high end rounds down then extends to `+99`, so the
+  effective range always ends in `...99`, never `...00`. For example
+  `10001-29998` becomes `10100-29999`.
+- At least one whole 100-port block must remain (the value is rejected
+  otherwise) — a range that cannot host even one container is an error.
+- Capacity follows the ranges: `10000-29999` allows **200** containers;
+  `10000-20000, 25000-30000` allows **151**; and so on. The interactive prompt
+  echoes the computed capacity for confirmation.
+- A narrowed set reserves far fewer host user ports, so an install's
+  port-occupancy check scans only the configured ranges — not the whole
+  `10000-29999`. `80/443` is reserved **regardless**; SSH ports (`30000-31999`)
+  are **not** checked at install — each is probed at `vps add` time and the
+  allocator reassigns on conflict (a live listener on the candidate is skipped).
+- It affects **new containers only**: editing the ranges never renumbers or
+  removes an existing container (one whose block falls outside the current
+  ranges keeps it). The admin panel's capacity readout reflects the ranges.
+
+> Legacy: configs written before `net.user_ports` used `net.slot_range` (a
+> range of v4 last octets, e.g. `2-201`). On upgrade the installer converts it
+> once to the equivalent `user_ports` value and writes the new key; the old key
+> stays in the file but is ignored and is no longer an editable config key.
 ## IPv4 inbound policy (`v4_forward`)
 
 `net.v4_forward` controls whether containers receive **shared IPv4 inbound**.

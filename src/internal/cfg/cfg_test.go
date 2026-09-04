@@ -1,6 +1,7 @@
 package cfg
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -201,19 +202,17 @@ func TestFillAutoV4ForwardEnv(t *testing.T) {
 	}
 }
 
-func TestSlotRange(t *testing.T) {
-	// Valid: any sub-range of [2,201] with lo <= hi, including the default.
+func TestParseSlotRangeLegacy(t *testing.T) {
+	// Legacy parser kept only for migrating pre-user_ports configs.
 	cases := []struct {
-		in       string
-		lo, hi   int
-		slots, min, max int // min/max = idx bounds (octet-1)
+		in     string
+		lo, hi int
 	}{
-		{"2-201", 2, 201, 200, 1, 200},
-		{"2-201", 2, 201, 200, 1, 200},
-		{"6-201", 6, 201, 196, 5, 200},
-		{"2-100", 2, 100, 99, 1, 99},
-		{"20-100", 20, 100, 81, 19, 99},
-		{"201-201", 201, 201, 1, 200, 200},
+		{"2-201", 2, 201},
+		{"6-201", 6, 201},
+		{"2-100", 2, 100},
+		{"20-100", 20, 100},
+		{"201-201", 201, 201},
 	}
 	for _, c := range cases {
 		lo, hi, err := ParseSlotRange(c.in)
@@ -224,19 +223,7 @@ func TestSlotRange(t *testing.T) {
 		if lo != c.lo || hi != c.hi {
 			t.Errorf("ParseSlotRange(%q) = %d-%d, want %d-%d", c.in, lo, hi, c.lo, c.hi)
 		}
-		cfg := Default()
-		cfg.Net.SlotRange = c.in
-		if n := cfg.SlotCount(); n != c.slots {
-			t.Errorf("SlotCount(%q) = %d, want %d", c.in, n, c.slots)
-		}
-		iMin, iMax := cfg.SlotIdxBounds()
-		if iMin != c.min || iMax != c.max {
-			t.Errorf("SlotIdxBounds(%q) = %d..%d, want %d..%d", c.in, iMin, iMax, c.min, c.max)
-		}
 	}
-
-	// Invalid: expanding beyond the default edges, lo > hi, malformed, non-int.
-	// (2-200 and 200-201 ARE valid sub-ranges; expanding past the edges is not.)
 	bad := []string{
 		"", " ", "1-201", "2-202", "2-300", "0-200", "3-2", "201-2",
 		"x-y", "2--201", "2-201-", "-2-201", "2.5-201", "201-200", "2-201 extra",
@@ -249,22 +236,174 @@ func TestSlotRange(t *testing.T) {
 	}
 }
 
-func TestFillAutoSlotRangeEnv(t *testing.T) {
+func TestLegacySlotRangeToUserPorts(t *testing.T) {
+	cases := []struct {
+		slot string
+		want string
+	}{
+		{"2-201", "10000-29999"}, // full range
+		{"2-100", "10000-19899"}, // 99 blocks
+		{"102-201", "20000-29999"},
+		{"201-201", "29900-29999"}, // single block
+		{"6-201", "10400-29999"},
+	}
+	for _, c := range cases {
+		got, err := LegacySlotRangeToUserPorts(c.slot)
+		if err != nil {
+			t.Errorf("LegacySlotRangeToUserPorts(%q): %v", c.slot, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("LegacySlotRangeToUserPorts(%q) = %q, want %q", c.slot, got, c.want)
+		}
+	}
+}
+
+func TestParseUserPorts(t *testing.T) {
+	cases := []struct {
+		in    string
+		count int
+		canon string // canonical form; "" = must be rejected
+	}{
+		{"10000-29999", 200, "10000-29999"},                           // default full range
+		{"10000-20000", 101, "10000-20099"},                           // hi rounds down then +99 (never ends in 00)
+		{"10001-29998", 199, "10100-29999"},                           // inward-aligned both ends
+		{"10001-10099", 0, ""},                                        // narrower than one block
+		{"10000-10099", 1, "10000-10099"},                             // exactly one block
+		{"10000-20000, 25000-30000", 151, "10000-20099, 25000-29999"}, // discontiguous
+		{"10000-15000, 14000-20000", 101, "10000-20099"},              // overlapping → merged
+		{"5000-15000", 51, "10000-15099"},                             // lo below domain clamps to 10000
+		{"20000-40000", 100, "20000-29999"},                           // hi above domain clamps to 29999
+		{"10000-10000", 1, "10000-10099"},                             // single port still yields its block
+		{"5000-6000", 0, ""},                                          // fully outside domain
+		{"10000-20000, 21000-21099", 102, "10000-20099, 21000-21099"}, // adjacent not merged (gap 100)
+	}
+	for _, c := range cases {
+		rs, err := ParseUserPorts(c.in)
+		if c.canon == "" {
+			if err == nil {
+				t.Errorf("ParseUserPorts(%q): expected error, got %v", c.in, rs)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseUserPorts(%q): unexpected error: %v", c.in, err)
+			continue
+		}
+		n := 0
+		for _, r := range rs {
+			n += (r.Hi - r.Lo + 1) / 100
+		}
+		if n != c.count {
+			t.Errorf("ParseUserPorts(%q) block count = %d, want %d", c.in, n, c.count)
+		}
+		if got := CanonicalUserPorts(c.in); got != c.canon {
+			t.Errorf("CanonicalUserPorts(%q) = %q, want %q", c.in, got, c.canon)
+		}
+		// Every returned range must be whole-hundred aligned.
+		for _, r := range rs {
+			if r.Lo%100 != 0 || (r.Hi+1)%100 != 0 {
+				t.Errorf("ParseUserPorts(%q) range %d-%d not whole-hundred aligned", c.in, r.Lo, r.Hi)
+			}
+			if r.Lo < UserPortBase || r.Hi > UserPortMax {
+				t.Errorf("ParseUserPorts(%q) range %d-%d outside domain", c.in, r.Lo, r.Hi)
+			}
+		}
+	}
+
+	bad := []string{
+		"", " ", "x-y", "10000-20000 extra", "10000", "10000-20000-30000",
+		"20000-10000", // lo > hi
+		"10000-x",
+	}
+	for _, s := range bad {
+		if _, err := ParseUserPorts(s); err == nil {
+			t.Errorf("ParseUserPorts(%q): expected error", s)
+		}
+	}
+}
+
+func TestUserPortCount(t *testing.T) {
+	cfg := Default()
+	if n := cfg.UserPortCount(); n != 200 {
+		t.Errorf("default UserPortCount() = %d, want 200", n)
+	}
+	cfg.Net.UserPorts = "10000-20000, 25000-30000"
+	if n := cfg.UserPortCount(); n != 151 {
+		t.Errorf("UserPortCount() = %d, want 151", n)
+	}
+	cfg.Net.UserPorts = "garbage"
+	if n := cfg.UserPortCount(); n != 200 {
+		t.Errorf("garbage UserPortCount() = %d, want fallback 200", n)
+	}
+}
+
+func TestFillAutoUserPortsEnv(t *testing.T) {
 	c := Default()
 	c.Net.ExtIF = "eth0"
 	c.Panel.PublicIP = "203.0.113.10"
-	t.Setenv("VPSMGR_SLOT_RANGE", "6-201")
+	t.Setenv("VPSMGR_USER_PORTS", "10000-20000, 25000-30000")
 	if err := c.FillAuto(); err != nil {
 		t.Fatalf("FillAuto: %v", err)
 	}
-	if c.Net.SlotRange != "6-201" {
-		t.Errorf("slot_range = %q, want 6-201", c.Net.SlotRange)
+	if c.Net.UserPorts != "10000-20099, 25000-29999" {
+		t.Errorf("user_ports = %q, want canonical 10000-20099, 25000-29999", c.Net.UserPorts)
 	}
 
 	// A bad env value must fail loudly, not silently default.
-	t.Setenv("VPSMGR_SLOT_RANGE", "2-300")
+	t.Setenv("VPSMGR_USER_PORTS", "5000-6000")
 	if err := Default().FillAuto(); err == nil {
-		t.Error("FillAuto with VPSMGR_SLOT_RANGE=2-300 should fail")
+		t.Error("FillAuto with VPSMGR_USER_PORTS=5000-6000 should fail (no usable block)")
+	}
+}
+
+func TestLoadLegacySlotRangeMigration(t *testing.T) {
+	// A config written before net.user_ports carries only slot_range. Loading
+	// it must convert it to user_ports once (the migration reads the raw file
+	// because Default() pre-fills user_ports with the full range).
+	write := func(body string) string {
+		dir := t.TempDir()
+		p := dir + "/config.yaml"
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("VPSMGR_CONFIG", p)
+		return p
+	}
+
+	write(`panel:
+  listen: ":8443"
+net:
+  subnet: "10.115.0.0/24"
+  slot_range: "6-201"
+  v4_forward: true
+`)
+	// ExtIF/public_ip detection must be overridable so FillAuto doesn't touch
+	// the network. Set env for a stable public IP and eth0.
+	t.Setenv("VPSMGR_V4_FORWARD", "1")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Net.UserPorts != "10400-29999" {
+		t.Errorf("legacy slot_range migration = %q, want 10400-29999", c.Net.UserPorts)
+	}
+
+	// A modern config with user_ports must NOT be touched by a legacy key.
+	write(`panel:
+  listen: ":8443"
+net:
+  subnet: "10.115.0.0/24"
+  user_ports: "10000-20000, 25000-30000"
+  slot_range: "6-201"
+  v4_forward: true
+`)
+	c2, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c2.Net.UserPorts != "10000-20000, 25000-30000" {
+		t.Errorf("user_ports should win over slot_range; got %q", c2.Net.UserPorts)
 	}
 }
 

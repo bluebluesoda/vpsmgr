@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 00-ip-ask.sh — install-time network asks: whether to enable IPv6
-# pass-through (with the global prefix) and the container IPv4 subnet octet
-# (10.<n>.0.0/24, default n=115). Both are fixed after install. IPv4 inbound
-# forwarding is always ON by default and never asked — toggle it later with
-# `vps config set net.v4_forward true|false`.
+# pass-through (with the global prefix), the container IPv4 subnet octet
+# (10.<n>.0.0/24, default n=115), and the user-port ranges new containers may
+# use (10000-29999 by default). Subnet and port ranges are fixed after install.
+# IPv4 inbound forwarding is always ON by default and never asked — toggle it
+# later with `vps config set net.v4_forward true|false`.
 #
 # Behavior:
 #   - IPv6: interactive asks y/N then the prefix (default = the host's own
@@ -13,10 +14,16 @@
 #   - Subnet: interactive asks the second octet (default 115);
 #     VPSMGR_IPV4_SUBNET env var used verbatim (validated); a previous subnet
 #     in the config is kept on adoption; default 10.115.0.0/24 otherwise.
+#   - User ports: interactive asks one or more comma-separated port ranges
+#     (default 10000-29999, no confirm on the default; a changed value echoes
+#     the capacity and asks Y/n); VPSMGR_USER_PORTS env var used verbatim
+#     (validated); a previous user_ports in the config is kept on adoption; a
+#     legacy slot_range is converted once and the new key persisted.
 #
-# Writes nothing itself; exports VPSMGR_IPV6_SUBNET / VPSMGR_IPV4_SUBNET for
-# the rest of the install, and re-exports an adopted VPSMGR_V4_FORWARD so the
-# later steps keep the existing policy.
+# Writes nothing itself except the one-time legacy slot_range→user_ports
+# migration; exports VPSMGR_IPV6_SUBNET / VPSMGR_IPV4_SUBNET / VPSMGR_USER_PORTS
+# for the rest of the install, and re-exports an adopted VPSMGR_V4_FORWARD so
+# the later steps keep the existing policy.
 set -uo pipefail
 
 log(){ echo "[net] $*"; }
@@ -304,29 +311,97 @@ if not o.isdigit() or not (1 <= int(o) <= 254):
 PY
 }
 
-# validate_range: exit 0 if arg is "A-B" with both ends integers within
-# 2..201 (the default slot range) and A <= B. This enforces the "only shrink
-# towards the defaults" rule: any sub-range of 2-201 is allowed, expanding
-# beyond either edge is rejected.
-validate_range(){
-  local s="$1"
-  [[ "$s" =~ ^[0-9]+-[0-9]+$ ]] || return 1
-  local lo="${s%%-*}" hi="${s##*-}"
-  (( lo >= 2 && lo <= 201 && hi >= 2 && hi <= 201 && lo <= hi )) || return 1
-  return 0
+# normalize_user_ports: echoes "canonical" (whole-hundred aligned, merged,
+# comma-separated) and the container capacity on one line ("canon|cap"). Exit 0
+# only when the value yields at least one usable 100-port block. Mirrors
+# cfg.ParseUserPorts: low end rounds up to a block start, high end rounds down
+# then +99 (never ends in ...00); ranges outside 10000-29999 are clamped, and
+# fully-outside ranges contribute nothing.
+normalize_user_ports(){
+  python3 - "$1" <<'PY'
+import sys
+def norm(s):
+    out = []
+    for tok in s.split(','):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if '-' not in tok:
+            raise ValueError(tok)
+        a, b = tok.split('-', 1)
+        a, b = int(a), int(b)
+        if a > b:
+            raise ValueError(tok)
+        a = max(a, 10000)
+        b = min(b, 29999)
+        if a > b:
+            continue
+        lo = ((a + 99) // 100) * 100
+        hi = (b // 100) * 100 + 99
+        if lo > hi:
+            continue
+        out.append([lo, hi])
+    if not out:
+        raise ValueError("no usable range")
+    out.sort()
+    merged = [out[0]]
+    for lo, hi in out[1:]:
+        if lo <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    canon = ', '.join('%d-%d' % (lo, hi) for lo, hi in merged)
+    cap = sum((hi - lo + 1) // 100 for lo, hi in merged)
+    return canon, cap
+try:
+    canon, cap = norm(sys.argv[1])
+except Exception:
+    sys.exit(1)
+print("%s|%d" % (canon, cap))
+PY
 }
 
-# slot_range_summary: one-line hint echoing what the chosen slot range means —
-# the container capacity it allows and the user-port span it reserves (each
-# slot idx=octet-1 owns [10000+(idx-1)*100, +99]). SSH ports are separate.
-slot_range_summary(){
-  local r="$1" lo hi cap plo phi
-  lo="${r%%-*}"; hi="${r##*-}"
-  cap=$(( hi - lo + 1 ))
+# slot_to_ports: convert a LEGACY slot_range ("lo-hi", inclusive v4 last
+# octets) into the equivalent user-port range string. Only used to migrate old
+# configs at install; the old key is left in the file but ignored from then on.
+slot_to_ports(){
+  local s="$1" lo hi plo phi
+  lo="${s%%-*}"; hi="${s##*-}"
   plo=$(( 10000 + (lo - 2) * 100 ))
   phi=$(( 10000 + (hi - 2) * 100 + 99 ))
-  log "换算: 容器总数量上限 ${cap} 台; 可用用户端口范围 ${plo}-${phi} (SSH 端口 30000-31999 独立分配)"
-  log "capacity: up to ${cap} containers; usable user ports ${plo}-${phi} (SSH 30000-31999 separate)"
+  printf '%d-%d' "$plo" "$phi"
+}
+
+# user_ports_summary: one-line hint echoing what the chosen user-port ranges
+# mean — the container capacity they allow (each 100-port block = one
+# container). SSH ports (30000-31999) are separate.
+user_ports_summary(){
+  local canon="$1" cap="$2"
+  log "换算: 容器总数量上限 ${cap} 台; 可用用户端口 ${canon} (SSH 端口 30000-31999 独立分配)"
+  log "capacity: up to ${cap} containers; usable user ports ${canon} (SSH 30000-31999 separate)"
+}
+
+# write_user_ports: add/update the net.user_ports key in an existing config so
+# a legacy slot_range migration is persisted to the file (the old slot_range
+# key is left in place, unused). No-op when the config does not exist yet.
+write_user_ports(){
+  [[ -f /etc/vpsmgr/config.yaml ]] || return 0
+  python3 - "$1" <<'PY'
+import sys, os
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+p = "/etc/vpsmgr/config.yaml"
+try:
+    with open(p) as f:
+        cfg = yaml.safe_load(f) or {}
+    cfg.setdefault("net", {})["user_ports"] = sys.argv[1]
+    with open(p, "w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+except Exception:
+    sys.exit(0)
+PY
 }
 
 
@@ -436,72 +511,108 @@ ask_subnet(){
   log "container subnet: 10.$OCT.0.0/24"
 }
 
-# --- ask: container slot range (IPv4 last octet) -------------------------------
-# Bounds the idx a NEW container may take, which in turn bounds the user-port
-# block the host reserves (only-new-users effect; existing containers keep
-# their slots/ports). Default 2-201 = 200 slots. Operator-editable afterwards
-# via `vps config set net.slot_range`.
-ask_range(){
-  # env override: VPSMGR_SLOT_RANGE
-  if [[ -n "${VPSMGR_SLOT_RANGE:-}" ]]; then
-    if validate_range "$VPSMGR_SLOT_RANGE"; then
-      log "container slot range: $VPSMGR_SLOT_RANGE (from env)"
-      export VPSMGR_SLOT_RANGE
-      slot_range_summary "$VPSMGR_SLOT_RANGE"
+# --- ask: container user-port ranges -------------------------------------------
+# The port ranges a NEW container's 100-port block may be drawn from. Directly
+# configurable (no slot/octet concept): multiple comma-separated ranges are
+# allowed, values are auto-aligned to whole hundreds, and only-new-users effect
+# (existing containers keep their ports). Default 10000-29999 = 200 containers.
+# Env override: VPSMGR_USER_PORTS. Operator-editable afterwards via
+# `vps config set net.user_ports`.
+ask_user_ports(){
+  local RES CANON CAP
+  # env override: VPSMGR_USER_PORTS
+  if [[ -n "${VPSMGR_USER_PORTS:-}" ]]; then
+    if RES=$(normalize_user_ports "$VPSMGR_USER_PORTS"); then
+      CANON="${RES%%|*}"; CAP="${RES##*|}"
+      log "user port ranges: $CANON (from env)"
+      export VPSMGR_USER_PORTS="$CANON"
+      user_ports_summary "$CANON" "$CAP"
       return 0
     fi
-    die "VPSMGR_SLOT_RANGE='$VPSMGR_SLOT_RANGE' must be 'A-B' with each end in 2..201 and A<=B (e.g. 2-201, 6-201)"
+    die "VPSMGR_USER_PORTS='$VPSMGR_USER_PORTS' must be one or more 'A-B' ranges overlapping 10000-29999 (e.g. 10000-29999, 10000-20000, 25000-30000)"
     return 1
   fi
 
-  # Adoption: keep the recorded slot_range instead of re-asking.
+  # Adoption: keep the recorded user_ports instead of re-asking.
   if [[ -f /etc/vpsmgr/config.yaml ]]; then
-    EXISTING=$(grep -E '^\s+slot_range:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+    EXISTING=$(grep -E '^\s+user_ports:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
     if [[ -n "$EXISTING" ]]; then
-      if validate_range "$EXISTING"; then
-        log "existing config has slot_range=$EXISTING — keeping it"
-        export VPSMGR_SLOT_RANGE="$EXISTING"
-        slot_range_summary "$EXISTING"
+      if RES=$(normalize_user_ports "$EXISTING"); then
+        CANON="${RES%%|*}"; CAP="${RES##*|}"
+        log "existing config has user_ports=$EXISTING — keeping it (normalized $CANON)"
+        export VPSMGR_USER_PORTS="$CANON"
+        user_ports_summary "$CANON" "$CAP"
         return 0
       fi
-      die "existing config has an invalid slot_range='$EXISTING'"
+      die "existing config has an invalid user_ports='$EXISTING'"
       return 1
     fi
-    # Older config WITHOUT a slot_range key (pre-slot-range version): this box
-    # is being upgraded. Leave it at the default (full 2-201, which the panel
-    # applies anyway) and DO NOT prompt — a one-click upgrade of an existing
-    # panel must not be interrupted by a new question. Existing users keep
-    # their slots/ports untouched.
-    log "existing config has no slot_range (older version) — keeping default 2-201 (upgrade not interrupted)"
-    export VPSMGR_SLOT_RANGE="2-201"
-    slot_range_summary "2-201"
+    # Legacy config with ONLY slot_range: convert it once and persist the new
+    # key. The old slot_range key stays in the file (ignored from now on).
+    LEGACY=$(grep -E '^\s+slot_range:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+    if [[ -n "$LEGACY" ]]; then
+      CONVERTED=$(slot_to_ports "$LEGACY")
+      if RES=$(normalize_user_ports "$CONVERTED"); then
+        CANON="${RES%%|*}"; CAP="${RES##*|}"
+        log "existing config has legacy slot_range=$LEGACY — converted to user_ports=$CANON"
+        write_user_ports "$CANON"
+        export VPSMGR_USER_PORTS="$CANON"
+        user_ports_summary "$CANON" "$CAP"
+        return 0
+      fi
+      die "existing config has an invalid legacy slot_range='$LEGACY'"
+      return 1
+    fi
+    # Older config WITHOUT either key (pre-slot-range version): this box is
+    # being upgraded. Leave it at the default (full 10000-29999) and DO NOT
+    # prompt — a one-click upgrade of an existing panel must not be interrupted
+    # by a new question. Existing users keep their ports untouched.
+    log "existing config has no user_ports (older version) — keeping default 10000-29999 (upgrade not interrupted)"
+    export VPSMGR_USER_PORTS="10000-29999"
+    user_ports_summary "10000-29999" "200"
     return 0
   fi
 
   # Non-interactive with no env var: default range (full capacity).
   if [[ ! -t 0 ]] && [[ -z "${FORCE_ASK:-}" ]]; then
-    log "non-interactive install — using default slot range 2-201"
-    export VPSMGR_SLOT_RANGE="2-201"
-    slot_range_summary "2-201"
+    log "non-interactive install — using default user ports 10000-29999"
+    export VPSMGR_USER_PORTS="10000-29999"
+    user_ports_summary "10000-29999" "200"
     return 0
   fi
 
-  # Interactive: only shrinkable within the default range, affects new containers.
+  # Interactive: defaults are used without further confirmation; a changed
+  # value echoes the capacity it implies and asks for a Y/n confirm (default
+  # Y). Affects new containers only.
   echo
-  echo "容器槽位范围设置（即容器 v4 末段）Container slot range (== IPv4 last octet)"
-  echo "2-201将上限200容器，占用宿主机1w-3w端口。102-201将上限100容器，占用2w-3w端口"
-  echo "2-201 = 200 containers(port 10000-29999); shrink to e.g. 102-201 to avoid 10000-19999 ports be used)"
-  read -r -p "范围 / Range A-B [default: 2-201]: " RANGE
-  RANGE="${RANGE:-2-201}"
-  if ! validate_range "$RANGE"; then
-    die "'$RANGE' invalid — must be 'A-B' with each end in 2..201 and A<=B (only shrink towards the defaults)"
+  echo "用户可用端口范围设置 User port ranges"
+  echo "每个容器占用一个整百的100端口块; 支持多个区间用逗号分隔; 自动按整百对齐。"
+  echo "10000-29999 = 最多 200 台容器; 例如 10000-20000, 25000-30000 可跳过中间段"
+  echo "10000-29999 = up to 200 containers; e.g. 10000-20000, 25000-30000 to leave a gap"
+  read -r -p "端口范围 / Port ranges [default: 10000-29999]: " RANGE
+  RANGE="${RANGE:-10000-29999}"
+  if [[ "$RANGE" == "10000-29999" ]]; then
+    log "using default user ports 10000-29999 (max 200 containers)"
+    export VPSMGR_USER_PORTS="10000-29999"
+    user_ports_summary "10000-29999" "200"
+    return 0
+  fi
+  if ! RES=$(normalize_user_ports "$RANGE"); then
+    die "'$RANGE' invalid — must be one or more 'A-B' ranges overlapping 10000-29999 with at least one whole 100-port block"
     return 1
   fi
-  export VPSMGR_SLOT_RANGE="$RANGE"
-  log "container slot range: $RANGE"
-  slot_range_summary "$RANGE"
+  CANON="${RES%%|*}"; CAP="${RES##*|}"
+  log "输入换算: 有效用户端口 ${CANON} — 容器总数量上限 ${CAP} 台"
+  log "normalized: $CANON — up to ${CAP} containers"
+  read -r -p "确认以上端口范围？Confirm these port ranges [Y/n]: " ANS
+  case "${ANS,,}" in
+    n|no) die "aborted — pick another port range"; return 1 ;;
+  esac
+  export VPSMGR_USER_PORTS="$CANON"
+  log "user port ranges: $CANON"
+  user_ports_summary "$CANON" "$CAP"
 }
 
 ask_ipv6 || return 1
 ask_subnet || return 1
-ask_range || return 1
+ask_user_ports || return 1

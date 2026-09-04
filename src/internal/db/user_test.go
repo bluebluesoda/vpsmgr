@@ -102,11 +102,53 @@ func TestNextFreeIdxExhausted(t *testing.T) {
 	defer d.Close()
 
 	for i := 1; i <= cfg.MaxUsers; i++ {
-		if _, err := d.CreateUser(fmt.Sprintf("u%d", i), "h", "10.115.0.2", i, 30000+i, 10000, 1, 1024, 10); err != nil {
+		if _, err := d.CreateUser(fmt.Sprintf("u%d", i), "h", "10.115.0.2", i, 30000+i, 10000+(i-1)*100, 1, 1024, 10); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := d.NextFreeIdx(1, cfg.MaxUsers); err == nil {
 		t.Fatal("NextFreeIdx on a full pool: expected error, got nil")
+	}
+}
+
+// TestUsedStartPorts verifies UsedStartPorts returns exactly the start_port
+// values already assigned — the source of truth for the port-block allocator
+// (which is now independent of idx).
+func TestUsedStartPorts(t *testing.T) {
+	d, err := Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if _, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("bob", "h", "10.115.0.3", 2, 30002, 15000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	used, err := d.UsedStartPorts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(used) != 2 || !used[10000] || !used[15000] {
+		t.Errorf("UsedStartPorts = %v, want {10000,15000}", used)
+	}
+}
+
+// TestStartPortUnique verifies the v13 UNIQUE index on start_port refuses a
+// duplicate block even when idx differs (the port-block allocator's backstop).
+func TestStartPortUnique(t *testing.T) {
+	d, err := Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if _, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("bob", "h", "10.115.0.3", 2, 30002, 10000, 1, 1024, 10); err == nil {
+		t.Fatal("duplicate start_port with a different idx: expected UNIQUE violation, got nil")
 	}
 }

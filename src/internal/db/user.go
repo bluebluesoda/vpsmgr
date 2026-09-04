@@ -100,12 +100,11 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 }
 
 // NextFreeIdx returns a random unused index in [idxMin, idxMax] (currently the
-// configured slot range, idx = v4-last-octet - 1), so a new user gets a random
-// slot (and therefore IP + port block) instead of always the smallest free
-// one. Cross-process races on the pick are caught by the users.idx UNIQUE
-// constraint; within one process Add is serialized by opMu. Existing users
-// whose idx falls outside the current range (from an earlier, wider setting)
-// keep their slots — they are simply excluded from the free-list window here.
+// full 1..cfg.MaxUsers IPv4 slot range, idx = v4-last-octet - 1), so a new
+// user gets a random slot (and therefore IP) instead of always the smallest
+// free one. Cross-process races on the pick are caught by the users.idx UNIQUE
+// constraint; within one process Add is serialized by opMu. The user-port
+// block is allocated separately (net.user_ports) via UsedStartPorts.
 func (d *DB) NextFreeIdx(idxMin, idxMax int) (int, error) {
 	rows, err := d.sql.Query(`SELECT idx FROM users`)
 	if err != nil {
@@ -130,7 +129,7 @@ func (d *DB) NextFreeIdx(idxMin, idxMax int) (int, error) {
 		}
 	}
 	if len(free) == 0 {
-		return 0, fmt.Errorf("slot range reach (%d..%d)", idxMin, idxMax)
+		return 0, fmt.Errorf("IPv4 slot pool exhausted (%d..%d): every address in the container subnet is assigned", idxMin, idxMax)
 	}
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(free))))
 	if err != nil {
@@ -143,6 +142,28 @@ func (d *DB) NextFreeIdx(idxMin, idxMax int) (int, error) {
 // so the manager can pick a random free one.
 func (d *DB) UsedSSHPorts() (map[int]bool, error) {
 	rows, err := d.sql.Query(`SELECT ssh_port FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	used := map[int]bool{}
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		used[p] = true
+	}
+	return used, rows.Err()
+}
+
+// UsedStartPorts returns the set of start_port (user-port block start) values
+// already assigned, so the manager can pick a free block inside the configured
+// net.user_ports ranges. start_port is NOT derived from idx anymore (ports are
+// allocated independently from the configured ranges), so this set is the
+// source of truth for "which blocks are taken".
+func (d *DB) UsedStartPorts() (map[int]bool, error) {
+	rows, err := d.sql.Query(`SELECT start_port FROM users`)
 	if err != nil {
 		return nil, err
 	}

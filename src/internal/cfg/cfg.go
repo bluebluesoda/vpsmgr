@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,27 +55,28 @@ const (
 
 	// Port scheme (fixed at install, immutable): each container gets one
 	// random SSH port from SSHPortBase..SSHPortBase+SSHPortCount-1, plus a
-	// whole-hundred block of PortsPerUser user ports starting at
-	// UserPortBase+(idx-1)*PortsPerUser. 10000..29999 holds exactly
-	// 200 blocks x 100 ports = 20000, so the range is fully packed — that is
-	// the total when the slot range is left at its maximum (2-201).
+	// whole-hundred block of PortsPerUser user ports. The block a NEW
+	// container takes is drawn from the configured net.user_ports ranges
+	// (default 10000-29999 = 200 blocks x 100 ports = 20000, fully packed).
+	// Existing containers keep their start_port regardless of later range
+	// edits — only new users are affected.
 	SSHPortBase  = 30000
 	SSHPortCount = 2000
 	UserPortBase = 10000
 	PortsPerUser = 100
-	MaxUsers     = 200 // absolute slot ceiling; the effective ceiling is net.slot_range
+	MaxUsers     = 200 // absolute container ceiling (IPv4 /24 host bits); port blocks are the real limiter
 
-	// Slot range (net.slot_range "<lo>-<hi>"): the inclusive range of a new
-	// container's IPv4 last octet (== its slot number). The container index
-	// (idx, stored on the DB user) is octet-1, the gateway taking .1, so the
-	// default 2-201 maps to idx 1..200 = 200 slots. The range bounds the idx
-	// a new user may take, which in turn bounds the user-port span a host
-	// occupies (UserPortBase+(idx-1)*PortsPerUser). Only ever shrinkable to a
-	// sub-range of [DefaultSlotMin, DefaultSlotMax]; it affects ONLY new
-	// users — existing users keep their idx/ports untouched.
-	DefaultSlotRange = "2-201"
-	DefaultSlotMin   = 2
-	DefaultSlotMax   = 201
+	// User port domain. A container's block is always a whole hundred inside
+	// UserPortBase..UserPortMax; net.user_ports may name any sub-range(s) and
+	// is auto-aligned to whole hundreds (low end rounds up, high end rounds
+	// down then +99 so the last block ends in ...99, never ...00).
+	UserPortMax      = UserPortBase + MaxUsers*PortsPerUser - 1 // 29999
+	DefaultUserPorts = "10000-29999"
+
+	// Legacy slot range bounds, kept only to migrate pre-user_ports configs
+	// (slot_range "lo-hi" of v4 last octets). See LegacySlotRangeToUserPorts.
+	DefaultSlotMin = 2
+	DefaultSlotMax = 201
 
 	// MaxInitScriptBytes caps a user's custom init script (run inside the
 	// container after a reinstall). Bounds the DB row and the panel payload.
@@ -144,12 +146,19 @@ type NetCfg struct {
 	// IPv4 forwarding. When false, Traefik is stopped and not enabled at boot;
 	// existing domain records are retained but new domains cannot be added.
 	Traefik bool `yaml:"traefik"`
-	// SlotRange is the inclusive range of a new container's IPv4 last octet
-	// ("<lo>-<hi>", default 2-201). The container's idx is octet-1, so this
-	// bounds which idx a new user is drawn from — and therefore how much of
-	// the user-port block 10000-29999 the host reserves. Only-new-users
-	// effect: existing containers never renumber. See DefaultSlotMin/Max.
-	SlotRange string `yaml:"slot_range"`
+	// UserPorts is the comma-separated set of inclusive user-port ranges a
+	// NEW container's whole-hundred block may be drawn from (e.g.
+	// "10000-29999", or "10000-20000, 25000-30000" for discontiguous spans).
+	// Values are auto-aligned to whole hundreds and merged; only-new-users
+	// effect: existing containers never change their ports. The default is
+	// the full 10000-29999. Absent in an older config (carrying only the
+	// legacy slot_range) it is migrated on Load.
+	UserPorts string `yaml:"user_ports"`
+	// SlotRange is the LEGACY pre-user_ports field (inclusive v4 last octet
+	// range, "lo-hi"). Read-only for migration: when user_ports is empty a
+	// set slot_range is converted to user_ports and the config rewritten. It
+	// is no longer editable — the registry entry was removed.
+	SlotRange string `yaml:"slot_range,omitempty"`
 	// IPv6Subnet is the global prefix handed out to containers (e.g.
 	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
 	// Empty means IPv6 pass-through is disabled.
@@ -231,7 +240,7 @@ type SnapshotsCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, SlotRange: DefaultSlotRange}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1}
 	return c
@@ -258,11 +267,19 @@ func (c *Config) TraefikDir() string {
 }
 
 // SubnetIP returns the IP portion of the subnet CIDR.
-// ParseSlotRange parses "<lo>-<hi>" into inclusive v4-last-octet bounds.
-// Rules (strict): exactly one '-' separator, both ends non-empty integers,
-// each within [DefaultSlotMin, DefaultSlotMax] (2..201), and lo <= hi. This
-// mirrors the "only shrink towards the edges of the default range" rule: any
-// sub-range of [2, 201] is valid; expanding beyond either edge is rejected.
+
+// PortRange is an inclusive, whole-hundred-aligned user-port range. Lo and Hi
+// are both within [UserPortBase, UserPortMax]; Lo%100==0 and Hi%100==99, so the
+// range always spans a whole number of 100-port blocks.
+type PortRange struct {
+	Lo, Hi int
+}
+
+// ParseSlotRange parses a LEGACY slot range "<lo>-<hi>" into inclusive
+// v4-last-octet bounds. Rules (strict): exactly one '-' separator, both ends
+// non-empty integers, each within [DefaultSlotMin, DefaultSlotMax] (2..201),
+// and lo <= hi. Kept for migrating pre-user_ports configs; no longer exposed
+// as an editable config key.
 func ParseSlotRange(s string) (lo, hi int, err error) {
 	s = strings.TrimSpace(s)
 	parts := strings.Split(s, "-")
@@ -283,30 +300,135 @@ func ParseSlotRange(s string) (lo, hi int, err error) {
 	return a, b, nil
 }
 
-// SlotRangeBounds returns the configured inclusive v4-last-octet bounds of the
-// container slot range, falling back to the default 2-201 if it does not parse
-// (a validated config never hits this; guard against hand-edits).
-func (c *Config) SlotRangeBounds() (lo, hi int) {
-	lo, hi, err := ParseSlotRange(c.Net.SlotRange)
+// LegacySlotRangeToUserPorts converts a legacy slot_range ("lo-hi", inclusive
+// v4 last octets) into the equivalent user-port range string. Slot idx
+// (= octet-1) owned [UserPortBase+(idx-1)*PortsPerUser, +99], so lo octet maps
+// to port 10000+(lo-2)*100 and hi octet to 10000+(hi-2)*100+99. The result is
+// already whole-hundred aligned.
+func LegacySlotRangeToUserPorts(slotRange string) (string, error) {
+	lo, hi, err := ParseSlotRange(slotRange)
 	if err != nil {
-		return DefaultSlotMin, DefaultSlotMax
+		return "", err
 	}
-	return lo, hi
+	plo := UserPortBase + (lo-DefaultSlotMin)*PortsPerUser
+	phi := UserPortBase + (hi-DefaultSlotMin)*PortsPerUser + PortsPerUser - 1
+	return fmt.Sprintf("%d-%d", plo, phi), nil
 }
 
-// SlotCount returns how many container slots the configured range allows (
-// == max concurrently addressable new users within the range).
-func (c *Config) SlotCount() int {
-	lo, hi := c.SlotRangeBounds()
-	return hi - lo + 1
+// ParseUserPorts parses a comma-separated list of inclusive port ranges (each
+// "<lo>-<hi>") into normalized, merged, whole-hundred-aligned ranges. Rules:
+//   - Lo/hi may extend outside [UserPortBase, UserPortMax] — only the overlap
+//     with the usable domain counts (a range fully outside contributes nothing).
+//   - Each range is aligned inward to whole hundreds: the low end rounds UP to
+//     a block start, the high end rounds DOWN to a block start then extends to
+//     +99 (so the effective range always ends in ...99, never ...00). A range
+//     narrower than one block is dropped.
+//   - Overlapping/adjacent ranges are merged, so capacity is never double-counted.
+//   - At least one usable 100-port block must remain, or the value is rejected
+//     (a range that cannot host even one container is an error).
+func ParseUserPorts(s string) ([]PortRange, error) {
+	var out []PortRange
+	for _, tok := range strings.Split(s, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		parts := strings.Split(tok, "-")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, fmt.Errorf("invalid user-port range %q: must be \"<lo>-<hi>\" (e.g. 10000-29999)", tok)
+		}
+		a, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		b, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("invalid user-port range %q: both ends must be integers", tok)
+		}
+		if a > b {
+			return nil, fmt.Errorf("invalid user-port range %q: lo (%d) must be <= hi (%d)", tok, a, b)
+		}
+		// Clamp to the usable domain; a range with no overlap contributes 0.
+		if a < UserPortBase {
+			a = UserPortBase
+		}
+		if b > UserPortMax {
+			b = UserPortMax
+		}
+		if a > b {
+			continue
+		}
+		// Align inward: lo up to a block start, hi down to a block start then +99.
+		lo := ((a + PortsPerUser - 1) / PortsPerUser) * PortsPerUser
+		hi := (b/PortsPerUser)*PortsPerUser + PortsPerUser - 1
+		if lo > hi {
+			continue // narrower than one block
+		}
+		out = append(out, PortRange{lo, hi})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no usable user-port range %q: must overlap %d-%d with at least one whole 100-port block", s, UserPortBase, UserPortMax)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Lo < out[j].Lo })
+	merged := out[:1]
+	for _, r := range out[1:] {
+		last := &merged[len(merged)-1]
+		if r.Lo <= last.Hi+1 { // overlap or adjacent → merge
+			if r.Hi > last.Hi {
+				last.Hi = r.Hi
+			}
+		} else {
+			merged = append(merged, r)
+		}
+	}
+	return merged, nil
 }
 
-// SlotIdxBounds returns the inclusive idx (octet-1) bounds derived from the
-// configured slot range. idx is the stored per-user index used for
-// ContainerIP (ip[3] = idx+1) and the user-port block.
-func (c *Config) SlotIdxBounds() (idxMin, idxMax int) {
-	lo, hi := c.SlotRangeBounds()
-	return lo - 1, hi - 1
+// CanonicalUserPorts renders parsed ranges as their canonical comma-separated
+// string form ("10000-20099, 25000-29999"). Returns the raw input unchanged if
+// it does not parse.
+func CanonicalUserPorts(s string) string {
+	rs, err := ParseUserPorts(s)
+	if err != nil {
+		return strings.TrimSpace(s)
+	}
+	parts := make([]string, len(rs))
+	for i, r := range rs {
+		parts[i] = fmt.Sprintf("%d-%d", r.Lo, r.Hi)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// UserPortRanges returns the configured effective user-port ranges, falling
+// back to the default full range if the configured value does not parse (a
+// validated config never hits this; guard against hand-edits).
+func (c *Config) UserPortRanges() []PortRange {
+	rs, err := ParseUserPorts(c.Net.UserPorts)
+	if err != nil {
+		rs, _ = ParseUserPorts(DefaultUserPorts)
+	}
+	return rs
+}
+
+// UserPortCount returns how many whole-hundred port blocks the configured
+// ranges allow (== the container capacity a NEW user may still take; existing
+// users outside the ranges keep their blocks and are excluded from the
+// free-list window).
+func (c *Config) UserPortCount() int {
+	n := 0
+	for _, r := range c.UserPortRanges() {
+		n += (r.Hi - r.Lo + 1) / PortsPerUser
+	}
+	return n
+}
+
+// UserPortBlockStarts returns every whole-hundred block start inside the
+// configured ranges, for the port-block allocator.
+func (c *Config) UserPortBlockStarts() []int {
+	var starts []int
+	for _, r := range c.UserPortRanges() {
+		for s := r.Lo; s <= r.Hi; s += PortsPerUser {
+			starts = append(starts, s)
+		}
+	}
+	return starts
 }
 
 func (c *Config) SubnetIP() string {
@@ -326,10 +448,31 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, err
 	}
+	// Legacy migration: a pre-user_ports config carries only slot_range. It
+	// must run here (not in FillAuto) because Default() pre-fills user_ports
+	// with the full range, making "unset" indistinguishable from "defaulted" —
+	// detect the key's actual presence in the file instead.
+	if !hasYAMLKey(b, "user_ports") && c.Net.SlotRange != "" {
+		if ports, err := LegacySlotRangeToUserPorts(c.Net.SlotRange); err == nil {
+			c.Net.UserPorts = ports
+		}
+	}
 	if err := c.FillAuto(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// hasYAMLKey reports whether the config file carries a `key:` line. Used to
+// tell "key absent (older config)" from "key present with the default value".
+func hasYAMLKey(b []byte, key string) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, key+":") {
+			return true
+		}
+	}
+	return false
 }
 
 func Save(c *Config) error {
@@ -411,14 +554,18 @@ func (c *Config) FillAuto() error {
 	if v := os.Getenv("VPSMGR_TRAEFIK"); v != "" {
 		c.Net.Traefik = v == "1" || strings.EqualFold(v, "true")
 	}
-	// VPSMGR_SLOT_RANGE carries the container slot range chosen at install
-	// (e.g. 2-201); strictly validated so a bad value fails the install
-	// loudly instead of silently defaulting.
-	if v := os.Getenv("VPSMGR_SLOT_RANGE"); v != "" {
-		if _, _, err := ParseSlotRange(v); err != nil {
-			return fmt.Errorf("VPSMGR_SLOT_RANGE %q: %w", v, err)
+	// Legacy migration happens in Load (see hasYAMLKey), NOT here: Default() has
+	// already pre-filled user_ports with the full range by the time FillAuto
+	// runs, so "unset" is indistinguishable from "defaulted" at this point.
+	// VPSMGR_USER_PORTS carries the container user-port ranges chosen at
+	// install (e.g. "10000-29999" or "10000-20000, 25000-30000"); strictly
+	// validated so a bad value fails the install loudly instead of silently
+	// defaulting.
+	if v := os.Getenv("VPSMGR_USER_PORTS"); v != "" {
+		if _, err := ParseUserPorts(v); err != nil {
+			return fmt.Errorf("VPSMGR_USER_PORTS %q: %w", v, err)
 		}
-		c.Net.SlotRange = v
+		c.Net.UserPorts = CanonicalUserPorts(v)
 	}
 	return nil
 }
