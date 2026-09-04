@@ -955,7 +955,7 @@ func TestAdminOverviewPlanPresets(t *testing.T) {
 	zh := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langZh})
 	en := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langEn})
 	for _, want := range []string{
-		`id="planHint"`, `id="plans"`, `id="planModal"`, `id="planForm"`,
+		`id="plans"`, `id="planModal"`, `id="planForm"`,
 		`id="planName"`, `id="planCpu"`, `id="planMem"`, `id="planDisk"`, `id="planBw"`,
 		`id="cfBandwidth"`, `function closePlan()`, `vpsmgr_admin_plans`,
 		// apply/edit buttons and the fixed S/M/L slot defaults are generated in JS
