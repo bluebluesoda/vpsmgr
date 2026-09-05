@@ -155,6 +155,17 @@ footer a{color:var(--muted);text-decoration:underline}
 .notes-item.sel{background:var(--accent);color:var(--on-accent);cursor:default}
 .notes-item.sel .grip{color:var(--on-accent)}
 .notes-item.dragover{border-color:var(--accent);border-style:dashed}
+/* Narrow screens: stack the list above the editor instead of squeezing the
+   fixed 28% sidebar + textarea side by side. */
+@media (max-width:640px){
+.notes-main{flex-direction:column;gap:.6rem;align-items:stretch}
+.notes-list{flex:none;border-right:0;padding-right:0;border-bottom:1px solid var(--border);padding-bottom:.6rem;max-height:38vh}
+.notes-listhead{flex-wrap:wrap}
+.notes-editor{flex:none}
+.notes-toolbar{flex-wrap:wrap}
+.notes-toolbar .notes-size-label{width:100%;margin-bottom:.15rem}
+.notes-editor textarea{min-height:220px}
+}
 .modal h3{margin:0 0 .7rem;font-size:1rem;color:var(--head)}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
@@ -312,7 +323,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="notes-editor">
 <textarea id="notesBody" rows="12" spellcheck="false" placeholder="{{if eq .Lang "zh"}}正文内容...{{else}}Note content...{{end}}"></textarea>
 <div class="notes-toolbar">
-<span class="muted" id="notesSize"></span>
+<span class="muted notes-size-label" id="notesSize"></span>
 <span class="notes-toolbtns">
 <button class="btn" id="notesSaveLock">{{if eq .Lang "zh"}}保存并锁定{{else}}Save &amp; lock{{end}}</button>
 <button class="btn accent" id="notesManualSave">{{if eq .Lang "zh"}}手动保存{{else}}Save now{{end}}</button>
