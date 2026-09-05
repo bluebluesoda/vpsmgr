@@ -86,7 +86,7 @@ const (
 	// the client before encryption. MaxNotesBlobBytes caps the stored
 	// (base64) encrypted envelope on the server, leaving room for the GCM tag,
 	// salt and IV plus base64 expansion.
-	MaxNotesPlaintextBytes = 512 * 1024
+	MaxNotesPlaintextBytes = 256 * 1024
 	MaxNotesBlobBytes      = 700 * 1024
 
 	// Bandwidth throttle: when a user exceeds their monthly quota, both
