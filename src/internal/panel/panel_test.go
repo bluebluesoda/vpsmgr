@@ -268,8 +268,8 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		}
 	}
 	// The port block moved into the port-forwarding card as "Available: 10300-10399"
-	// in a code span like the IPs, with the 00/99 tails visually de-emphasized.
-	for _, want := range []string{"Port forwarding", "Available: ", `103<span class="pf-tail">00</span>-103<span class="pf-tail">99</span>`} {
+	// in a code span like the IPs: block numbers bold, 00/99 same size but faded.
+	for _, want := range []string{"Port forwarding", "Available: ", `<b>103</b><span class="pf-tail">00</span>-<b>103</b><span class="pf-tail">99</span>`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("port-forwarding card missing %q", want)
 		}
@@ -304,16 +304,21 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 			t.Errorf("v4-off overview missing %q", want)
 		}
 	}
-	// The port-forwarding card only advertises the port block while v4
-	// forwarding is on; with it off there is nothing to forward to.
-	for _, absent := range []string{"Available:", "可用：", `<div class="pf-avail">`} {
+	// The port-forwarding card advertises the block only while v4 forwarding is
+	// on; with it off it says so instead of leaving the slot empty.
+	for _, want := range []string{"IPv4 forwarding is off", `class="pf-avail muted"`} {
+		if !strings.Contains(off, want) {
+			t.Errorf("v4-off port-forwarding card missing %q", want)
+		}
+	}
+	for _, absent := range []string{"Available:", "可用：", `class="pf-tail"`} {
 		if strings.Contains(off, absent) {
-			t.Errorf("v4-off overview should not advertise the port block (%q)", absent)
+			t.Errorf("v4-off overview should not render the port block (%q)", absent)
 		}
 	}
 
 	// zh: the port-forwarding card labels the block "可用：10300-10399" with the
-	// 00/99 tails de-emphasized.
+	// 00/99 tails faded.
 	zh := srv.renderToString(t, "overview.html", pageData{
 		User:        &db.User{Name: "alice"},
 		Ports:       "10300-10399",
@@ -322,10 +327,26 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		Prefix:      "/" + testSecret,
 		Lang:        langZh,
 	})
-	for _, want := range []string{"端口转发", "域名转发", "可用：", `103<span class="pf-tail">00</span>-103<span class="pf-tail">99</span>`} {
+	for _, want := range []string{"端口转发", "域名转发", "可用：", `<b>103</b><span class="pf-tail">00</span>-<b>103</b><span class="pf-tail">99</span>`} {
 		if !strings.Contains(zh, want) {
 			t.Errorf("overview (zh) missing %q", want)
 		}
+	}
+
+	// zh v4-off: the same slot explains that IPv4 forwarding is off.
+	zhOff := srv.renderToString(t, "overview.html", pageData{
+		User:        &db.User{Name: "alice"},
+		Ports:       "10300-10399",
+		PortsPrefix: "103",
+		V4Forward:   false,
+		Prefix:      "/" + testSecret,
+		Lang:        langZh,
+	})
+	if !strings.Contains(zhOff, "IPv4 转发已关闭") {
+		t.Error("zh v4-off card should say IPv4 转发已关闭")
+	}
+	if strings.Contains(zhOff, "可用：") {
+		t.Error("zh v4-off card should not show the port block")
 	}
 }
 
@@ -386,8 +407,8 @@ func TestOverviewThemeColor(t *testing.T) {
 	if !strings.Contains(plain, "--accent:#2563eb") {
 		t.Error("plain overview should keep the default accent")
 	}
-	if !strings.Contains(plain, "--bg:#ffffff") {
-		t.Error("plain overview light background should be white")
+	if !strings.Contains(plain, "--bg:#e6ebf1") {
+		t.Error("plain overview light background should be the light gray-blue")
 	}
 
 	themed := srv.renderToString(t, "overview.html", pageData{
@@ -397,7 +418,7 @@ func TestOverviewThemeColor(t *testing.T) {
 	})
 	for _, want := range []string{
 		"--accent:#16a34a", "--head:#16a34a",
-		"color-mix(in srgb, #16a34a 13%, #ffffff)",
+		"color-mix(in srgb, #16a34a 13%, #e6ebf1)",
 		"color-mix(in srgb, #16a34a 16%, #14161a)",
 		"color-mix(in srgb, #16a34a 5%, #ffffff)",
 		"border-bottom:1px solid #16a34a",
