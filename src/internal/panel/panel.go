@@ -132,8 +132,8 @@ type pageData struct {
 	IP                 string
 	SSHPort            int
 	StartPort          int
-	Ports              string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort         string // compact form, e.g. 107xx
+	Ports              string // full user-port block, e.g. 10700-10799
+	PortsPrefix        string // whole-hundred block number, e.g. 107 → "10700-10799"
 	SSH                string
 	V4Forward          bool   // false = IPv6-only box: v4 ssh/ports not offered
 	TraefikEnabled     bool   // false = domain proxy disabled; domains cannot be added
@@ -307,7 +307,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		SSHPort:           u.SSHPort,
 		StartPort:         u.StartPort,
 		Ports:             mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
-		PortsShort:        mgr.UserPortsShort(u.StartPort),
+		PortsPrefix:       itoa(u.StartPort / 100),
 		SSH:               "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
 		V4Forward:         s.mgr.V4ForwardLive(),
 		TraefikEnabled:    s.mgr.TraefikLive(),
