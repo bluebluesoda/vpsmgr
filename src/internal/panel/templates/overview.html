@@ -137,7 +137,8 @@ footer a{color:var(--muted);text-decoration:underline}
 .adminkeys-warn{margin:.45rem 0 .6rem}
 .adminkeys-hint{margin:.25rem 0 .55rem}
 .pf-avail{font-size:.8rem;margin:0 0 .5rem}
-.pf-avail b{font-size:1.02rem;color:var(--text)}
+.pf-avail code{font-size:.86rem}
+.pf-avail .pf-tail{font-size:.7em;opacity:.72}
 .pf-sec{margin:.9rem 0 .45rem;font-size:.86rem;color:var(--head);font-weight:600}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
 .notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
@@ -275,7 +276,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div class="card">
 <h2>{{if eq .Lang "zh"}}端口转发{{else}}Port forwarding{{end}}</h2>
-{{if .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<b>{{.PortsPrefix}}</b>00-<b>{{.PortsPrefix}}</b>99</div>{{end}}
+{{if and .V4Forward .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<code>{{.PortsPrefix}}<span class="pf-tail">00</span>-{{.PortsPrefix}}<span class="pf-tail">99</span></code></div>{{end}}
 <div class="pf-sec">{{if eq .Lang "zh"}}域名转发{{else}}Domain forwarding{{end}}</div>
 <p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到容器80/443端口；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}

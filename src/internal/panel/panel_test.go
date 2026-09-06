@@ -268,8 +268,8 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		}
 	}
 	// The port block moved into the port-forwarding card as "Available: 10300-10399"
-	// with the block number (103) bolded and the 00/99 tails plain.
-	for _, want := range []string{"Port forwarding", "Available: ", "<b>103</b>00-<b>103</b>99"} {
+	// in a code span like the IPs, with the 00/99 tails visually de-emphasized.
+	for _, want := range []string{"Port forwarding", "Available: ", `103<span class="pf-tail">00</span>-103<span class="pf-tail">99</span>`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("port-forwarding card missing %q", want)
 		}
@@ -285,11 +285,13 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 	}
 
 	off := srv.renderToString(t, "overview.html", pageData{
-		User:      &db.User{Name: "alice"},
-		SSHPort:   30351,
-		IPv6:      "2001:db8:1::dddd:1",
-		V4Forward: false,
-		Prefix:    "/" + testSecret,
+		User:        &db.User{Name: "alice"},
+		SSHPort:     30351,
+		IPv6:        "2001:db8:1::dddd:1",
+		V4Forward:   false,
+		Ports:       "10300-10399",
+		PortsPrefix: "103",
+		Prefix:      "/" + testSecret,
 	})
 	if strings.Contains(off, "203.0.113.5") || strings.Contains(off, "IPV4") {
 		t.Error("v4-off overview should hide the IPV4 row")
@@ -302,17 +304,25 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 			t.Errorf("v4-off overview missing %q", want)
 		}
 	}
+	// The port-forwarding card only advertises the port block while v4
+	// forwarding is on; with it off there is nothing to forward to.
+	for _, absent := range []string{"Available:", "可用：", `<div class="pf-avail">`} {
+		if strings.Contains(off, absent) {
+			t.Errorf("v4-off overview should not advertise the port block (%q)", absent)
+		}
+	}
 
 	// zh: the port-forwarding card labels the block "可用：10300-10399" with the
-	// block number bolded.
+	// 00/99 tails de-emphasized.
 	zh := srv.renderToString(t, "overview.html", pageData{
 		User:        &db.User{Name: "alice"},
 		Ports:       "10300-10399",
 		PortsPrefix: "103",
+		V4Forward:   true,
 		Prefix:      "/" + testSecret,
 		Lang:        langZh,
 	})
-	for _, want := range []string{"端口转发", "域名转发", "可用：", "<b>103</b>00-<b>103</b>99"} {
+	for _, want := range []string{"端口转发", "域名转发", "可用：", `103<span class="pf-tail">00</span>-103<span class="pf-tail">99</span>`} {
 		if !strings.Contains(zh, want) {
 			t.Errorf("overview (zh) missing %q", want)
 		}
