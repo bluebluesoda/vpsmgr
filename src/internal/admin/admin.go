@@ -261,7 +261,8 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 }
 
 // redirectModalData is redirectModal plus an opaque data payload attached to
-// the flash (used for the "log in as" button after creating a user).
+// the flash. The payload is the username of the user the modal's "log in as"
+// button should act on (shown after creating a user or resetting a password).
 func (s *Server) redirectModalData(w http.ResponseWriter, r *http.Request, path, msg, data string) {
 	if c, err := r.Cookie("vpsmgr_admin_session"); err == nil {
 		s.flash.SetWithData(c.Value, msg, "user_created", data)

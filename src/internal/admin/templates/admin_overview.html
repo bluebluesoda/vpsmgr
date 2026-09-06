@@ -74,6 +74,7 @@ button.swatch { width: 100%; aspect-ratio: 1; border: 2px solid transparent; bor
 button.swatch:hover { border-color: #9ca3af; transform: scale(1.06); }
 @media (prefers-color-scheme: dark) { button.swatch:hover { border-color: #6b7280; } }
 form.inline { display: inline; }
+form.inline[hidden] { display: none; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
 @media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }

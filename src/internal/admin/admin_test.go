@@ -804,6 +804,38 @@ func TestFlashCarriesData(t *testing.T) {
 	}
 }
 
+// TestResetPassFlashCarriesUser ensures the reset-password modal offers a
+// working "log in as this user" button: the flash must carry kind user_created
+// with the username as data (not an empty payload, which made the button post
+// a blank name and fail with "user not found").
+func TestResetPassFlashCarriesUser(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doReq(t, h, http.MethodPost, prefix+"/reset-panel-pass",
+		url.Values{"name": {"alice"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("reset-panel-pass = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/flash = %d", rr.Code)
+	}
+	b := rr.Body.String()
+	for _, want := range []string{`"kind":"user_created"`, `"data":"alice"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("reset flash missing %s:\n%s", want, b)
+		}
+	}
+}
+
 // TestAdminLoginWritesAudit verifies admin login is audited as "000".
 func TestAdminLoginWritesAudit(t *testing.T) {
 	srv, d := newTestServer(t)
@@ -824,7 +856,9 @@ func TestAdminLoginWritesAudit(t *testing.T) {
 }
 
 // TestAdminOverviewLoginButtons checks the admin overview renders both the
-// per-user "login panel" button and the modal's "log in as this user" form.
+// per-user "login panel" button and the modal's "log in as this user" form,
+// and that the modal form starts hidden (its inline display must not defeat
+// the hidden attribute, or every modal would offer a name-less login-as).
 func TestAdminOverviewLoginButtons(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "admin_overview.html", pageData{
@@ -839,6 +873,12 @@ func TestAdminOverviewLoginButtons(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("admin overview missing %q", want)
 		}
+	}
+	if !strings.Contains(html, `id="loginAsForm" class="inline" hidden`) {
+		t.Error("modal login-as form must render hidden by default")
+	}
+	if !strings.Contains(html, "form.inline[hidden] { display: none; }") {
+		t.Error("missing form.inline[hidden] rule: the login-as button would show in every modal")
 	}
 }
 
