@@ -540,7 +540,9 @@ func (s *Server) handleResetPanelPass(w http.ResponseWriter, r *http.Request) {
 	}
 	panel := s.panelURL(r, "/"+s.cfg.Panel.URLPath)
 	_ = s.db.AddAuditLog("000+"+name, "passwd.reset")
-	s.redirectModal(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel))
+	// Carry the username so the one-time modal can offer "log in as this
+	// user" right after the reset, same as after creating a user.
+	s.redirectModalData(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel), name)
 }
 
 // handleAdminPass changes the admin panel password (no username). The current
