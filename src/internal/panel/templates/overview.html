@@ -6,7 +6,7 @@
 <title>{{.Title}}</title>
 <style>
 :root{
-  --bg:#ffffff; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
+  --bg:#e6ebf1; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
   --head:#0284c7; --accent:#2563eb; --on-accent:#fff;
   --accent-soft:rgba(37,99,235,.12); --accent-glow:rgba(37,99,235,.30);
   --ok:#059669; --ok-bg:#ecfdf5; --ok-fg:#047857;
@@ -138,7 +138,7 @@ footer a{color:var(--muted);text-decoration:underline}
 .adminkeys-hint{margin:.25rem 0 .55rem}
 .pf-avail{font-size:.8rem;margin:0 0 .5rem}
 .pf-avail code{font-size:.86rem}
-.pf-avail .pf-tail{font-size:.7em;opacity:.72}
+.pf-avail .pf-tail{opacity:.6;font-weight:400}
 .pf-sec{margin:.9rem 0 .45rem;font-size:.86rem;color:var(--head);font-weight:600}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
 .notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
@@ -194,7 +194,7 @@ footer a{color:var(--muted);text-decoration:underline}
   --on-accent:#fff;
   --accent-soft:color-mix(in srgb, {{.ThemeColor}} 18%, transparent);
   --accent-glow:color-mix(in srgb, {{.ThemeColor}} 45%, transparent);
-  --bg:color-mix(in srgb, {{.ThemeColor}} 13%, #ffffff);
+  --bg:color-mix(in srgb, {{.ThemeColor}} 13%, #e6ebf1);
   --card:color-mix(in srgb, {{.ThemeColor}} 5%, #ffffff);
   --border:color-mix(in srgb, {{.ThemeColor}} 24%, #e2e8f0);
   --code-bg:color-mix(in srgb, {{.ThemeColor}} 8%, #f8fafc);
@@ -276,7 +276,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 <div class="card">
 <h2>{{if eq .Lang "zh"}}端口转发{{else}}Port forwarding{{end}}</h2>
-{{if and .V4Forward .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<code>{{.PortsPrefix}}<span class="pf-tail">00</span>-{{.PortsPrefix}}<span class="pf-tail">99</span></code></div>{{end}}
+{{if .V4Forward}}{{if .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<code><b>{{.PortsPrefix}}</b><span class="pf-tail">00</span>-<b>{{.PortsPrefix}}</b><span class="pf-tail">99</span></code></div>{{end}}{{else}}<div class="pf-avail muted">{{if eq .Lang "zh"}}IPv4 转发已关闭{{else}}IPv4 forwarding is off{{end}}</div>{{end}}
 <div class="pf-sec">{{if eq .Lang "zh"}}域名转发{{else}}Domain forwarding{{end}}</div>
 <p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到容器80/443端口；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}
