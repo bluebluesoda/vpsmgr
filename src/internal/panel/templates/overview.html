@@ -177,9 +177,8 @@ footer a{color:var(--muted);text-decoration:underline}
 .pwcheck{list-style:none;margin:.1rem 0 .7rem 4.2rem;padding:0;font-size:.8rem;color:var(--muted)}
 .pwcheck li{margin:.12rem 0}
 .pwcheck li:before{content:"○";display:inline-block;width:1.05em;color:var(--muted)}
-.pwcheck li.ok{color:var(--ok-fg)}
-.pwcheck li.ok:before{content:"✓";color:var(--ok)}
-.pwcheck li.bad{color:var(--err-fg)}
+.pwcheck li.done{color:var(--ok-fg)}
+.pwcheck li.done:before{content:"✓";color:var(--ok)}
 @media (max-width:420px){.pwcheck{margin-left:0}}
 
 .reinstall-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200;padding:1rem}
@@ -574,7 +573,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   pwModal.addEventListener('click',function(e){if(e.target===pwModal)pwModal.classList.remove('show');});
   function pwCheck(){
     var v=npw.value,ok=ruleOk(v),all=ok.len&&ok.up&&ok.low&&ok.num;
-    pwRules.forEach(function(r){ r.li.classList.toggle('ok', ok[r.key]); });
+    pwRules.forEach(function(r){ r.li.classList.toggle('done', ok[r.key]); });
     npw.classList.toggle('bad',!all);npwc.classList.toggle('bad',!all);
     return all&&v!==''&&v===npwc.value;
   }

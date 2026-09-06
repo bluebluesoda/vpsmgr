@@ -91,10 +91,8 @@ form.inline[hidden] { display: none; }
 @media (prefers-color-scheme: dark) { .pwcheck { color: #9aa0a8; } }
 .pwcheck li { display: inline-block; margin: 2px 14px 2px 0; }
 .pwcheck li:before { content: "○"; display: inline-block; width: 1.1em; color: #9ca3af; }
-.pwcheck li.ok { color: #15803d; }
-.pwcheck li.ok:before { content: "✓"; color: #16a34a; }
-.pwcheck li.bad { color: #b91c1c; }
-@media (prefers-color-scheme: dark) { .pwcheck li.bad { color: #f87171; } }
+.pwcheck li.done { color: #15803d; }
+.pwcheck li.done:before { content: "✓"; color: #16a34a; }
 .cpu-row { display: flex; gap: 4px; align-items: stretch; }
 .cpu-row input { flex: 1; min-width: 0; }
 .cpu-row .step { display: flex; flex-direction: column; }
@@ -259,7 +257,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td data-sort="{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}">{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
           <td data-sort="{{.DiskUsed}}">{{.DiskUsed}}</td>
           <td data-sort="{{.BWTotal}}">↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
-          {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{.IPv6}}{{else}}<span class="down">-</span>{{end}}</td>{{end}}
+          {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{if eq $.Lang "zh"}}有{{else}}Yes{{end}}{{else}}<span class="down">{{if eq $.Lang "zh"}}无{{else}}No{{end}}</span>{{end}}</td>{{end}}
           <td>
             <div class="ops">
               {{if eq .State "Running"}}
@@ -638,7 +636,7 @@ function del(name){
   }
   function refresh(){
     var ok = ruleOk(np.value);
-    rules.forEach(function(r){ r.li.classList.toggle('ok', ok[r.key]); });
+    rules.forEach(function(r){ r.li.classList.toggle('done', ok[r.key]); });
     np.setCustomValidity(ok.len&&ok.up&&ok.low&&ok.num ? '' : 'password rule not met');
   }
   np.addEventListener('input', function(){ np.setCustomValidity(''); refresh(); });
