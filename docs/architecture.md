@@ -204,7 +204,9 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   black-in-light / white-in-dark, themed when a color is set) and the **user
   panel**, which injects it as a CSS-variable override — `--accent`/`--head`
   recolor headings, primary buttons and links, and the page background gets a
-  soft `color-mix()` tint that stays readable in both light and dark mode. Only
+  soft `color-mix()` tint that stays readable in both light and dark mode. The
+  user-panel tint renders **only for operator impersonation sessions**, so a
+  user logging in with their own password always sees the default theme. Only
   the admin can set it; users cannot. Setting/clearing is audited as
   `color.update` under `000+<user>`.
 - **Snapshots ("时光机" / time machine)**: each user can keep up to

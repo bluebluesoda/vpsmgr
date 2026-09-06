@@ -195,6 +195,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	d := s.buildData(u, "", "")
 	d.Impersonated = s.isImpersonated(r)
 	d.AdminPrefix = "/" + s.cfg.Panel.AdminPath
+	// The per-user accent color exists so an impersonating operator can tell
+	// users apart at a glance. Users logging in with their own password get the
+	// default theme instead of their assigned color.
+	if !d.Impersonated {
+		d.ThemeColor = ""
+	}
 	s.render(w, r, "overview.html", d)
 }
 

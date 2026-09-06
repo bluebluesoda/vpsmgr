@@ -87,7 +87,7 @@ Container swap is controlled by `incus.swap_ratio` (default 0.5 — a 1 GiB memo
 
 Users can define an init script in the panel. It runs as root inside the container after reinstall, with output written to `/var/log/vpsmgr-init.log`.
 
-In the admin user list, **clicking a username** (a deliberately low-key entry point) opens a picker where the operator can assign that user a dedicated accent color, or clear it back to the default. The color is applied to that user's "log in" button and tints their user-panel background (adapted for both light and dark mode). Users cannot change it themselves.
+In the admin user list, **clicking a username** (a deliberately low-key entry point) opens a picker where the operator can assign that user a dedicated accent color, or clear it back to the default. The color themes that user's "log in" button and, during an operator impersonation session, their user-panel background (adapted for both light and dark mode) so the operator can tell users apart. Users logging in with their own password always see the default theme. Users cannot change the color themselves.
 
 ## Additional Images
 

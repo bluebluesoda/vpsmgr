@@ -364,10 +364,65 @@ func TestOverviewThemeColor(t *testing.T) {
 		"color-mix(in srgb, #16a34a 13%, #ffffff)",
 		"color-mix(in srgb, #16a34a 16%, #14161a)",
 		"color-mix(in srgb, #16a34a 5%, #ffffff)",
-		"border-bottom:3px solid #16a34a",
+		"border-bottom:1px solid #16a34a",
 	} {
 		if !strings.Contains(themed, want) {
 			t.Errorf("themed overview missing %q", want)
+		}
+	}
+}
+
+// TestOverviewThemeColorOnlyWhenImpersonated verifies the per-user accent
+// color is served only to operator impersonation sessions: a user logging in
+// with their own password sees the default theme even when a color is
+// assigned.
+func TestOverviewThemeColorOnlyWhenImpersonated(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateUserColor(u.ID, "#16a34a"); err != nil {
+		t.Fatal(err)
+	}
+
+	// User's own login session: default theme, no tinted CSS override.
+	rr := doReq(t, h, http.MethodPost, prefix+"/login",
+		url.Values{"username": {"alice"}, "password": {"pw"}}, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login = %d, want 302", rr.Code)
+	}
+	var own *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			own = c
+		}
+	}
+	rr = doReq(t, h, http.MethodGet, prefix, nil, own)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", prefix, rr.Code)
+	}
+	if body := rr.Body.String(); strings.Contains(body, "--accent:#16a34a") {
+		t.Error("own login should render the default theme, not the assigned color")
+	}
+
+	// Operator impersonation session: the overview carries the assigned color.
+	sess, err := d.CreateImpersonatedSession(u.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imp := &http.Cookie{Name: "vpsmgr_session", Value: sess.Token, Path: prefix}
+	rr = doReq(t, h, http.MethodGet, prefix, nil, imp)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", prefix, rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Operator is logged in as you", "--accent:#16a34a", "border-bottom:1px solid #16a34a"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("impersonated overview missing %q", want)
 		}
 	}
 }
