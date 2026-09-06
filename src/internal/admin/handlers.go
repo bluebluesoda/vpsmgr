@@ -558,8 +558,12 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_mismatch"))
 		return
 	}
-	if len(pass) < 14 {
+	switch reason := pw.Validate(pass); reason {
+	case pw.RejectTooShort:
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_short"))
+		return
+	case pw.RejectWeak:
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_weak"))
 		return
 	}
 	hash, err := pw.Hash(pass)

@@ -273,8 +273,8 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}修改管理员密码{{else}}Change admin password{{end}}</h2>
     <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid" id="adminPassForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 14 位）{{else}}New password (14+ chars){{end}}</label><input name="new_password" type="password" minlength="14" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="14" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 10 位，含数字和字母）{{else}}New password (10+ chars, letters &amp; digits){{end}}</label><input name="new_password" type="password" minlength="10" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="10" required></div>
       <button type="submit" class="primary neutral" id="adminPassBtn">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
     </form>
   </div>
@@ -571,13 +571,19 @@ function del(name){
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
   });
 })();
-// Admin password change: brief busy state on submit.
+// Admin password change: validate the shared rule client-side, then show a
+// brief busy state on submit.
 (function(){
   var f = document.getElementById('adminPassForm');
   if (!f) return;
   var btn = document.getElementById('adminPassBtn');
-  f.addEventListener('submit', function(){
+  var np = f.querySelector('input[name="new_password"]');
+  var hint = {{if eq .Lang "zh"}}"密码不得低于 10 位，且需同时包含数字和字母"{{else}}"password must be at least 10 chars with letters and digits"{{end}};
+  function okRule(){ return np.value.length >= 10 && /[A-Za-z]/.test(np.value) && /[0-9]/.test(np.value); }
+  f.addEventListener('submit', function(e){
     if (!f.checkValidity()) return;
+    if (!okRule()) { e.preventDefault(); np.setCustomValidity(hint); f.reportValidity(); return; }
+    np.setCustomValidity('');
     btn.disabled = true; btn.classList.add('busy');
   });
 })();
