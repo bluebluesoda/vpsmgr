@@ -82,6 +82,19 @@ form.inline[hidden] { display: none; }
 @media (prefers-color-scheme: dark) { .field input { background: #15171b; border-color: #3a3f47; } }
 .field select.field-select { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
 @media (prefers-color-scheme: dark) { .field select.field-select { background: #15171b; border-color: #3a3f47; } }
+.field input.bad { border-color: #fca5a5; outline: 1px solid #fca5a5; }
+.field small.hint-ok { color: #16a34a; }
+.field small.hint-bad { color: #b91c1c; }
+@media (prefers-color-scheme: dark) { .field small.hint-bad { color: #f87171; } }
+#adminPassForm .pwcheck { grid-column: 1 / -1; margin: -2px 0 0; }
+.pwcheck { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: #6b7280; }
+@media (prefers-color-scheme: dark) { .pwcheck { color: #9aa0a8; } }
+.pwcheck li { display: inline-block; margin: 2px 14px 2px 0; }
+.pwcheck li:before { content: "○"; display: inline-block; width: 1.1em; color: #9ca3af; }
+.pwcheck li.ok { color: #15803d; }
+.pwcheck li.ok:before { content: "✓"; color: #16a34a; }
+.pwcheck li.bad { color: #b91c1c; }
+@media (prefers-color-scheme: dark) { .pwcheck li.bad { color: #f87171; } }
 .cpu-row { display: flex; gap: 4px; align-items: stretch; }
 .cpu-row input { flex: 1; min-width: 0; }
 .cpu-row .step { display: flex; flex-direction: column; }
@@ -194,7 +207,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z])?" maxlength="31" required title="{{if eq .Lang "zh"}}以小写字母开头、以字母结尾，只能含小写字母、数字和连字符（31 位内，首尾不能是连字符）{{else}}starts and ends with a lowercase letter; lowercase letters, digits and hyphens only, no leading/trailing hyphen (max 31){{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
       <div class="field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
@@ -273,7 +286,13 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}修改管理员密码{{else}}Change admin password{{end}}</h2>
     <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid" id="adminPassForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 10 位，含数字和字母）{{else}}New password (10+ chars, letters &amp; digits){{end}}</label><input name="new_password" type="password" minlength="10" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input name="new_password" type="password" minlength="10" required></div>
+      <ul class="pwcheck" id="adminPwCheck">
+        <li data-r="len">{{if eq .Lang "zh"}}至少 10 位{{else}}At least 10 characters{{end}}</li>
+        <li data-r="up">{{if eq .Lang "zh"}}包含大写字母{{else}}Uppercase letter{{end}}</li>
+        <li data-r="low">{{if eq .Lang "zh"}}包含小写字母{{else}}Lowercase letter{{end}}</li>
+        <li data-r="num">{{if eq .Lang "zh"}}包含数字{{else}}Digit{{end}}</li>
+      </ul>
       <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="10" required></div>
       <button type="submit" class="primary neutral" id="adminPassBtn">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
     </form>
@@ -556,9 +575,37 @@ function del(name){
 })();
 // Create user: remember cpu/mem/disk in localStorage, show a busy state while
 // the container is being created (~30s) so the page does not look dead.
+// Usernames: uppercase input is folded to lowercase live; a hint line under
+// the field reports the naming rule and duplicate status before submit.
 (function(){
   var KEY = 'vpsmgr_admin_create';
   var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), btn = document.getElementById('cfBtn');
+  var nameIn = document.getElementById('cfName'), nameHint = document.getElementById('cfNameHint');
+  var existing = { {{range .Users}}"{{.Name}}":1, {{end}}};
+  var MSG = {{if eq .Lang "zh"}}{ok:'用户名可用', dup:'该用户名已存在', invalid:'小写字母开头和结尾，仅含小写字母、数字和连字符', hint:'自动转为小写'}{{else}}{ok:'Username available', dup:'Username already exists', invalid:'start/end with a lowercase letter; lowercase letters, digits, hyphens only', hint:'Folded to lowercase'}{{end}};
+  function nameStatus(){
+    var raw = nameIn.value;
+    // Fold any uppercase to lowercase as the user types.
+    var low = raw.toLowerCase();
+    if (low !== raw) nameIn.value = low;
+    nameIn.setCustomValidity('');
+    nameHint.classList.remove('hint-ok', 'hint-bad');
+    if (!low) { nameHint.textContent = MSG.hint; nameIn.classList.remove('bad'); return; }
+    var okRe = /^[a-z]([a-z0-9-]*[a-z])?$/.test(low);
+    if (!okRe) {
+      nameIn.classList.add('bad');
+      nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.invalid;
+      nameIn.setCustomValidity(MSG.invalid);
+    } else if (existing[low]) {
+      nameIn.classList.add('bad');
+      nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.dup;
+      nameIn.setCustomValidity(MSG.dup);
+    } else {
+      nameIn.classList.remove('bad');
+      nameHint.classList.add('hint-ok'); nameHint.textContent = MSG.ok;
+    }
+  }
+  if (nameIn) nameIn.addEventListener('input', nameStatus);
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; }
@@ -567,22 +614,38 @@ function del(name){
   function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value})); } catch (e) {} }
   function onCpu(){ syncCpuStep(cpu); persist(); }
   cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); bandwidth.addEventListener('input', persist);
-  document.getElementById('createForm').addEventListener('submit', function(){
+  document.getElementById('createForm').addEventListener('submit', function(e){
+    if (nameIn && !nameIn.checkValidity()) { e.preventDefault(); nameIn.reportValidity(); return; }
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
   });
 })();
-// Admin password change: validate the shared rule client-side, then show a
-// brief busy state on submit.
+// Admin password change: live rule checklist, then a brief busy state on
+// submit.
 (function(){
   var f = document.getElementById('adminPassForm');
   if (!f) return;
   var btn = document.getElementById('adminPassBtn');
   var np = f.querySelector('input[name="new_password"]');
-  var hint = {{if eq .Lang "zh"}}"密码不得低于 10 位，且需同时包含数字和字母"{{else}}"password must be at least 10 chars with letters and digits"{{end}};
-  function okRule(){ return np.value.length >= 10 && /[A-Za-z]/.test(np.value) && /[0-9]/.test(np.value); }
+  var rules = [];
+  (document.querySelectorAll('#adminPwCheck li')||[]).forEach(function(li){ rules.push({li:li,key:li.getAttribute('data-r')}); });
+  function ruleOk(v){
+    return {
+      len: v.length>=10,
+      up: /[A-Z]/.test(v),
+      low: /[a-z]/.test(v),
+      num: /[0-9]/.test(v)
+    };
+  }
+  function refresh(){
+    var ok = ruleOk(np.value);
+    rules.forEach(function(r){ r.li.classList.toggle('ok', ok[r.key]); });
+    np.setCustomValidity(ok.len&&ok.up&&ok.low&&ok.num ? '' : 'password rule not met');
+  }
+  np.addEventListener('input', function(){ np.setCustomValidity(''); refresh(); });
   f.addEventListener('submit', function(e){
     if (!f.checkValidity()) return;
-    if (!okRule()) { e.preventDefault(); np.setCustomValidity(hint); f.reportValidity(); return; }
+    var ok = ruleOk(np.value);
+    if (!(ok.len&&ok.up&&ok.low&&ok.num)) { e.preventDefault(); f.reportValidity(); return; }
     np.setCustomValidity('');
     btn.disabled = true; btn.classList.add('busy');
   });

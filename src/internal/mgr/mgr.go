@@ -332,6 +332,9 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
+	// Usernames are case-insensitive: fold to lowercase before validating and
+	// checking for duplicates, so "Alice" and "alice" are the same user.
+	name = strings.ToLower(name)
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}

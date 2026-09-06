@@ -8,13 +8,14 @@ func TestValidate(t *testing.T) {
 		want string
 	}{
 		{"", RejectTooShort},
-		{"abcdefghi", RejectTooShort},   // 9 chars
-		{"abc1234567", ""},              // 10 chars, letters + digits
-		{"abcdefghij", RejectWeak},      // letters only
-		{"1234567890", RejectWeak},      // digits only
-		{"Ab1dEfGhIj", ""},              // mixed case + digits
-		{"a1b2c3d4e5f6", ""},            // long enough, letters + digits
-		{"Ab1", RejectTooShort},         // short but has both classes
+		{"Ab1dEfGhI", RejectTooShort},  // 9 chars, otherwise complete
+		{"Abcdefghij", RejectWeak},     // >= 10 but no digit
+		{"ABCDEF1234", RejectWeak},     // no lowercase
+		{"abcdef1234", RejectWeak},     // no uppercase
+		{"1234567890", RejectWeak},     // no letters at all
+		{"Abcdef1234", ""},             // 10 chars, upper + lower + digit
+		{"a1b2c3d4e5F6", ""},           // long enough, all three classes
+		{"A1b", RejectTooShort},        // short but has all classes
 	}
 	for _, c := range cases {
 		if got := Validate(c.pass); got != c.want {

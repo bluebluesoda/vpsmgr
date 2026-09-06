@@ -84,7 +84,7 @@ func tr(l, key string, args ...any) string {
 		"err_not_configured":    {"管理员尚未初始化 — 请运行 `vps admin-passwd`", "admin not configured yet — run `vps admin-passwd`"},
 		"err_pass_mismatch":     {"两次输入的密码不一致", "The two passwords do not match"},
 		"err_pass_short":        {"密码长度不得低于 10 位", "password must be at least 10 characters"},
-		"err_pass_weak":         {"密码需同时包含数字和字母", "password must contain both letters and digits"},
+		"err_pass_weak":         {"密码需同时包含大写字母、小写字母和数字", "password must contain uppercase letters, lowercase letters and digits"},
 		"user_created":          {"用户已创建：\n%[1]v", "user created:\n%[1]v"},
 		"user_deleted":          {"用户 %[1]v 已删除", "user %[1]v deleted"},
 		"quota_updated":         {"已更新 %[1]v 的配额", "quotas updated for %[1]v"},

@@ -85,7 +85,7 @@ func tr(l, key string, args ...any) string {
 		"err_too_many":        {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
 		"err_pass_mismatch":   {"两次输入的密码不一致", "The two passwords do not match"},
 		"err_pass_short":      {"密码长度不得低于 10 位", "password must be at least 10 characters"},
-		"err_pass_weak":       {"密码需同时包含数字和字母", "password must contain both letters and digits"},
+		"err_pass_weak":       {"密码需同时包含大写字母、小写字母和数字", "password must contain uppercase letters, lowercase letters and digits"},
 		"new_root_password":   {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
 		"reinstall_done":      {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
 		"ssh_keys_apply_warn": {"容器当前不可达，密钥已保存，将在下次重装后写入。", "Container unreachable — keys saved and will be applied on the next reinstall."},

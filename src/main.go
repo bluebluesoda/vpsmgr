@@ -1183,6 +1183,9 @@ func userAdd(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
+	// Usernames are case-insensitive: fold before the early CLI check so
+	// "Alice" behaves the same here as through the admin panel.
+	name = strings.ToLower(name)
 	if err := mgr.ValidateName(name); err != nil {
 		return err
 	}

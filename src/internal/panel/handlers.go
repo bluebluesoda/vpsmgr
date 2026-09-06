@@ -241,8 +241,8 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePanelPassword changes only the panel login password (must be >= 10
-// chars and contain both letters and digits) and kicks all other sessions.
-// Container root password is untouched.
+// chars with an uppercase letter, a lowercase letter and a digit) and kicks
+// all other sessions. Container root password is untouched.
 func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
 	if err := r.ParseForm(); err != nil {
