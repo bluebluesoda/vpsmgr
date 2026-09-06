@@ -151,7 +151,7 @@ func TestAdminPasswordChange(t *testing.T) {
 
 	// Mismatched confirmation -> redirect with flash, no change.
 	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass",
-		url.Values{"new_password": {"new-pass-123456789"}, "confirm_password": {"different-12345"}}, sess)
+		url.Values{"new_password": {"New-pass-123456789"}, "confirm_password": {"different-12345"}}, sess)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass mismatch = %d, want 302", rr.Code)
 	}
@@ -160,11 +160,11 @@ func TestAdminPasswordChange(t *testing.T) {
 	}
 	// Successful change persists the new hash in the DB settings table.
 	rr = doReq(t, h, http.MethodPost, prefix+"/admin-pass",
-		url.Values{"new_password": {"new-pass-123456789"}, "confirm_password": {"new-pass-123456789"}}, sess)
+		url.Values{"new_password": {"New-pass-123456789"}, "confirm_password": {"New-pass-123456789"}}, sess)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass = %d, want 302", rr.Code)
 	}
-	if !pw.Verify(storedHash(t, srv), "new-pass-123456789") {
+	if !pw.Verify(storedHash(t, srv), "New-pass-123456789") {
 		t.Fatal("new password hash not stored")
 	}
 }
@@ -182,25 +182,31 @@ func TestAdminPasswordChangeRule(t *testing.T) {
 	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
 		t.Fatal("password changed despite being too short")
 	}
-	// Long enough but letters only -> rejected.
+	// Long enough but no digit -> rejected.
 	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
-		url.Values{"new_password": {"abcdefghij"}, "confirm_password": {"abcdefghij"}}, sess)
+		url.Values{"new_password": {"Abcdefghij"}, "confirm_password": {"Abcdefghij"}}, sess)
 	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
 		t.Fatal("password changed despite missing digits")
 	}
-	// Long enough but digits only -> rejected.
+	// Long enough but no lowercase -> rejected.
 	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
-		url.Values{"new_password": {"1234567890"}, "confirm_password": {"1234567890"}}, sess)
+		url.Values{"new_password": {"ABCDEF1234"}, "confirm_password": {"ABCDEF1234"}}, sess)
 	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
-		t.Fatal("password changed despite missing letters")
+		t.Fatal("password changed despite missing lowercase letters")
 	}
-	// 10 chars with letters and digits -> accepted.
-	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+	// Long enough but no uppercase -> rejected.
+	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
 		url.Values{"new_password": {"abcdef1234"}, "confirm_password": {"abcdef1234"}}, sess)
+	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
+		t.Fatal("password changed despite missing uppercase letters")
+	}
+	// 10 chars with upper, lower and digits -> accepted.
+	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"Abcdef1234"}, "confirm_password": {"Abcdef1234"}}, sess)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass valid = %d, want 302", rr.Code)
 	}
-	if !pw.Verify(storedHash(t, srv), "abcdef1234") {
+	if !pw.Verify(storedHash(t, srv), "Abcdef1234") {
 		t.Fatal("valid password change was not stored")
 	}
 }
@@ -549,8 +555,8 @@ func TestAdminPassChangeInvalidatesOtherSessions(t *testing.T) {
 
 	// Change the password from session 1.
 	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass", url.Values{
-		"new_password":     {"new-long-password-123"},
-		"confirm_password": {"new-long-password-123"},
+		"new_password":     {"New-long-password-123"},
+		"confirm_password": {"New-long-password-123"},
 	}, c1)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass = %d, want 302 (body %s)", rr.Code, rr.Body.String())

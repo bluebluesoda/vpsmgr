@@ -174,7 +174,14 @@ footer a{color:var(--muted);text-decoration:underline}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
 .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
-.pw-display{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.7rem;font-size:1.05rem;color:var(--code);word-break:break-all;margin-bottom:.6rem;text-align:center}
+.pwcheck{list-style:none;margin:.1rem 0 .7rem 4.2rem;padding:0;font-size:.8rem;color:var(--muted)}
+.pwcheck li{margin:.12rem 0}
+.pwcheck li:before{content:"○";display:inline-block;width:1.05em;color:var(--muted)}
+.pwcheck li.ok{color:var(--ok-fg)}
+.pwcheck li.ok:before{content:"✓";color:var(--ok)}
+.pwcheck li.bad{color:var(--err-fg)}
+@media (max-width:420px){.pwcheck{margin-left:0}}
+
 .reinstall-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200;padding:1rem}
 .reinstall-overlay.show{display:flex}
 .reinstall-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.5rem 1.8rem;text-align:center;box-shadow:var(--shadow);max-width:420px}
@@ -365,9 +372,15 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="pwModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}修改面板登录密码{{else}}Change panel login password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}仅修改面板登录密码；至少 10 位，且同时包含数字和字母。{{else}}Panel login password only; min 10 chars with letters and digits.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}仅修改面板登录密码。{{else}}Panel login password only.{{end}}</p>
 <form action="{{.Prefix}}/password" method="post" id="pwForm">
 <div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="10" required></div>
+<ul class="pwcheck" id="pwCheck">
+<li data-r="len">{{if eq .Lang "zh"}}至少 10 位{{else}}At least 10 characters{{end}}</li>
+<li data-r="up">{{if eq .Lang "zh"}}包含大写字母{{else}}Uppercase letter{{end}}</li>
+<li data-r="low">{{if eq .Lang "zh"}}包含小写字母{{else}}Lowercase letter{{end}}</li>
+<li data-r="num">{{if eq .Lang "zh"}}包含数字{{else}}Digit{{end}}</li>
+</ul>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="npwc" name="confirm_password" type="password" required></div>
 <div class="actions">
 <button class="btn" type="button" id="pwClose">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -546,20 +559,28 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 
   var pwBtn=document.getElementById('pwBtn'),pwModal=document.getElementById('pwModal'),pwClose=document.getElementById('pwClose');
   var npw=document.getElementById('npw'),npwc=document.getElementById('npwc');
+  var pwRules=[];
+  (document.querySelectorAll('#pwCheck li')||[]).forEach(function(li){ pwRules.push({li:li,key:li.getAttribute('data-r')}); });
+  function ruleOk(v){
+    return {
+      len: v.length>=10,
+      up: /[A-Z]/.test(v),
+      low: /[a-z]/.test(v),
+      num: /[0-9]/.test(v)
+    };
+  }
   pwBtn.addEventListener('click',function(){pwModal.classList.add('show');npw.focus();});
   pwClose.addEventListener('click',function(){pwModal.classList.remove('show');});
   pwModal.addEventListener('click',function(e){if(e.target===pwModal)pwModal.classList.remove('show');});
   function pwCheck(){
-    var v=npw.value,ok=v.length>=10&&/[A-Za-z]/.test(v)&&/[0-9]/.test(v)&&v===npwc.value;
-    npw.classList.toggle('bad',!ok);npwc.classList.toggle('bad',!ok);
-    return ok;
+    var v=npw.value,ok=ruleOk(v),all=ok.len&&ok.up&&ok.low&&ok.num;
+    pwRules.forEach(function(r){ r.li.classList.toggle('ok', ok[r.key]); });
+    npw.classList.toggle('bad',!all);npwc.classList.toggle('bad',!all);
+    return all&&v!==''&&v===npwc.value;
   }
-  npw.addEventListener('input',function(){npw.classList.remove('bad');npwc.classList.remove('bad');npw.setCustomValidity('');});
+  npw.addEventListener('input',function(){npw.setCustomValidity('');pwCheck();});
   npwc.addEventListener('input',pwCheck);
-  var pwHint={{if eq .Lang "zh"}}"密码不得低于 10 位，且需同时包含数字和字母"{{else}}"password must be at least 10 chars with letters and digits"{{end}};
   document.getElementById('pwForm').addEventListener('submit',function(e){
-    var v=npw.value;
-    if(v.length>=10&&(!/[A-Za-z]/.test(v)||!/[0-9]/.test(v)))npw.setCustomValidity(pwHint);
     if(!pwCheck())e.preventDefault();
   });
 
