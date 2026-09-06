@@ -365,9 +365,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="pwModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}修改面板登录密码{{else}}Change panel login password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}仅修改面板登录密码；至少 14 位。{{else}}Panel login password only; min 14 chars.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}仅修改面板登录密码；至少 10 位，且同时包含数字和字母。{{else}}Panel login password only; min 10 chars with letters and digits.{{end}}</p>
 <form action="{{.Prefix}}/password" method="post" id="pwForm">
-<div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="14" required></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="10" required></div>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="npwc" name="confirm_password" type="password" required></div>
 <div class="actions">
 <button class="btn" type="button" id="pwClose">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -550,14 +550,17 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   pwClose.addEventListener('click',function(){pwModal.classList.remove('show');});
   pwModal.addEventListener('click',function(e){if(e.target===pwModal)pwModal.classList.remove('show');});
   function pwCheck(){
-    var ok=npw.value!==''&&npw.value===npwc.value;
+    var v=npw.value,ok=v.length>=10&&/[A-Za-z]/.test(v)&&/[0-9]/.test(v)&&v===npwc.value;
     npw.classList.toggle('bad',!ok);npwc.classList.toggle('bad',!ok);
     return ok;
   }
-  npw.addEventListener('input',function(){npw.classList.remove('bad');npwc.classList.remove('bad');});
+  npw.addEventListener('input',function(){npw.classList.remove('bad');npwc.classList.remove('bad');npw.setCustomValidity('');});
   npwc.addEventListener('input',pwCheck);
+  var pwHint={{if eq .Lang "zh"}}"密码不得低于 10 位，且需同时包含数字和字母"{{else}}"password must be at least 10 chars with letters and digits"{{end}};
   document.getElementById('pwForm').addEventListener('submit',function(e){
-    if(npw.value!==npwc.value){e.preventDefault();pwCheck();}
+    var v=npw.value;
+    if(v.length>=10&&(!/[A-Za-z]/.test(v)||!/[0-9]/.test(v)))npw.setCustomValidity(pwHint);
+    if(!pwCheck())e.preventDefault();
   });
 
   var dispModal=document.getElementById('dispModal'),dispText=document.getElementById('dispText');

@@ -169,6 +169,42 @@ func TestAdminPasswordChange(t *testing.T) {
 	}
 }
 
+func TestAdminPasswordChangeRule(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "old-pass-12345678")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	sess := adminLogin(t, h, prefix, "old-pass-12345678")
+
+	// Too short (9 chars) -> rejected, hash unchanged.
+	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"abc123456"}, "confirm_password": {"abc123456"}}, sess)
+	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
+		t.Fatal("password changed despite being too short")
+	}
+	// Long enough but letters only -> rejected.
+	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"abcdefghij"}, "confirm_password": {"abcdefghij"}}, sess)
+	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
+		t.Fatal("password changed despite missing digits")
+	}
+	// Long enough but digits only -> rejected.
+	doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"1234567890"}, "confirm_password": {"1234567890"}}, sess)
+	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
+		t.Fatal("password changed despite missing letters")
+	}
+	// 10 chars with letters and digits -> accepted.
+	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"abcdef1234"}, "confirm_password": {"abcdef1234"}}, sess)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin-pass valid = %d, want 302", rr.Code)
+	}
+	if !pw.Verify(storedHash(t, srv), "abcdef1234") {
+		t.Fatal("valid password change was not stored")
+	}
+}
+
 // storedHash reads the admin password hash back from the DB settings table.
 func storedHash(t *testing.T, srv *Server) string {
 	t.Helper()
