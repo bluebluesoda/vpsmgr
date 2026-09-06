@@ -209,7 +209,7 @@ func TestOverviewShowsMonthlyBandwidth(t *testing.T) {
 		Prefix: "/" + testSecret,
 		Lang:   langZh,
 	})
-	for _, want := range []string{"本月流量", "机器管理", "域名", "无限制"} {
+	for _, want := range []string{"本月流量", "机器管理", "端口转发", "域名转发", "无限制"} {
 		if !strings.Contains(zh, want) {
 			t.Errorf("overview (zh) missing %q", want)
 		}
@@ -245,19 +245,33 @@ func TestOverviewDomSaveHiddenByDefault(t *testing.T) {
 func TestOverviewConnectivityLayout(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User:       &db.User{Name: "alice"},
-		SSHPort:    30351,
-		PublicIP:   "203.0.113.5",
-		PortsShort: "103xx",
-		Ports:      "10300-10399",
-		IPv6:       "2001:db8:1::dddd:1",
-		IPv6Block:  "2001:db8:1::dddd:0/112",
-		V4Forward:  true,
-		Prefix:     "/" + testSecret,
+		User:        &db.User{Name: "alice"},
+		SSHPort:     30351,
+		PublicIP:    "203.0.113.5",
+		Ports:       "10300-10399",
+		PortsPrefix: "103",
+		IPv6:        "2001:db8:1::dddd:1",
+		IPv6Block:   "2001:db8:1::dddd:0/112",
+		V4Forward:   true,
+		Prefix:      "/" + testSecret,
 	})
-	for _, want := range []string{"IPV4", "203.0.113.5", "103xx", "10300-10399", "30351", "V6 port", "22", "Address block"} {
+	// The overview table itself no longer lists the port block: the IPV4 row
+	// carries just the public IP, and the SSH row the DNAT/V6 ports.
+	for _, absent := range []string{"可用端口", "<th>Ports</th>"} {
+		if strings.Contains(html, absent) {
+			t.Errorf("overview table should not contain %q", absent)
+		}
+	}
+	for _, want := range []string{"IPV4", "203.0.113.5", "30351", "V6 port", "22", "Address block"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("overview (v4 on) missing %q", want)
+		}
+	}
+	// The port block moved into the port-forwarding card as "Available: 10300-10399"
+	// with the block number (103) bolded and the 00/99 tails plain.
+	for _, want := range []string{"Port forwarding", "Available: ", "<b>103</b>00-<b>103</b>99"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("port-forwarding card missing %q", want)
 		}
 	}
 	// The V4/V6 port blocks are click-to-copy and carry the full ssh command.
@@ -268,9 +282,6 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("overview (v4 on) missing click-to-copy %q", want)
 		}
-	}
-	if !strings.Contains(html, `class="help"`) {
-		t.Error("overview missing the (?) help icon on the port block")
 	}
 
 	off := srv.renderToString(t, "overview.html", pageData{
@@ -289,6 +300,21 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 	for _, want := range []string{"not available", "V4 port", "V6 port", "22"} {
 		if !strings.Contains(off, want) {
 			t.Errorf("v4-off overview missing %q", want)
+		}
+	}
+
+	// zh: the port-forwarding card labels the block "可用：10300-10399" with the
+	// block number bolded.
+	zh := srv.renderToString(t, "overview.html", pageData{
+		User:        &db.User{Name: "alice"},
+		Ports:       "10300-10399",
+		PortsPrefix: "103",
+		Prefix:      "/" + testSecret,
+		Lang:        langZh,
+	})
+	for _, want := range []string{"端口转发", "域名转发", "可用：", "<b>103</b>00-<b>103</b>99"} {
+		if !strings.Contains(zh, want) {
+			t.Errorf("overview (zh) missing %q", want)
 		}
 	}
 }

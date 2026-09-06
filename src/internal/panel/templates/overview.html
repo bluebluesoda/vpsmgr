@@ -136,6 +136,9 @@ footer a{color:var(--muted);text-decoration:underline}
 .adminkeys .kname{font-weight:600;font-size:.84rem;color:var(--text)}
 .adminkeys-warn{margin:.45rem 0 .6rem}
 .adminkeys-hint{margin:.25rem 0 .55rem}
+.pf-avail{font-size:.8rem;margin:0 0 .5rem}
+.pf-avail b{font-size:1.02rem;color:var(--text)}
+.pf-sec{margin:.9rem 0 .45rem;font-size:.86rem;color:var(--head);font-weight:600}
 .notes-status{margin-left:.4rem;font-weight:400;font-size:.8rem}
 .notes-cover{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.4rem .5rem;text-align:center}
 .notes-cover[hidden],.notes-main[hidden]{display:none}
@@ -230,8 +233,8 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span class="user-name"> · {{.User.Name}}</span></h2>
 <table>
-{{if .V4Forward}}<tr><th>IPV4</th><td><code class="copyable">{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
-<tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code class="copyable" data-copy="ssh -p {{.SSHPort}} root@{{.PublicIP}}" title="ssh -p {{.SSHPort}} root@{{.PublicIP}}">{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code class="copyable" data-copy="ssh -p 22 root@{{.IPv6}}" title="ssh -p 22 root@{{.IPv6}}">22</code></span>{{end}}</td></tr>
+{{if .V4Forward}}<tr><th>IPV4</th><td colspan="3"><code class="copyable">{{.PublicIP}}</code></td></tr>{{end}}
+<tr><th>{{if eq .Lang "zh"}}SSH 端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code class="copyable" data-copy="ssh -p {{.SSHPort}} root@{{.PublicIP}}" title="ssh -p {{.SSHPort}} root@{{.PublicIP}}">{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code class="copyable" data-copy="ssh -p 22 root@{{.IPv6}}" title="ssh -p 22 root@{{.IPv6}}">22</code></span>{{end}}</td></tr>
 {{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code class="copyable">{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}</td></tr>{{end}}
 </table>
 </div>
@@ -271,7 +274,9 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 
 <div class="card">
-<h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}</h2>
+<h2>{{if eq .Lang "zh"}}端口转发{{else}}Port forwarding{{end}}</h2>
+{{if .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<b>{{.PortsPrefix}}</b>00-<b>{{.PortsPrefix}}</b>99</div>{{end}}
+<div class="pf-sec">{{if eq .Lang "zh"}}域名转发{{else}}Domain forwarding{{end}}</div>
 <p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到容器80/443端口；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
