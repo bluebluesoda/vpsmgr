@@ -13,6 +13,7 @@ import (
 	"vpsmgr/internal/csrf"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/mgr"
+	"vpsmgr/internal/ver"
 )
 
 //go:embed templates/*.html
@@ -170,6 +171,8 @@ type pageData struct {
 	// default). The overview tints its background and accents with it so an
 	// impersonating admin can tell users apart. Users cannot set it themselves.
 	ThemeColor string
+	ShowFooter bool
+	Version    string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -311,6 +314,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		SSH:               "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
 		V4Forward:         s.mgr.V4ForwardLive(),
 		TraefikEnabled:    s.mgr.TraefikLive(),
+		ShowFooter:        s.cfg.Panel.ShowFooter,
+		Version:           ver.Version,
 		InitScript:        u.InitScript,
 		MaxNotesPlaintext: cfg.MaxNotesPlaintextBytes,
 		QuotaCPU:          mgr.FormatCPU(u.CPU),

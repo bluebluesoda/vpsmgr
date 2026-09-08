@@ -127,7 +127,8 @@ type PanelCfg struct {
 	// AdminPath is the secret prefix of the admin panel (e.g. /Xy-9ab_cdE),
 	// a second random path generated at install. Requests that match neither
 	// URLPath nor AdminPath get a bare, headerless 404.
-	AdminPath string `yaml:"admin_url_path,omitempty"`
+	AdminPath  string `yaml:"admin_url_path,omitempty"`
+	ShowFooter bool   `yaml:"show_footer"`
 }
 
 type NetCfg struct {
@@ -239,7 +240,7 @@ type SnapshotsCfg struct {
 
 func Default() *Config {
 	c := &Config{}
-	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
+	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1}

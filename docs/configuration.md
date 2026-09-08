@@ -34,6 +34,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.session_days` | operator | restart panel | login session lifetime (days) |
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
+| `panel.show_footer` | operator | restart panel | user panel footer with project link and installed/build version; `false` hides the entire footer |
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
