@@ -42,6 +42,9 @@ func TestFieldValueReadsConfig(t *testing.T) {
 	if v := FieldValue(c, "net.traefik"); v != "true" {
 		t.Errorf("net.traefik default = %q", v)
 	}
+	if v := FieldValue(c, "panel.show_footer"); v != "true" {
+		t.Errorf("panel.show_footer default = %q", v)
+	}
 }
 
 func TestSnapshotsLimitField(t *testing.T) {
@@ -105,6 +108,17 @@ func TestAssignValidators(t *testing.T) {
 	if err := FieldFor("net.traefik").Assign(c, "maybe"); err == nil {
 		t.Error("traefik=maybe accepted")
 	}
+	for _, v := range []string{"true", "1", "on", "false", "0", "off"} {
+		if err := FieldFor("panel.show_footer").Assign(c, v); err != nil {
+			t.Errorf("show_footer=%q: %v", v, err)
+		}
+	}
+	if err := FieldFor("panel.show_footer").Assign(c, "maybe"); err == nil {
+		t.Error("show_footer=maybe accepted")
+	}
+	if c.Panel.ShowFooter {
+		t.Error("show_footer should be false after the final test assignment")
+	}
 
 	if err := FieldFor("net.ipv6_subnet").Assign(c, "2001:db8::/64"); err != nil {
 		t.Fatalf("ipv6_subnet valid: %v", err)
@@ -157,6 +171,7 @@ func TestEditableClassification(t *testing.T) {
 		"net.ipv6_subnet":       "yes",
 		"panel.url_path":        "only-when-empty",
 		"panel.admin_url_path":  "yes",
+		"panel.show_footer":     "yes",
 		"net.subnet":            "no",
 		"net.gateway":           "no",
 		"incus.pool":            "no",

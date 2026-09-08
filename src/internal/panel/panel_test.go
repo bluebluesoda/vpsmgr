@@ -184,6 +184,33 @@ func TestUnknownSubpathUnderPrefix(t *testing.T) {
 	}
 }
 
+func TestOverviewFooter(t *testing.T) {
+	srv, _ := newTestServer(t)
+	shown := srv.renderToString(t, "overview.html", pageData{
+		User:       &db.User{Name: "alice"},
+		Prefix:     "/" + testSecret,
+		ShowFooter: true,
+		Version:    "9.8.7-local",
+	})
+	for _, want := range []string{
+		`<footer><a href="https://github.com/bluebluesoda/vpsmgr" target="_blank" rel="noopener">Vpsmgr Lite<br><span>v9.8.7-local</span></a></footer>`,
+	} {
+		if !strings.Contains(shown, want) {
+			t.Errorf("shown footer missing %q", want)
+		}
+	}
+
+	hidden := srv.renderToString(t, "overview.html", pageData{
+		User:       &db.User{Name: "alice"},
+		Prefix:     "/" + testSecret,
+		ShowFooter: false,
+		Version:    "9.8.7-local",
+	})
+	if strings.Contains(hidden, "<footer>") || strings.Contains(hidden, "Vpsmgr Lite") || strings.Contains(hidden, "9.8.7-local") || strings.Contains(hidden, "https://github.com/bluebluesoda/vpsmgr") {
+		t.Error("hidden footer should not render any footer content")
+	}
+}
+
 func TestOverviewShowsMonthlyBandwidth(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{

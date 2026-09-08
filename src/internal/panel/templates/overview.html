@@ -366,7 +366,7 @@ footer a{color:var(--muted);text-decoration:underline}
 
 </div>
 
-<footer><a href="https://github.com/bluebluesoda/vpsmgr" target="_blank" rel="noopener">Vpsmgr lite</a></footer>
+{{if .ShowFooter}}<footer><a href="https://github.com/bluebluesoda/vpsmgr" target="_blank" rel="noopener">Vpsmgr Lite<br><span>v{{.Version}}</span></a></footer>{{end}}
 
 <div class="overlay" id="pwModal">
 <div class="modal">

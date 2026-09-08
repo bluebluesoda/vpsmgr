@@ -215,6 +215,18 @@ var Fields = []Field{
 			c.Panel.AdminPath = v
 			return nil
 		}},
+	{"panel.show_footer", KindOperator, ApplyRestart,
+		"user panel footer with project link and version; false = hide the entire footer",
+		"true or false",
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Panel.ShowFooter) }),
+		func(c *Config, v string) error {
+			b, ok := parseBool(v)
+			if !ok {
+				return fmt.Errorf("panel.show_footer must be true/false or 1/0")
+			}
+			c.Panel.ShowFooter = b
+			return nil
+		}},
 	{"panel.admin_pass_hash", KindSpecial, ApplyNone,
 		"admin password bcrypt hash — set via `vps admin-passwd` (stored in the DB)",
 		"",
