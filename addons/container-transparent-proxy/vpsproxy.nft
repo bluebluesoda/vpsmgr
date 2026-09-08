@@ -1,0 +1,8 @@
+delete table ip vpsproxy
+table ip vpsproxy {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    ip saddr __SUBNET__ udp dport 53 redirect to :1053
+    ip saddr __SUBNET__ tcp dport 53 redirect to :1053
+  }
+}
