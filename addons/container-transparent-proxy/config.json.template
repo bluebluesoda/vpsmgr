@@ -1,0 +1,135 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "doh-cn",
+        "server": "__DOH_IP__",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "__DOH_SERVER_NAME__"
+        }
+      },
+      {
+        "type": "fakeip",
+        "tag": "fakeip",
+        "inet4_range": "198.18.0.0/15"
+      }
+    ],
+    "rules": [
+      {
+        "query_type": ["AAAA"],
+        "action": "predefined",
+        "rcode": "NOERROR"
+      },
+      {
+        "action": "evaluate",
+        "server": "doh-cn",
+        "tag": "cn-response"
+      },
+      {
+        "match_response": "cn-response",
+        "rule_set": ["geoip-cn"],
+        "action": "respond"
+      },
+      {
+        "match_response": "cn-response",
+        "action": "route",
+        "server": "fakeip"
+      }
+    ],
+    "final": "doh-cn",
+    "strategy": "ipv4_only",
+    "reverse_mapping": true
+  },
+  "inbounds": [
+    {
+      "type": "direct",
+      "tag": "dns-in",
+      "listen": "__GATEWAY__",
+      "listen_port": 1053
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "vpsmgr-tun",
+      "address": ["172.31.0.1/30"],
+      "mtu": 1500,
+      "auto_route": false,
+      "strict_route": false,
+      "stack": "system",
+      "sniff": false,
+      "endpoint_independent_nat": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "proxy",
+      "server": "__PROXY_SERVER_IP__",
+      "server_port": 443,
+      "password": "__PROXY_PASSWORD__",
+      "tls": {
+        "enabled": true,
+        "server_name": "__PROXY_SERVER_NAME__"
+      }
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "doh-cn",
+    "rule_set": [
+      {
+        "tag": "geoip-cn",
+        "type": "local",
+        "format": "binary",
+        "path": "/etc/sing-box/geoip-cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": ["dns-in"],
+        "action": "hijack-dns"
+      },
+      {
+        "ip_cidr": ["__PROXY_SERVER_IP__/32"],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": ["198.18.0.0/15"],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["geoip-cn"],
+        "action": "route",
+        "outbound": "direct"
+      }
+    ],
+    "final": "proxy",
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/lib/sing-box/cache.db",
+      "store_fakeip": true,
+      "store_dns": true
+    }
+  }
+}
