@@ -74,8 +74,10 @@ label{font-size:.84rem;color:var(--muted)}
 .impbanner b{color:var(--violet-fg)}
 .impbanner .impback{margin-left:auto}
 .impbanner a{color:var(--accent);text-decoration:underline;font-weight:600}
-.groupbanner{background:#fef3c7;color:#92400e;border:2px solid #f59e0b;padding:.65rem .85rem;border-radius:8px;margin-bottom:.8rem;font-size:.92rem;font-weight:700}
-@media (prefers-color-scheme: dark){.groupbanner{background:#3b2f10;color:#fcd34d;border-color:#b45309}}
+.groupbanner{background:#fef3c7;color:#92400e;border:2px solid #f59e0b;padding:.65rem .85rem;border-radius:8px;margin-bottom:.8rem;font-size:.92rem;font-weight:700;display:flex;align-items:center;gap:.8rem}
+.groupbanner .group-switch{margin-left:auto;flex:none}
+.container-index{display:inline-block;background:#dc2626;color:#fff;border:3px solid #7f1d1d;border-radius:6px;padding:.05rem .45rem;font-size:1.25rem;line-height:1.2;font-weight:900;box-shadow:2px 2px 0 #7f1d1d}
+@media (prefers-color-scheme: dark){.groupbanner{background:#3b2f10;color:#fcd34d;border-color:#b45309}.container-index{background:#ef4444;color:#fff;border-color:#991b1b;box-shadow:2px 2px 0 #450a0a}}
 a{color:var(--accent);text-decoration:none}
 .domtable{width:100%;border-collapse:collapse;font-size:.85rem;margin:.2rem 0 .6rem}
 .domtable th,.domtable td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -225,9 +227,6 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="top">
 <h1>VPS Manager</h1>
 <div class="actions">
-{{if gt (len .GroupUsers) 1}}
-<form action="{{.Prefix}}/switch-user" method="post" class="inline"><select name="name" onchange="this.form.submit()" aria-label="{{if eq .Lang "zh"}}切换容器{{else}}Switch container{{end}}">{{range .GroupUsers}}<option value="{{.Name}}"{{if eq .Name $.User.Name}} selected{{end}}>{{.Name}}</option>{{end}}</select></form>
-{{end}}
 {{if eq .Lang "zh"}}<a class="btn" href="{{.Prefix}}/?lang=en">English</a>{{else}}<a class="btn" href="{{.Prefix}}/?lang=zh">中文</a>{{end}}
 <button class="btn" id="pwBtn">{{if eq .Lang "zh"}}改密{{else}}Change password{{end}}</button>
 <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn" type="submit">{{if eq .Lang "zh"}}退出{{else}}Log out{{end}}</button></form>
@@ -235,7 +234,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
 {{if gt .GroupCount 1}}
-<div class="groupbanner">⚠ {{if eq .Lang "zh"}}您的用户组内有多个容器，当前容器序号为 {{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）。请确认当前容器后再执行重装或快照操作。{{else}}Your user group has multiple containers. Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}). Confirm the current container before reinstalling or using snapshots.{{end}}</div>
+<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}您的用户组内有多台机器，当前机器序号为{{else}}Your user group has multiple containers. Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container before operating.{{end}}{{if gt (len .GroupUsers) 1}}<form action="{{.Prefix}}/switch-user" method="post" class="inline group-switch"><select name="name" onchange="this.form.submit()" aria-label="{{if eq .Lang "zh"}}切换机器{{else}}Switch container{{end}}">{{range .GroupUsers}}<option value="{{.Name}}"{{if eq .Name $.User.Name}} selected{{end}}>{{.Name}}</option>{{end}}</select></form>{{end}}</div>
 {{end}}
 {{if .Impersonated}}
 <div class="impbanner">
@@ -292,7 +291,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <h2>{{if eq .Lang "zh"}}端口转发{{else}}Port forwarding{{end}}</h2>
 {{if .V4Forward}}{{if .Ports}}<div class="pf-avail">{{if eq .Lang "zh"}}可用：{{else}}Available: {{end}}<code><b>{{.PortsPrefix}}</b><span class="pf-tail">00</span>-<b>{{.PortsPrefix}}</b><span class="pf-tail">99</span></code></div>{{end}}{{else}}<div class="pf-avail muted">{{if eq .Lang "zh"}}IPv4 转发已关闭{{else}}IPv4 forwarding is off{{end}}</div>{{end}}
 <div class="pf-sec">{{if eq .Lang "zh"}}域名转发{{else}}Domain forwarding{{end}}</div>
-<p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到容器80/443端口；证书请在容器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}访问此域名 80/443端口的 tcp 流量将转发到机器80/443端口；证书请在机器内自行申请。{{else}}Forwards the domain's 80/443 tcp traffic to your container; get the cert yourself.{{end}}</p>
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
 <table class="domtable">
@@ -450,8 +449,8 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="snapModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}时光机{{else}}Time machine{{end}}</h3>
-{{if gt .GroupCount 1}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}当前容器序号：{{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）{{else}}Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}){{end}}</div>{{end}}
-<p class="muted">{{if eq .Lang "zh"}}时光机只能回到过去，不能前往未来。恢复到某个检查点会丢失当前数据，以及在此之后创建的所有检查点。每容器最多 {{.SnapshotLimit}} 个检查点。{{else}}A time machine only goes back in time. Restoring to a checkpoint loses the current data and every checkpoint created after it. Up to {{.SnapshotLimit}} per container.{{end}}</p>
+{{if gt .GroupCount 1}}<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}当前机器序号：{{else}}Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container.{{end}}</span></div>{{end}}
+<p class="muted">{{if eq .Lang "zh"}}时光机只能回到过去，不能前往未来。恢复到某个检查点会丢失当前数据，以及在此之后创建的所有检查点。每台机器最多 {{.SnapshotLimit}} 个检查点。{{else}}A time machine only goes back in time. Restoring to a checkpoint loses the current data and every checkpoint created after it. Up to {{.SnapshotLimit}} per container.{{end}}</p>
 <div class="btnrow">
 <form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapCreate">{{if eq .Lang "zh"}}创建检查点{{else}}Create checkpoint{{end}}</button></form>
 </div>
@@ -484,7 +483,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="initModal">
 <div class="modal" style="max-width:640px">
 <h3>{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}重装后自动以 root 在容器内运行；日志 /var/log/vpsmgr-init.log；上限 64 KiB。{{else}}Runs as root after reinstall; logged to /var/log/vpsmgr-init.log; max 64 KiB.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}重装后自动以 root 在机器内运行；日志 /var/log/vpsmgr-init.log；上限 64 KiB。{{else}}Runs as root after reinstall; logged to /var/log/vpsmgr-init.log; max 64 KiB.{{end}}</p>
 <textarea id="initScript" rows="8" spellcheck="false" placeholder="{{if eq .Lang "zh"}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{else}}#!/bin/bash
 apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
@@ -528,7 +527,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-{{if gt .GroupCount 1}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}当前容器序号：{{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）{{else}}Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}){{end}}</div>{{end}}
+{{if gt .GroupCount 1}}<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}当前机器序号：{{else}}Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container.{{end}}</span></div>{{end}}
 <p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。请选择要安装的系统：{{else}}Deletes all data and rebuilds with the same IP/ports/quota. Pick the system to install:{{end}}</p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
