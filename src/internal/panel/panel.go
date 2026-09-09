@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,9 @@ type sshKeyRow struct {
 type pageData struct {
 	Title              string
 	User               *db.User
+	GroupUsers         []*db.User
+	GroupIndex         int
+	GroupCount         int
 	State              string
 	IP                 string
 	SSHPort            int
@@ -179,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.requireAuth(s.requirePost(s.handleLogout)))
+	mux.HandleFunc("/switch-user", s.requireAuth(s.requirePost(s.handleSwitchUser)))
 	mux.HandleFunc("/", s.requireAuth(s.handleOverview))
 	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.handlePower)))
 	mux.HandleFunc("/reinstall", s.requireAuth(s.requirePost(s.handleReinstall)))
@@ -301,9 +306,21 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 }
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
+	groupUsers, _ := s.mgr.UsersInGroup(u.Name)
+	sort.Slice(groupUsers, func(i, j int) bool { return groupUsers[i].Name < groupUsers[j].Name })
+	groupIndex := 0
+	for i, member := range groupUsers {
+		if member.ID == u.ID {
+			groupIndex = i + 1
+			break
+		}
+	}
 	d := pageData{
 		Title:             "VPS Manager",
 		User:              u,
+		GroupUsers:        groupUsers,
+		GroupIndex:        groupIndex,
+		GroupCount:        len(groupUsers),
 		ThemeColor:        u.Color,
 		PublicIP:          s.cfg.DisplayIP(),
 		Prefix:            s.prefix(),

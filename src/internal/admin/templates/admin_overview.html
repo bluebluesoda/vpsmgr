@@ -205,7 +205,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
       <div class="field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
@@ -580,7 +580,7 @@ function del(name){
   var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), btn = document.getElementById('cfBtn');
   var nameIn = document.getElementById('cfName'), nameHint = document.getElementById('cfNameHint');
   var existing = { {{range .Users}}"{{.Name}}":1, {{end}}};
-  var MSG = {{if eq .Lang "zh"}}{ok:'用户名可用', dup:'该用户名已存在', invalid:'小写字母开头和结尾，仅含小写字母、数字和连字符', hint:'自动转为小写'}{{else}}{ok:'Username available', dup:'Username already exists', invalid:'start/end with a lowercase letter; lowercase letters, digits, hyphens only', hint:'Folded to lowercase'}{{end}};
+  var MSG = {{if eq .Lang "zh"}}{ok:'用户名可用', group:'将创建用户组：', groupAfter:'（已有 ', groupEnd:' 个账号，创建后 ', accounts:' 个）', dup:'该用户名已存在', invalid:'主用户必须以字母结尾；子用户格式为 主用户-数字，且不允许嵌套', hint:'自动转为小写'}{{else}}{ok:'Username available', group:'User group to create: ', groupAfter:' (', groupEnd:' accounts, ', accounts:' after creation)', dup:'Username already exists', invalid:'parent must end with a letter; child format is parent-number, nesting is not allowed', hint:'Folded to lowercase'}{{end}};
   function nameStatus(){
     var raw = nameIn.value;
     // Fold any uppercase to lowercase as the user types.
@@ -589,18 +589,27 @@ function del(name){
     nameIn.setCustomValidity('');
     nameHint.classList.remove('hint-ok', 'hint-bad');
     if (!low) { nameHint.textContent = MSG.hint; nameIn.classList.remove('bad'); return; }
-    var okRe = /^[a-z]([a-z0-9-]*[a-z])?$/.test(low);
-    if (!okRe) {
-      nameIn.classList.add('bad');
-      nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.invalid;
-      nameIn.setCustomValidity(MSG.invalid);
+var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
+     var parent = child ? child[1] : '';
+     var okRe = /^[a-z]([a-z0-9-]*[a-z])?$/.test(low) || !!child;
+     if (!okRe || (child && /^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/.test(parent))) {
+       nameIn.classList.add('bad');
+       nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.invalid;
+       nameIn.setCustomValidity(MSG.invalid);
     } else if (existing[low]) {
-      nameIn.classList.add('bad');
-      nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.dup;
-      nameIn.setCustomValidity(MSG.dup);
+     nameIn.classList.add('bad');
+     nameHint.classList.add('hint-bad'); nameHint.textContent = MSG.dup;
+     nameIn.setCustomValidity(MSG.dup);
     } else {
-      nameIn.classList.remove('bad');
-      nameHint.classList.add('hint-ok'); nameHint.textContent = MSG.ok;
+     nameIn.classList.remove('bad');
+     var count = 0;
+     var group = child ? parent : low;
+     Object.keys(existing).forEach(function(n){
+       var m = n.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
+       if (n === group || (m && m[1] === group)) count++;
+     });
+     nameHint.classList.add('hint-ok');
+     nameHint.textContent = child ? MSG.group + group + MSG.groupAfter + count + MSG.groupEnd + (count + 1) + MSG.accounts : (count ? MSG.group + group + MSG.groupAfter + count + MSG.groupEnd + (count + 1) + MSG.accounts : MSG.ok);
     }
   }
   if (nameIn) nameIn.addEventListener('input', nameStatus);

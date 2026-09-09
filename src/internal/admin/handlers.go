@@ -366,7 +366,11 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	name := r.FormValue("name")
+	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
+	if err := s.mgr.ValidateAddName(name, true); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
 	cpu, err := mgr.ParseCPU(r.FormValue("cpu"))
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
@@ -393,7 +397,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	if ipv6 == "auto" {
 		ipv6 = ""
 	}
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6})
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
@@ -402,9 +406,13 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	// The password is always auto-generated and shown once. The panel address
 	// is taken from the request's own Host (see panelURL), so it matches
 	// whatever origin the operator actually used to reach the admin panel.
-	cred := "user:      " + res.User.Name +
-		"\npassword:  " + res.Password +
-		"\npanel:     " + s.panelURL(r, "/"+s.cfg.Panel.URLPath)
+	cred := "user:      " + res.User.Name
+	if res.Password != "" {
+		cred += "\npassword:  " + res.Password
+	} else {
+		cred += "\npassword:  same as the existing user-group password"
+	}
+	cred += "\npanel:     " + s.panelURL(r, "/"+s.cfg.Panel.URLPath)
 	// Carry the username as flash data so the modal can offer "log in as".
 	s.redirectModalData(w, r, s.p(""), cred, res.User.Name)
 }
@@ -499,7 +507,7 @@ func (s *Server) handleUserColor(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: user not found")
 		return
 	}
-	if err := s.db.UpdateUserColor(u.ID, color); err != nil {
+	if err := s.mgr.SetGroupColor(u.Name, color); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
