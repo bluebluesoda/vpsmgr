@@ -76,8 +76,16 @@ button.swatch:hover { border-color: #9ca3af; transform: scale(1.06); }
 form.inline { display: inline; }
 form.inline[hidden] { display: none; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: start; }
-.form-grid .resource-field { max-width: 110px; }
-.form-grid #cfBtn { align-self: end; }
+#createForm { grid-template-columns: minmax(210px, 1.55fr) repeat(3, minmax(88px, .7fr)) minmax(130px, .9fr) minmax(220px, 1.35fr) 88px; align-items: end; padding-bottom: 1.25rem; }
+#createForm .create-field { min-width: 0; }
+#createForm .name-field { position: relative; }
+#createForm .name-field small { position: absolute; top: calc(100% + 4px); left: 0; right: 0; min-height: 1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#createForm .resource-field { max-width: none; }
+#createForm .ipv6-field { min-width: 0; }
+#createForm #cfIpv6 { min-width: 0; }
+#createForm #cfBtn { align-self: end; min-height: 36px; padding-inline: 14px; }
+@media (max-width: 1050px) { #createForm { grid-template-columns: minmax(210px, 1.5fr) repeat(3, minmax(86px, 1fr)) minmax(125px, 1fr) minmax(190px, 1.35fr) 82px; } }
+@media (max-width: 760px) { #createForm { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-bottom: 1.25rem; } #createForm .name-field, #createForm .ipv6-field { grid-column: 1 / -1; } #createForm #cfBtn { justify-self: start; } }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
 @media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
 .field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
@@ -207,15 +215,15 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
-      <div class="field resource-field"><label>CPU</label>
+      <div class="field create-field name-field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
+      <div class="field create-field resource-field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
-      <div class="field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
-      <div class="field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
+      <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
       {{if .IPv6PoolMode}}
-      <div class="field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
+      <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
         <select name="ipv6" id="cfIpv6" class="field-select">
           <option value="auto" selected>{{if eq .Lang "zh"}}自动分配（第一个空闲）{{else}}Auto (first free){{end}}</option>
           {{range .PoolFree}}<option value="{{.}}">{{.}}</option>{{end}}
