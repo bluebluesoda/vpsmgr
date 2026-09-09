@@ -691,8 +691,14 @@ var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
   if (!table) return;
   var tbody = table.tBodies[0];
   var headers = Array.prototype.slice.call(table.querySelectorAll('th.sortable'));
-  var original = Array.prototype.slice.call(tbody.rows);
-  var col = null, dir = 0;
+  var original = Array.prototype.slice.call(tbody.rows).sort(function(a, b){
+    var av = (a.cells[0] && a.cells[0].getAttribute('data-sort')) || '';
+    var bv = (b.cells[0] && b.cells[0].getAttribute('data-sort')) || '';
+    av = String(av).toLowerCase();
+    bv = String(bv).toLowerCase();
+    return av < bv ? -1 : av > bv ? 1 : 0;
+  });
+  var col = headers[0] || null, dir = col ? 1 : 0;
 
   // Sortable numeric cells may carry a binary unit (humanBytes: "970 MiB",
   // "2.5 GiB", "184 B") or be unitless ("12%", decimal GB traffic). Normalize
@@ -738,6 +744,7 @@ var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
       render();
     });
   });
+  render();
 })();
 // consume flash banner once
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
