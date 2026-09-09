@@ -213,7 +213,12 @@ func (s *Server) handleSwitchUser(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("vpsmgr_session"); err == nil {
 		oldToken = cookie.Value
 	}
-	sess, err := s.db.CreateSession(target.ID, s.cfg.Panel.SessionDays)
+	var sess *db.Session
+	if s.isImpersonated(r) {
+		sess, err = s.db.CreateImpersonatedSession(target.ID, s.cfg.Panel.SessionDays)
+	} else {
+		sess, err = s.db.CreateSession(target.ID, s.cfg.Panel.SessionDays)
+	}
 	if err != nil {
 		s.redirect(w, r, s.p("/"), "error: unable to switch account")
 		return

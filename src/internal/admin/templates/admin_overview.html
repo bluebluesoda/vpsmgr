@@ -75,7 +75,9 @@ button.swatch:hover { border-color: #9ca3af; transform: scale(1.06); }
 @media (prefers-color-scheme: dark) { button.swatch:hover { border-color: #6b7280; } }
 form.inline { display: inline; }
 form.inline[hidden] { display: none; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: start; }
+.form-grid .resource-field { max-width: 110px; }
+.form-grid #cfBtn { align-self: end; }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
 @media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
 .field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
@@ -206,11 +208,11 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
-      <div class="field"><label>CPU</label>
+      <div class="field resource-field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
-      <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
+      <div class="field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
+      <div class="field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
