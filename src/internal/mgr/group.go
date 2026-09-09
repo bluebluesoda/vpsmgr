@@ -11,6 +11,14 @@ import (
 var childNameRe = regexp.MustCompile(`^([a-z][a-z0-9-]*[a-z])-([0-9]+)$`)
 var numericSuffixRe = regexp.MustCompile(`-[0-9]+$`)
 
+func UserGroupLabel(name string) string {
+	g := ParseUserGroup(name)
+	if !g.Child {
+		return "A"
+	}
+	return name[len(g.Parent)+1:]
+}
+
 type UserGroup struct {
 	Name   string
 	Parent string
