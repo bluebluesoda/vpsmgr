@@ -190,6 +190,46 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p("/login"), "")
 }
 
+func (s *Server) handleSwitchUser(w http.ResponseWriter, r *http.Request) {
+	current := s.currentUser(r)
+	targetName := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
+	members, err := s.mgr.UsersInGroup(current.Name)
+	if err != nil {
+		s.redirect(w, r, s.p("/"), "error: unable to switch account")
+		return
+	}
+	var target *db.User
+	for _, member := range members {
+		if member.Name == targetName {
+			target = member
+			break
+		}
+	}
+	if target == nil {
+		s.redirect(w, r, s.p("/"), "error: account is not in this user group")
+		return
+	}
+	oldToken := ""
+	if cookie, err := r.Cookie("vpsmgr_session"); err == nil {
+		oldToken = cookie.Value
+	}
+	sess, err := s.db.CreateSession(target.ID, s.cfg.Panel.SessionDays)
+	if err != nil {
+		s.redirect(w, r, s.p("/"), "error: unable to switch account")
+		return
+	}
+	if oldToken != "" {
+		if err := s.db.DeleteSession(oldToken); err != nil {
+			s.db.DeleteSession(sess.Token)
+			s.redirect(w, r, s.p("/"), "error: unable to switch account")
+			return
+		}
+	}
+	s.setSessionCookie(w, sess.Token)
+	_ = s.db.AddAuditLog(current.Name, "session.switch."+target.Name)
+	http.Redirect(w, r, s.p("/"), http.StatusFound)
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
 	d := s.buildData(u, "", "")

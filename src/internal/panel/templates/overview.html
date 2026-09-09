@@ -74,6 +74,8 @@ label{font-size:.84rem;color:var(--muted)}
 .impbanner b{color:var(--violet-fg)}
 .impbanner .impback{margin-left:auto}
 .impbanner a{color:var(--accent);text-decoration:underline;font-weight:600}
+.groupbanner{background:#fef3c7;color:#92400e;border:2px solid #f59e0b;padding:.65rem .85rem;border-radius:8px;margin-bottom:.8rem;font-size:.92rem;font-weight:700}
+@media (prefers-color-scheme: dark){.groupbanner{background:#3b2f10;color:#fcd34d;border-color:#b45309}}
 a{color:var(--accent);text-decoration:none}
 .domtable{width:100%;border-collapse:collapse;font-size:.85rem;margin:.2rem 0 .6rem}
 .domtable th,.domtable td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -223,12 +225,18 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="top">
 <h1>VPS Manager</h1>
 <div class="actions">
+{{if gt (len .GroupUsers) 1}}
+<form action="{{.Prefix}}/switch-user" method="post" class="inline"><select name="name" onchange="this.form.submit()" aria-label="{{if eq .Lang "zh"}}切换容器{{else}}Switch container{{end}}">{{range .GroupUsers}}<option value="{{.Name}}"{{if eq .Name $.User.Name}} selected{{end}}>{{.Name}}</option>{{end}}</select></form>
+{{end}}
 {{if eq .Lang "zh"}}<a class="btn" href="{{.Prefix}}/?lang=en">English</a>{{else}}<a class="btn" href="{{.Prefix}}/?lang=zh">中文</a>{{end}}
 <button class="btn" id="pwBtn">{{if eq .Lang "zh"}}改密{{else}}Change password{{end}}</button>
 <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn" type="submit">{{if eq .Lang "zh"}}退出{{else}}Log out{{end}}</button></form>
 </div>
 </div>
 {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+{{if gt .GroupCount 1}}
+<div class="groupbanner">⚠ {{if eq .Lang "zh"}}您的用户组内有多个容器，当前容器序号为 {{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）。请确认当前容器后再执行重装或快照操作。{{else}}Your user group has multiple containers. Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}). Confirm the current container before reinstalling or using snapshots.{{end}}</div>
+{{end}}
 {{if .Impersonated}}
 <div class="impbanner">
 <b>{{if eq .Lang "zh"}}管理员代客登录中{{else}}Operator is logged in as you{{end}}</b>
@@ -442,6 +450,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="snapModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}时光机{{else}}Time machine{{end}}</h3>
+{{if gt .GroupCount 1}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}当前容器序号：{{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）{{else}}Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}){{end}}</div>{{end}}
 <p class="muted">{{if eq .Lang "zh"}}时光机只能回到过去，不能前往未来。恢复到某个检查点会丢失当前数据，以及在此之后创建的所有检查点。每容器最多 {{.SnapshotLimit}} 个检查点。{{else}}A time machine only goes back in time. Restoring to a checkpoint loses the current data and every checkpoint created after it. Up to {{.SnapshotLimit}} per container.{{end}}</p>
 <div class="btnrow">
 <form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapCreate">{{if eq .Lang "zh"}}创建检查点{{else}}Create checkpoint{{end}}</button></form>
@@ -519,6 +528,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div class="overlay" id="reModal">
 <div class="modal modal-wide">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
+{{if gt .GroupCount 1}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}当前容器序号：{{.GroupIndex}} / {{.GroupCount}}（{{.User.Name}}）{{else}}Current container: {{.GroupIndex}} / {{.GroupCount}} ({{.User.Name}}){{end}}</div>{{end}}
 <p class="muted">{{if eq .Lang "zh"}}删除全部数据，以相同 IP/端口/配额重建。请选择要安装的系统：{{else}}Deletes all data and rebuilds with the same IP/ports/quota. Pick the system to install:{{end}}</p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">

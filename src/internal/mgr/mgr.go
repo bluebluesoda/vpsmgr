@@ -316,9 +316,10 @@ systemctl restart ssh`
 }
 
 type AddOptions struct {
-	CPU    int
-	MemMB  int
-	DiskGB int
+	CPU        int
+	MemMB      int
+	DiskGB     int
+	AllowChild bool
 	// BandwidthGB is the monthly bandwidth quota in GiB (0 = unlimited).
 	BandwidthGB int
 	// IPv6Addr is the pool-mode address to assign ("" = auto-pick the first
@@ -335,7 +336,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	// Usernames are case-insensitive: fold to lowercase before validating and
 	// checking for duplicates, so "Alice" and "alice" are the same user.
 	name = strings.ToLower(name)
-	if err := ValidateName(name); err != nil {
+	if err := m.ValidateAddName(name, opt.AllowChild); err != nil {
 		return nil, err
 	}
 	if err := ValidateCPU(opt.CPU); err != nil {
@@ -350,12 +351,25 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if _, err := m.db.GetUserByName(name); err == nil {
 		return nil, errors.New("user already exists: " + name)
 	}
-	// Passwords are always generated ([a-zA-Z0-9]) — no user-supplied password
-	// is ever accepted, so nothing untrusted reaches the provisioning shell
-	// scripts.
+	// The panel password is shared by a user group. A new group gets a fresh
+	// password; a new member of an existing group reuses its hash. The generated
+	// plaintext is still used as the container root password, but is not exposed
+	// when the panel password was inherited.
 	pass := pw.Generate(20)
 	hash, err := pw.Hash(pass)
 	if err != nil {
+		return nil, err
+	}
+	inheritedPanelPassword := false
+	if groupUsers, err := m.UsersInGroup(name); err == nil {
+		for _, member := range groupUsers {
+			if member.PassHash != "" {
+				hash = member.PassHash
+				inheritedPanelPassword = true
+				break
+			}
+		}
+	} else {
 		return nil, err
 	}
 	// IPv4 slot: a random unused idx in 1..MaxUsers (the /24 host range). The
@@ -527,7 +541,12 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return nil, fmt.Errorf("db: mark user ready: %w", err)
 	}
-	return m.ResultFor(u, pass), nil
+	_ = m.inheritGroupColorLocked(u.Name, u.ID)
+	result := m.ResultFor(u, pass)
+	if inheritedPanelPassword {
+		result.Password = ""
+	}
+	return result, nil
 }
 
 // checkIPv6BlockCollision refuses a new container if its deterministic /112
@@ -1168,6 +1187,8 @@ func snapshotCreateTime(s lx.SnapshotInfo) time.Time {
 // preserve (empty means none, so every session is dropped). Container root
 // password is managed separately via ResetRootPassword.
 func (m *Manager) ChangePanelPassword(name, pass, keepToken string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
@@ -1176,10 +1197,15 @@ func (m *Manager) ChangePanelPassword(name, pass, keepToken string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.db.UpdatePassword(u.ID, hash); err != nil {
+	members, err := m.UsersInGroup(u.Name)
+	if err != nil {
 		return err
 	}
-	return m.db.DeleteSessionsForUserExcept(u.ID, keepToken)
+	ids := make([]int64, 0, len(members))
+	for _, member := range members {
+		ids = append(ids, member.ID)
+	}
+	return m.db.UpdateUsersPasswordAndDeleteSessions(ids, hash, keepToken)
 }
 
 // ResetPanelPassword sets the panel login password to a new random 20-char
