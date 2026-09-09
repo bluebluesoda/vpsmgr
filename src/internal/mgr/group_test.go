@@ -27,6 +27,21 @@ func TestParseUserGroup(t *testing.T) {
 	}
 }
 
+func TestUserGroupLabel(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+	}{
+		{"user", "A"},
+		{"user-1", "1"},
+		{"user-09", "09"},
+		{"user-0928", "0928"},
+	} {
+		if got := UserGroupLabel(test.name); got != test.want {
+			t.Errorf("UserGroupLabel(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
 func TestUserGroupName(t *testing.T) {
 	if got := UserGroupName("alice-1"); got != "alice" {
 		t.Fatalf("UserGroupName(alice-1) = %q, want alice", got)

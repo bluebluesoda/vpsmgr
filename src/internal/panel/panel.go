@@ -131,7 +131,7 @@ type pageData struct {
 	Title              string
 	User               *db.User
 	GroupUsers         []*db.User
-	GroupIndex         int
+	GroupIndex         string
 	GroupCount         int
 	State              string
 	IP                 string
@@ -308,13 +308,7 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	groupUsers, _ := s.mgr.UsersInGroup(u.Name)
 	sort.Slice(groupUsers, func(i, j int) bool { return groupUsers[i].Name < groupUsers[j].Name })
-	groupIndex := 0
-	for i, member := range groupUsers {
-		if member.ID == u.ID {
-			groupIndex = i + 1
-			break
-		}
-	}
+	groupIndex := mgr.UserGroupLabel(u.Name)
 	d := pageData{
 		Title:             "VPS Manager",
 		User:              u,
