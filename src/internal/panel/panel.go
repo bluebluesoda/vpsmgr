@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -127,10 +128,18 @@ type sshKeyRow struct {
 	Active bool   `json:"active"`
 }
 
+// groupMemberRow is one container in the user's group switcher. Label and Specs
+// are precomputed because the template cannot call mgr helpers or convert MiB.
+type groupMemberRow struct {
+	Name  string // account name, used as the <option> value
+	Label string // "A" for the base account, else the numeric suffix
+	Specs string // compact quota tag, e.g. "4c8g40g"
+}
+
 type pageData struct {
 	Title              string
 	User               *db.User
-	GroupUsers         []*db.User
+	GroupUsers         []groupMemberRow
 	GroupIndex         string
 	GroupCount         int
 	State              string
@@ -307,14 +316,37 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	groupUsers, _ := s.mgr.UsersInGroup(u.Name)
-	sort.Slice(groupUsers, func(i, j int) bool { return groupUsers[i].Name < groupUsers[j].Name })
+	// Order: base account ("A") first, then children by numeric suffix, so the
+	// switcher reads A, 1, 2, … 10 instead of the lexical A, 1, 10, 2.
+	sort.Slice(groupUsers, func(i, j int) bool {
+		gi, gj := mgr.ParseUserGroup(groupUsers[i].Name), mgr.ParseUserGroup(groupUsers[j].Name)
+		if gi.Child != gj.Child {
+			return !gi.Child
+		}
+		if gi.Child {
+			ni, _ := strconv.Atoi(groupUsers[i].Name[len(gi.Parent)+1:])
+			nj, _ := strconv.Atoi(groupUsers[j].Name[len(gj.Parent)+1:])
+			if ni != nj {
+				return ni < nj
+			}
+		}
+		return groupUsers[i].Name < groupUsers[j].Name
+	})
+	groupRows := make([]groupMemberRow, 0, len(groupUsers))
+	for _, m := range groupUsers {
+		groupRows = append(groupRows, groupMemberRow{
+			Name:  m.Name,
+			Label: mgr.UserGroupLabel(m.Name),
+			Specs: mgr.MachineSpecs(m.CPU, m.MemMB, m.DiskGB),
+		})
+	}
 	groupIndex := mgr.UserGroupLabel(u.Name)
 	d := pageData{
 		Title:             "VPS Manager",
 		User:              u,
-		GroupUsers:        groupUsers,
+		GroupUsers:        groupRows,
 		GroupIndex:        groupIndex,
-		GroupCount:        len(groupUsers),
+		GroupCount:        len(groupRows),
 		ThemeColor:        u.Color,
 		PublicIP:          s.cfg.DisplayIP(),
 		Prefix:            s.prefix(),

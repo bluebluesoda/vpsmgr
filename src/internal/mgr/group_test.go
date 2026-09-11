@@ -42,6 +42,22 @@ func TestUserGroupLabel(t *testing.T) {
 	}
 }
 
+func TestMachineSpecs(t *testing.T) {
+	for _, test := range []struct {
+		cpu, mem, disk int
+		want           string
+	}{
+		{10, 1024, 10, "1c1g10g"},
+		{40, 8192, 40, "4c8g40g"},
+		{5, 512, 10, "0.5c0.5g10g"},
+		{20, 1536, 20, "2c1.5g20g"},
+	} {
+		if got := MachineSpecs(test.cpu, test.mem, test.disk); got != test.want {
+			t.Errorf("MachineSpecs(%d, %d, %d) = %q, want %q", test.cpu, test.mem, test.disk, got, test.want)
+		}
+	}
+}
+
 func TestUserGroupName(t *testing.T) {
 	if got := UserGroupName("alice-1"); got != "alice" {
 		t.Fatalf("UserGroupName(alice-1) = %q, want alice", got)

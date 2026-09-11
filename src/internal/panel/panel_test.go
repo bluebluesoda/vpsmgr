@@ -1192,6 +1192,51 @@ func TestOverviewSnapshotModal(t *testing.T) {
 	}
 }
 
+// TestOverviewGroupSwitcherLabels verifies the multi-container switcher shows
+// "<label>-<cpu>c<mem>g<disk>g" with the group-name prefix omitted and the base
+// account first, and that the sticky-notes title tags the machine only when the
+// group has more than one container.
+func TestOverviewGroupSwitcherLabels(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	// alice: 1 core / 1 GiB / 10 GiB; alice-1: 4 cores / 8 GiB / 40 GiB.
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice-1", hash, "10.42.0.3", 2, 30002, 10100, 40, 8192, 40); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+	body := doReq(t, h, http.MethodGet, prefix, nil, cookie).Body.String()
+	base, child := "A-1c1g10g", "1-4c8g40g"
+	for _, want := range []string{">" + base + "</option>", ">" + child + "</option>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview switcher missing %q", want)
+		}
+	}
+	if i, j := strings.Index(body, base), strings.Index(body, child); i < 0 || j < 0 || i > j {
+		t.Errorf("switcher order: base should precede child (base at %d, child at %d)", i, j)
+	}
+	if !strings.Contains(body, "Machine A") {
+		t.Error("notes card should tag the current machine on a multi-container group")
+	}
+
+	// A lone container is not a group: no switcher, no machine tag.
+	if _, err := d.CreateUser("bob", hash, "10.42.0.4", 3, 30003, 10200, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie = loginAndCookie(t, h, prefix, "bob", "pw")
+	body = doReq(t, h, http.MethodGet, prefix, nil, cookie).Body.String()
+	if strings.Contains(body, "Machine A") {
+		t.Error("single-container user should not show a machine tag")
+	}
+	if strings.Contains(body, "switch-user") {
+		t.Error("single-container user should not render the switcher")
+	}
+}
+
 // TestStatsEndpoint verifies the /stats JSON endpoint: it requires auth,
 // returns per-minute points for the current user, and computes per-minute
 // bandwidth as the delta of the cumulative rx/tx counters between samples.
