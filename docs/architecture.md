@@ -1,9 +1,9 @@
 # Architecture
 
-vpsmgr is a lightweight LXC hosting panel: one Debian 13 container per user,
-managed from a web panel and a CLI. Everything ships as a single Go binary
-(`vps` = CLI + embedded web panel); Incus, nftables and Traefik provide the
-plumbing.
+vpsmgr is a lightweight LXC hosting panel: one Debian 13 container per user
+account, managed from a web panel and a CLI. Everything ships as a single Go
+binary (`vps` = CLI + embedded web panel); Incus, nftables and Traefik provide
+the plumbing.
 
 ## Design goals
 
@@ -193,7 +193,7 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `/var/log/vpsmgr-init.log` there. Shebangs are honored; a hanging script
   cannot block the reinstall because it is backgrounded. Delivery failure only
   warns — the reinstall still succeeds.
-- **Per-user accent color**: each user can carry an accent color
+- **Accent color (group-wide)**: each user can carry an accent color
   (`users.color`, a hex string from the admin panel's **fixed 10-color palette**
   in `admin` — black/white/gray are excluded; the palette is the allowlist, so
   a free-form hex can never be stored). The entry point is deliberately low-key:
@@ -208,7 +208,9 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   user-panel tint renders **only for operator impersonation sessions**, so a
   user logging in with their own password always sees the default theme. Only
   the admin can set it; users cannot. Setting/clearing is audited as
-  `color.update` under `000+<user>`.
+  `color.update` under `000+<user>`. The color is **shared across a user group**
+  (see “User groups” below): writing it updates every member, and a new member
+  inherits the group's existing color.
 - **Snapshots ("时光机" / time machine)**: each user can keep up to
   `snapshots.limit` disk-only checkpoints (named `snap-<UTC>...`) of their
   container and create / delete / restore them from the panel. The panel calls
@@ -236,6 +238,67 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   desyncs the Incus configuration from the vpsmgr DB. Reinstalling the
   container deletes every checkpoint, which the reinstall dialog warns about
   with the exact count.
+
+### User groups (multi-container users)
+
+One login can manage several containers by grouping panel accounts under a
+naming convention. There is **no group table** — the group is derived from the
+account name at read time, so adding or removing a member needs no migration:
+
+- An account `parent` and every account named `parent-<digits>` are one
+  **user group**. `alice` is the parent (labelled machine **A**); `alice-1`,
+  `alice-09` are its children (labelled by their digit suffix, leading zeros
+  preserved).
+- The parent part must start and end with a letter. Nesting is rejected:
+  `alice-1-2` is not a child, and a `-<digits>` suffix whose prefix is not a
+  valid parent (`alice1-2`, `a-1`) makes the name invalid. Names stay ≤ 31
+  characters. `mgr.ParseUserGroup` / `UserGroupName` are the single definitions,
+  covered by `group_test.go`.
+- **Only the admin panel can create a child** (`ValidateAddName(..., true)`).
+  The CLI / `vps add` path passes `AllowChild=false` and rejects child names.
+  The admin create form mirrors the rule client-side and previews the group and
+  its size before submitting.
+
+State that is **shared across a group**:
+
+- **Panel password.** A brand-new group gets a fresh 20-char password; adding a
+  member to an existing group reuses the group's bcrypt hash, and the one-time
+  credential block prints “same as the existing user-group password” instead of
+  a password. This holds on the CLI too: `vps add` of a parent name whose group
+  already has members inherits the group hash, and its output says the password
+  was inherited rather than printing one. Changing it (`ChangePanelPassword`,
+  the path behind both the panel's own change flow and the admin reset) hashes
+  once and rewrites **every** member in a single transaction, dropping each
+  member's other sessions — the change flow keeps the caller's current token, an
+  admin reset passes an empty token and drops all
+  (`db.UpdateUsersPasswordAndDeleteSessions`). The **container root password is
+  not shared**: every container gets its own, and for an inherited group member
+  that value is generated but deliberately not displayed, so the root password
+  must be reset from the panel.
+- **Accent color.** `SetGroupColor` writes one color to all members
+  (`db.UpdateUsersColor`, one transaction), and `inheritGroupColorLocked` gives a
+  newly added member the first color found in its group.
+- **A container switcher.** With more than one member the user panel shows a
+  `<select>` in the header. Each option is labelled
+  `<label>-<cpu>c<mem>g<disk>g` — the machine label (`A` for the base account,
+  else the numeric suffix) plus the three quota values, e.g. `2-4c8g40g`;
+  the group-name prefix is dropped because every option shares it. The list is
+  ordered base-first then by numeric suffix (so `A, 1, 2, … 10`, not lexical).
+  `POST /switch-user` accepts only a name in the caller's own group, mints a
+  session for the target, drops the old one and audits `session.switch.<target>`.
+  A warning banner (repeated inside the reinstall and snapshot dialogs) names the
+  current machine label so a destructive action is not aimed at the wrong
+  sibling, and the sticky-notes card title carries the same label (`Machine 2`)
+  when the group has more than one container — notes themselves stay
+  per-container, so each machine keeps its own encrypted set.
+
+All of it is process-safe: the add path and the password/color changes hold the
+manager's operation mutex, and the multi-row writes are single transactions.
+Deleting one member never touches its siblings, and because the group is name-
+derived it survives the parent's deletion: a leftover child keeps the group
+name (and its shared credentials) with no `A` machine, and re-adding the parent
+name later simply rejoins the same group and inherits its password — the
+convention working as designed, not a fresh tenant.
 
 ## Storage
 
