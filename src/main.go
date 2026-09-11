@@ -1521,14 +1521,19 @@ func printAdded(r *mgr.Result) {
 	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
-		if r.V4Forward {
-			fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
-		} else {
-			fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)
-		}
-		c, _ := cfg.Load()
-		fmt.Printf("panel:    %s\n", c.PanelURL(panelPath(c)))
+	} else {
+		// The panel password was inherited from an existing user group (a
+		// sibling "name-<n>" already existed), so there is no new plaintext to
+		// show. Say so instead of silently dropping the credential line.
+		fmt.Printf("password: (inherited from the %q user group — not shown; reset with `vps passwd %s`)\n", mgr.UserGroupName(u.Name), u.Name)
 	}
+	if r.V4Forward {
+		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
+	} else {
+		fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)
+	}
+	c, _ := cfg.Load()
+	fmt.Printf("panel:    %s\n", c.PanelURL(panelPath(c)))
 }
 
 func printResult(r *mgr.Result) {
