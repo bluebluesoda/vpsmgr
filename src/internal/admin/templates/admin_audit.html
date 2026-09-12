@@ -80,6 +80,7 @@ var ACT={
   'passwd.reset':{zh:'重置面板密码',en:'reset panel password'},
   'admin.passwd':{zh:'修改管理员密码',en:'change admin password'},
   'quota.update':{zh:'修改配额',en:'update quota'},
+  'color.update':{zh:'修改用户标识色',en:'update user color'},
   'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'},
   'snapshot.create':{zh:'创建检查点',en:'create checkpoint'},
   'snapshot.delete':{zh:'删除检查点',en:'delete checkpoint'},
@@ -93,7 +94,13 @@ var ACT={
   'ipv6pool.del':{zh:'移除 IPv6 地址',en:'remove IPv6 address'},
   'bandwidth.reset':{zh:'重置流量统计',en:'reset bandwidth'}
 };
-function actLabel(a){var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);}
+function actLabel(a){
+  if(a.indexOf('session.switch.')===0){
+    var t=a.slice('session.switch.'.length);
+    return LANG==='zh'?('切换机器 → '+t):('switch container → '+t);
+  }
+  var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);
+}
 function pad2(n){return (n<10?'0':'')+n;}
 function fmtTime(s){
   if(!s) return '';

@@ -231,7 +231,7 @@ func (s *Server) handleSwitchUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.setSessionCookie(w, sess.Token)
-	_ = s.db.AddAuditLog(current.Name, "session.switch."+target.Name)
+	_ = s.db.AddAuditLog(s.auditActor(r, current.Name), "session.switch."+target.Name)
 	http.Redirect(w, r, s.p("/"), http.StatusFound)
 }
 
