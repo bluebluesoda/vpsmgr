@@ -2,6 +2,7 @@ package mgr
 
 import (
 	"errors"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,11 +22,16 @@ func UserGroupLabel(name string) string {
 }
 
 // MachineSpecs renders a compact quota tag for the container switcher:
-// "<cpu>c <mem>m <disk>g", e.g. "2c 2048m 15g". CPU reuses FormatCPU (tenths
-// of a core, so 0.5 stays fractional); memory is the raw MiB value; disk is
+// "<cpu>c <mem> <disk>g", e.g. "2c 2048m 15g". CPU reuses FormatCPU (tenths of
+// a core, so 0.5 stays fractional); memory is the raw MiB value, switching to
+// a rounded whole GiB once it exceeds 9600 MiB (so "2c 10g 15g"); disk is
 // already GiB.
 func MachineSpecs(cpuTenths, memMB, diskGB int) string {
-	return FormatCPU(cpuTenths) + "c " + strconv.Itoa(memMB) + "m " + strconv.Itoa(diskGB) + "g"
+	mem := strconv.Itoa(memMB) + "m"
+	if memMB > 9600 {
+		mem = strconv.Itoa(int(math.Round(float64(memMB)/1024))) + "g"
+	}
+	return FormatCPU(cpuTenths) + "c " + mem + " " + strconv.Itoa(diskGB) + "g"
 }
 
 type UserGroup struct {
