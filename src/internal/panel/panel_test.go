@@ -1798,6 +1798,43 @@ func TestImpersonatedSessionAuditActor(t *testing.T) {
 	}
 }
 
+// TestImpersonatedSwitchAuditActor verifies that switching containers inside a
+// multi-container group under an operator-created session is attributed to the
+// operator "000+<user>", not recorded as a plain user action.
+func TestImpersonatedSwitchAuditActor(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice-1", hash, "10.42.0.3", 2, 30002, 10100, 2, 2048, 20); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := d.CreateImpersonatedSession(u.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: "vpsmgr_session", Value: sess.Token, Path: prefix}
+
+	rr := doReq(t, h, http.MethodPost, prefix+"/switch-user", url.Values{"name": {"alice-1"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("switch-user = %d, want 302", rr.Code)
+	}
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Action == "session.switch.alice-1" && r.Actor == "000+alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want session.switch.alice-1 attributed 000+alice", rows)
+	}
+}
+
 // TestOverviewImpersonationBanner verifies the "logged in as" banner renders
 // only when the session is impersonated, with a link back to the admin panel.
 func TestOverviewImpersonationBanner(t *testing.T) {
