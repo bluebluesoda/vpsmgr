@@ -1210,7 +1210,7 @@ func TestOverviewGroupSwitcherLabels(t *testing.T) {
 	}
 	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
 	body := doReq(t, h, http.MethodGet, prefix, nil, cookie).Body.String()
-	base, child := "A - 1c 1g 10g", "1 - 4c 8g 40g"
+	base, child := "A - 1c 1024m 10g", "1 - 4c 8192m 40g"
 	for _, want := range []string{">" + base + "</option>", ">" + child + "</option>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("overview switcher missing %q", want)
