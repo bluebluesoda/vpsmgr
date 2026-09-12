@@ -41,6 +41,11 @@ th.sort-asc .ind::after { content: "▲"; }
 th.sort-desc .ind::after { content: "▼"; }
 .up { color: #16a34a; font-weight: 600; }
 .down { color: #9ca3af; }
+/* expired row: dim the whole line and drop every accent color */
+tr.exp td { background: #f3f4f6; color: #9ca3af; }
+@media (prefers-color-scheme: dark) { tr.exp td { background: #24262b; color: #6b7280; } }
+tr.exp .udot { display: none; }
+tr.exp button.uname { color: #9ca3af !important; font-weight: 600; }
 .ops { display: flex; gap: 6px; flex-wrap: wrap; }
 button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
 @media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
@@ -223,6 +228,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}从创建起计算的有效天数，0 = 无限期{{else}}validity in days from creation; 0 = permanent{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
         <select name="ipv6" id="cfIpv6" class="field-select">
@@ -258,11 +264,11 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       </thead>
       <tbody>
         {{range .Users}}
-        <tr>
-          <td data-sort="{{.Name}}"><span class="urow">{{if .Color}}<span class="udot" style="background:{{.Color}}"></span>{{end}}<button type="button" class="uname"{{if .Color}} style="color:{{.Color}}"{{end}} onclick="pickColor('{{.Name}}')">{{.Name}}</button></span></td>
+        <tr{{if .Expired}} class="exp"{{end}}>
+          <td data-sort="{{.Name}}"><span class="urow">{{if and .Color (not .Expired)}}<span class="udot" style="background:{{.Color}}"></span>{{end}}<button type="button" class="uname"{{if and .Color (not .Expired)}} style="color:{{.Color}}"{{end}} onclick="pickColor('{{.Name}}')">{{.Name}}{{if .Expired}}(-{{.ExpiredDays}}d){{end}}</button></span></td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}{{if and (ne .Status "ready") (ne .Status "")}} <span class="pill down">{{.Status}}</span>{{end}}</td>
           <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
-          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small><br><small>{{if eq $.Lang "zh"}}有效期{{else}}validity{{end}}: {{if .ExpiresAt}}{{.ExpiresShort}}{{else}}{{if eq $.Lang "zh"}}无限期{{else}}permanent{{end}}{{end}}</small></td>
           <td data-sort="{{.CPUUse}}">{{.CPUUse}}</td>
           <td data-sort="{{.MemUse}}">{{.MemUse}}</td>
           <td data-sort="{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}">{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
@@ -271,16 +277,21 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           {{if $.IPv6PoolMode}}<td>{{if .IPv6}}{{if eq $.Lang "zh"}}有{{else}}Yes{{end}}{{else}}<span class="down">{{if eq $.Lang "zh"}}无{{else}}No{{end}}</span>{{end}}</td>{{end}}
           <td>
             <div class="ops">
+              {{if .Expired}}
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',true)">{{if eq $.Lang "zh"}}延期{{else}}Extend{{end}}</button>
+              <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+              {{else}}
               {{if eq .State "Running"}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="stop"><button class="warn">{{if eq $.Lang "zh"}}停止{{else}}Stop{{end}}</button></form>
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="restart"><button>{{if eq $.Lang "zh"}}重启{{else}}Restart{{end}}</button></form>
               {{else}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false)">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
               <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary neutral"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+              {{end}}
             </div>
           </td>
         </tr>
@@ -336,6 +347,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input type="number" id="planMem" min="1" step="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input type="number" id="planDisk" min="1" step="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB /月{{else}}Bandwidth GiB/mo{{end}}</label><input type="number" id="planBw" min="0" step="1" required title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限{{else}}monthly quota (up+down), 0 = unlimited{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input type="number" id="planDays" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}从创建起计算的有效天数，0 = 无限期{{else}}validity in days from creation; 0 = permanent{{end}}"></div>
       <div class="foot" style="justify-content:flex-end">
         <button type="button" onclick="closePlan()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
         <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
@@ -358,6 +370,25 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="quotaBandwidth" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+    </form>
+    <p id="quotaExpiredNote" style="display:none;color:#b91c1c;font-weight:600;margin:10px 0 0">{{if eq .Lang "zh"}}该账户已到期：仅可延期，其他配额与操作已锁定。{{else}}This account has expired: only extending is allowed; everything else is locked.{{end}}</p>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:14px 0;">
+    <form action="{{.Prefix}}/user-expiry" method="post" id="expiryForm" class="form-grid">
+      <input type="hidden" name="name" id="quotaExpiryName">
+      <div class="field"><label>{{if eq .Lang "zh"}}有效期 / 延期{{else}}Validity / extend{{end}}</label>
+        <select name="extend" id="quotaExtend" class="field-select">
+          <option value="none">{{if eq .Lang "zh"}}不改变{{else}}Keep current{{end}}</option>
+          <option value="72h">72 {{if eq .Lang "zh"}}小时{{else}}hours{{end}}</option>
+          <option value="30d">30 {{if eq .Lang "zh"}}天{{else}}days{{end}}</option>
+          <option value="90d">90 {{if eq .Lang "zh"}}天{{else}}days{{end}}</option>
+          <option value="180d">180 {{if eq .Lang "zh"}}天{{else}}days{{end}}</option>
+          <option value="custom">{{if eq .Lang "zh"}}自定义（天）{{else}}Custom (days){{end}}</option>
+          <option value="forever">{{if eq .Lang "zh"}}永久（清除到期）{{else}}Permanent (clear){{end}}</option>
+        </select>
+      </div>
+      <div class="field" id="quotaExtendDaysWrap" style="display:none"><label>{{if eq .Lang "zh"}}自定义天数{{else}}Custom days{{end}}</label><input name="days" id="quotaExtendDays" type="number" min="1" step="1" value="30"></div>
+      <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}应用延期{{else}}Apply extension{{end}}</button>
+      <small style="color:#9aa0a8;display:block">{{if eq .Lang "zh"}}新到期时间 = max(现在, 当前到期) + 所选时长{{else}}new deadline = max(now, current) + chosen duration{{end}}</small>
     </form>
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:14px 0;">
     <form action="{{.Prefix}}/user-bandwidth-reset" method="post">
@@ -420,7 +451,7 @@ var P = "{{.Prefix}}";
 var COPY_OK = {{if eq .Lang "zh"}}"已复制 ✓"{{else}}"Copied ✓"{{end}};
 var COPY_LBL = {{if eq .Lang "zh"}}"复制"{{else}}"Copy"{{end}};
 var CREATE_ING = {{if eq .Lang "zh"}}"创建中…"{{else}}"Creating…"{{end}};
-{{if eq .Lang "zh"}}var PLAN_LBL = {name:'名称', cpu:'CPU', mem:'内存', disk:'磁盘', bw:'流量', apply:'套用', edit:'编辑', save:'保存', cancel:'取消', editTitle:'编辑套餐预设'};{{else}}var PLAN_LBL = {name:'Name', cpu:'CPU', mem:'Memory', disk:'Disk', bw:'Bandwidth', apply:'Apply', edit:'Edit', save:'Save', cancel:'Cancel', editTitle:'Edit plan preset'};{{end}}
+{{if eq .Lang "zh"}}var PLAN_LBL = {name:'名称', cpu:'CPU', mem:'内存', disk:'磁盘', bw:'流量', days:'有效期', apply:'套用', edit:'编辑', save:'保存', cancel:'取消', editTitle:'编辑套餐预设'};{{else}}var PLAN_LBL = {name:'Name', cpu:'CPU', mem:'Memory', disk:'Disk', bw:'Bandwidth', days:'Days', apply:'Apply', edit:'Edit', save:'Save', cancel:'Cancel', editTitle:'Edit plan preset'};{{end}}
 function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); hideLoginAs(); }
 // The "log in as this user" button appears only in the post-create modal.
@@ -436,18 +467,36 @@ function copyModal(){
   if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
   else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
-function quota(name, cpu, mem, disk, bandwidth){
+function quota(name, cpu, mem, disk, bandwidth, expires, expired){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
   document.getElementById('quotaBwName').value = name;
+  document.getElementById('quotaExpiryName').value = name;
   document.getElementById('quotaCpu').value = parseFloat(cpu);
   document.getElementById('quotaMem').value = parseInt(mem);
   document.getElementById('quotaDisk').value = parseInt(disk);
   document.getElementById('quotaBandwidth').value = parseInt(bandwidth || 0);
   syncCpuStep(document.getElementById('quotaCpu'));
+  // Expired accounts are locked to extend-or-delete: disable the quota fields
+  // (and block the reset-traffic form) so only the extend form is usable.
+  var lock = !!expired;
+  ['quotaCpu','quotaMem','quotaDisk','quotaBandwidth'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.disabled = lock;
+  });
+  var save = document.getElementById('quotaSaveBtn'); if(save) save.disabled = lock;
+  var note = document.getElementById('quotaExpiredNote'); if(note) note.style.display = lock ? 'block' : 'none';
+  document.getElementById('quotaExtend').value = 'none';
+  document.getElementById('quotaExtendDaysWrap').style.display = 'none';
   document.getElementById('quotaModal').classList.add('open');
 }
 function closeQuota(){ document.getElementById('quotaModal').classList.remove('open'); }
+// Show the custom-days field only when the "custom" extend option is chosen.
+(function(){
+  var sel = document.getElementById('quotaExtend');
+  if(sel) sel.addEventListener('change', function(){
+    document.getElementById('quotaExtendDaysWrap').style.display = (sel.value === 'custom') ? 'block' : 'none';
+  });
+})();
 // Per-user color picker: opened by clicking the (bold) username. The modal
 // posts straight to /user-color — one click on a swatch saves and reloads.
 function pickColor(name){
@@ -495,10 +544,11 @@ function del(name){
   function fmtMem(v){ return String(Math.round(v)); }
   function fmtDisk(v){ return String(Math.round(v)); }
   function fmtBw(v){ return String(Math.round(v)); }
+  function fmtDays(v){ return String(Math.round(v)); }
   var DEFAULTS = [
-    { key: 's', name: {{if eq .Lang "zh"}}'小号'{{else}}'Small'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0 },
-    { key: 'm', name: {{if eq .Lang "zh"}}'中号'{{else}}'Medium'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0 },
-    { key: 'l', name: {{if eq .Lang "zh"}}'大号'{{else}}'Large'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0 }
+    { key: 's', name: {{if eq .Lang "zh"}}'小号'{{else}}'Small'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0, days: 0 },
+    { key: 'm', name: {{if eq .Lang "zh"}}'中号'{{else}}'Medium'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0, days: 0 },
+    { key: 'l', name: {{if eq .Lang "zh"}}'大号'{{else}}'Large'{{end}}, cpu: 1, mem: 1024, disk: 10, bw: 0, days: 0 }
   ];
   var plans;
   try {
@@ -511,14 +561,16 @@ function del(name){
         cpu: (s.cpu !== undefined) ? s.cpu : d.cpu,
         mem: (s.mem !== undefined) ? s.mem : d.mem,
         disk: (s.disk !== undefined) ? s.disk : d.disk,
-        bw: (s.bw !== undefined) ? s.bw : d.bw
+        bw: (s.bw !== undefined) ? s.bw : d.bw,
+        days: (s.days !== undefined) ? s.days : d.days
       };
     });
-  } catch (e) { plans = DEFAULTS.map(function(d){ return {key:d.key, name:d.name, cpu:d.cpu, mem:d.mem, disk:d.disk, bw:d.bw}; }); }
-  function save(){ try { var o = {}; plans.forEach(function(p){ o[p.key] = {name:p.name, cpu:p.cpu, mem:p.mem, disk:p.disk, bw:p.bw}; }); localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
+  } catch (e) { plans = DEFAULTS.map(function(d){ return {key:d.key, name:d.name, cpu:d.cpu, mem:d.mem, disk:d.disk, bw:d.bw, days:d.days}; }); }
+  function save(){ try { var o = {}; plans.forEach(function(p){ o[p.key] = {name:p.name, cpu:p.cpu, mem:p.mem, disk:p.disk, bw:p.bw, days:p.days}; }); localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
   function fmtSpec(p){
     return L.cpu + ' ' + fmtCpu(p.cpu) + ' · ' + L.mem + ' ' + fmtMem(p.mem) + ' · ' +
-           L.disk + ' ' + fmtDisk(p.disk) + ' · ' + L.bw + (p.bw === 0 ? ' ∞' : ' ' + fmtBw(p.bw));
+           L.disk + ' ' + fmtDisk(p.disk) + ' · ' + L.bw + (p.bw === 0 ? ' ∞' : ' ' + fmtBw(p.bw)) +
+           ' · ' + L.days + (p.days > 0 ? ' ' + fmtDays(p.days) : ' ∞');
   }
   var last = null; // slot key of the last applied plan, for the highlight
   function renderPlans(){
@@ -547,6 +599,7 @@ function del(name){
     document.getElementById('planMem').value = p.mem;
     document.getElementById('planDisk').value = p.disk;
     document.getElementById('planBw').value = p.bw;
+    document.getElementById('planDays').value = p.days;
     syncCpuStep(document.getElementById('planCpu'));
     document.getElementById('planModal').classList.add('open');
     document.getElementById('planName').focus();
@@ -556,6 +609,7 @@ function del(name){
     last = p.key;
     setVal('cfCpu', p.cpu, fmtCpu); setVal('cfMem', p.mem, fmtMem);
     setVal('cfDisk', p.disk, fmtDisk); setVal('cfBandwidth', p.bw, fmtBw);
+    setVal('cfDays', p.days, fmtDays);
     renderPlans();
   }
   function setVal(id, v, fmt){
@@ -574,6 +628,8 @@ function del(name){
     p.mem = parseInt(document.getElementById('planMem').value, 10);
     p.disk = parseInt(document.getElementById('planDisk').value, 10);
     p.bw = parseInt(document.getElementById('planBw').value, 10);
+    p.days = parseInt(document.getElementById('planDays').value, 10) || 0;
+    if (p.days < 0) p.days = 0;
     save(); renderPlans(); m.classList.remove('open');
   });
   if (m) m.addEventListener('click', function(e){ if (e.target === m) m.classList.remove('open'); });
@@ -588,7 +644,7 @@ function del(name){
 // the field reports the naming rule and duplicate status before submit.
 (function(){
   var KEY = 'vpsmgr_admin_create';
-  var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), btn = document.getElementById('cfBtn');
+  var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), days = document.getElementById('cfDays'), btn = document.getElementById('cfBtn');
   var nameIn = document.getElementById('cfName'), nameHint = document.getElementById('cfNameHint');
   var existing = { {{range .Users}}"{{.Name}}":1, {{end}}};
   var MSG = {{if eq .Lang "zh"}}{ok:'用户名可用', group:'将创建用户组：', groupAfter:'（已有 ', groupEnd:' 个账号，创建后 ', accounts:' 个）', dup:'该用户名已存在', invalid:'主用户必须以字母结尾；子用户格式为 主用户-数字，且不允许嵌套', hint:'自动转为小写'}{{else}}{ok:'Username available', group:'User group to create: ', groupAfter:' (', groupEnd:' accounts, ', accounts:' after creation)', dup:'Username already exists', invalid:'parent must end with a letter; child format is parent-number, nesting is not allowed', hint:'Folded to lowercase'}{{end}};
@@ -626,12 +682,12 @@ var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
   if (nameIn) nameIn.addEventListener('input', nameStatus);
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; }
+    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; if (saved.days !== undefined && days) days.value = saved.days; }
     syncCpuStep(cpu);
   } catch (e) {}
-  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value})); } catch (e) {} }
+  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value, days: days ? days.value : 0})); } catch (e) {} }
   function onCpu(){ syncCpuStep(cpu); persist(); }
-  cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); bandwidth.addEventListener('input', persist);
+  cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); bandwidth.addEventListener('input', persist); if (days) days.addEventListener('input', persist);
   document.getElementById('createForm').addEventListener('submit', function(e){
     if (nameIn && !nameIn.checkValidity()) { e.preventDefault(); nameIn.reportValidity(); return; }
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;

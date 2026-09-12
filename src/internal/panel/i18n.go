@@ -89,6 +89,7 @@ func tr(l, key string, args ...any) string {
 		"new_root_password":   {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
 		"reinstall_done":      {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
 		"ssh_keys_apply_warn": {"机器当前不可达，密钥已保存，将在下次重装后写入。", "Machine unreachable — keys saved and will be applied on the next reinstall."},
+		"err_account_expired": {"账户已到期，机器已锁定，请联系管理员延期。", "Account expired — the machine is locked. Contact the administrator to extend it."},
 	}
 	pair, ok := m[key]
 	if !ok {

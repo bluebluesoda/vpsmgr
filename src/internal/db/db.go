@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 13
+const schemaVersion = 14
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -242,6 +242,13 @@ var migrations = []struct {
 	// old idx derivation), so the index applies cleanly.
 	{13, []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_start_port ON users(start_port)`,
+	}},
+	// v14: optional quota validity deadline. RFC3339 UTC (same format as
+	// created_at); '' = permanent (no expiry). When the deadline passes the
+	// container is force-stopped and the account is locked to read-only until
+	// an admin extends it.
+	{14, []string{
+		`ALTER TABLE users ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`,
 	}},
 }
 

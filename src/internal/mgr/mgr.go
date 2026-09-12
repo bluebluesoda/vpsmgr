@@ -327,6 +327,8 @@ type AddOptions struct {
 	// Ignored unless the config is in pool mode (prefix mode always assigns
 	// the deterministic derived address).
 	IPv6Addr string
+	// Days is the initial quota validity in days (0 or negative = permanent).
+	Days int
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -517,7 +519,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr)
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ExpiryFromDays(opt.Days))
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)

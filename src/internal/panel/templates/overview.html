@@ -78,6 +78,10 @@ label{font-size:.84rem;color:var(--muted)}
 .groupbanner .group-switch{margin-left:auto;flex:none}
 .container-index{display:inline-block;background:#dc2626;color:#fff;border:3px solid #7f1d1d;border-radius:6px;padding:.05rem .45rem;font-size:1.25rem;line-height:1.2;font-weight:900;box-shadow:2px 2px 0 #7f1d1d}
 @media (prefers-color-scheme: dark){.groupbanner{background:#3b2f10;color:#fcd34d;border-color:#b45309}.container-index{background:#ef4444;color:#fff;border-color:#991b1b;box-shadow:2px 2px 0 #450a0a}}
+.expbanner{background:#fee2e2;color:#991b1b;border:2px solid #ef4444;padding:.65rem .85rem;border-radius:8px;margin-bottom:.8rem;font-size:.9rem;font-weight:700}
+@media (prefers-color-scheme: dark){.expbanner{background:#3b1414;color:#fca5a5;border-color:#b91c1c}}
+.expiry-line{margin:.1rem 0 .7rem;font-size:.82rem}
+.locked-note{padding:.5rem 0;font-size:.85rem}
 a{color:var(--accent);text-decoration:none}
 .domtable{width:100%;border-collapse:collapse;font-size:.85rem;margin:.2rem 0 .6rem}
 .domtable th,.domtable td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -256,6 +260,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="grid">
 <div class="card">
 <h2>{{if eq .Lang "zh"}}机器管理{{else}}Machine{{end}}{{if eq .State "Running"}}<span class="pill up" style="margin-left:.5rem">{{if eq .Lang "zh"}}运行中{{else}}Running{{end}}</span>{{else}}<span class="pill down" style="margin-left:.5rem">{{.State}}</span>{{end}}</h2>
+{{if .Expired}}<div class="expbanner">⚠ {{if eq .Lang "zh"}}账户已到期，机器已强制关机并锁定；除管理员延期或删除外的一切操作均被禁用。{{else}}Account expired: the container is force-stopped and locked. Everything is disabled except an admin extending or deleting it.{{end}}</div>{{else if .ExpiresSoon}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}配额即将到期，请及时延期。{{else}}Quota expiring soon — extend it in time.{{end}}</div>{{end}}
 <div class="qgrid">
 <div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
@@ -273,6 +278,10 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="bar"><div class="fill" style="width:{{.BandwidthPct}}%"></div></div>
 </div>
 {{end}}
+{{if .ExpiresAt}}<div class="muted expiry-line"><span class="qlabel">{{if eq .Lang "zh"}}有效期{{else}}Validity{{end}}</span> <span class="expiry-remaining" data-expires="{{.ExpiresAt}}">{{.ExpiresAt}}</span></div>{{end}}
+{{if .Expired}}
+<div class="locked-note muted">{{if eq .Lang "zh"}}机器已锁定，请联系管理员延期后再操作。{{else}}Machine locked — ask the administrator to extend the quota.{{end}}</div>
+{{else}}
 <div class="btnrow">
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn ok">{{if eq .Lang "zh"}}开机{{else}}Start{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="stop"><button class="btn warn">{{if eq .Lang "zh"}}关机{{else}}Stop{{end}}</button></form>
@@ -285,6 +294,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <button class="btn" id="initBtn">{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
+{{end}}
 </div>
 
 <div class="card">
@@ -300,19 +310,19 @@ footer a{color:var(--muted);text-decoration:underline}
 {{range .Domains}}
 <tr>
 <td><code>{{.Domain}}</code></td>
-<td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}}></td>
-<td><button type="button" class="btn danger" onclick="delDomain('{{.Domain}}')">{{if eq $.Lang "zh"}}删除{{else}}Remove{{end}}</button></td>
+<td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}}{{if $.Expired}} disabled{{end}}></td>
+<td><button type="button" class="btn danger" onclick="delDomain('{{.Domain}}')"{{if $.Expired}} disabled{{end}}>{{if eq $.Lang "zh"}}删除{{else}}Remove{{end}}</button></td>
 </tr>
 {{end}}
 </tbody>
 </table>
-<button class="btn accent" type="submit" id="domSave" hidden>{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+<button class="btn accent" type="submit" id="domSave" hidden{{if .Expired}} disabled{{end}}>{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
 </form>
 {{else}}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
 {{if and .V4Forward .TraefikEnabled}}<form action="{{.Prefix}}/domain-add" method="post">
-<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}443 透传时向后端发送 PROXY 报文以汇报访客真实 IP；需后端支持，默认关闭。{{else}}443 passthrough sends the real client IP via PROXY; needs backend support, off by default.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"{{if .Expired}} disabled{{end}}><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"{{if .Expired}} disabled{{end}}> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}443 透传时向后端发送 PROXY 报文以汇报访客真实 IP；需后端支持，默认关闭。{{else}}443 passthrough sends the real client IP via PROXY; needs backend support, off by default.{{end}}</span></span></label><button class="btn ok" type="submit"{{if .Expired}} disabled{{end}}>{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
 {{else}}<div class="muted">{{if eq .Lang "zh"}}{{if .V4Forward}}Traefik 已关闭，无法添加域名。{{else}}IPv4 入站已关闭，无法添加域名。{{end}}{{else}}{{if .V4Forward}}Traefik is disabled — domains can't be added.{{else}}IPv4 inbound is off — domains can't be added.{{end}}{{end}}</div>{{end}}
   </div>
@@ -892,6 +902,32 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var createForm=document.querySelector('#snapModal form[action*="/snapshot"]');
   if(createForm)createForm.addEventListener('submit',function(){location.hash='snapshots';});
   if(location.hash==='#snapshots')open();
+})();
+// Quota validity countdown: renders "剩余 N 天 M 小时" (or 已到期) from the
+// server-provided absolute deadline, refreshed every minute. Read-only; the
+// server remains authoritative for whether the account is locked.
+(function(){
+  var els=document.querySelectorAll('.expiry-remaining');
+  if(!els.length)return;
+  var LANG='{{.Lang}}';
+  function label(ms){
+    if(ms<=0)return LANG==='zh'?'已到期':'expired';
+    var m=Math.floor(ms/60000), d=Math.floor(m/1440), h=Math.floor((m%1440)/60), mi=m%60;
+    if(LANG==='zh'){ return d>0?('剩余 '+d+' 天 '+h+' 小时'):('剩余 '+h+' 小时 '+mi+' 分'); }
+    return d>0?('left '+d+'d '+h+'h'):('left '+h+'h '+mi+'m');
+  }
+  function render(){
+    els.forEach(function(el){
+      var t=new Date(el.getAttribute('data-expires')).getTime();
+      if(isNaN(t))return;
+      var ms=t-Date.now();
+      el.textContent=label(ms);
+      el.title=new Date(t).toLocaleString();
+      el.style.color = ms<=0 ? '#dc2626' : (ms<=72*3600000 ? '#b45309' : '');
+    });
+  }
+  render();
+  setInterval(render,60000);
 })();
 // Resource usage charts (last 24h, per-minute). Vanilla canvas, no deps:
 // shared pan/zoom view across the three charts, adaptive time ticks, stable

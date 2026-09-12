@@ -126,6 +126,15 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   (MiB), disk (GiB). Disk maps onto the storage driver's quota (ZFS space
   accounting, btrfs qgroups, or the accepted-but-unenforced `dir` case) and
   can only grow, never shrink.
+- **Quota validity (expiry)**: each user can carry an optional absolute deadline
+  (`users.expires_at`, RFC3339 UTC, `''` = permanent). When it passes, the 60s
+  loop force-stops the container (`stop` with `force:true`) and disables
+  `boot.autostart`, and the account is locked to read-only for both the user and
+  the admin — the only operations left are the admin extending the deadline
+  (extend = `max(now, current) + duration`) or deleting the account. Extending
+  past the deadline lifts the lock; a manual start is then required (autostart
+  stays off). The user panel shows a countdown under the bandwidth bar; the admin
+  users table dims expired rows and tags the name `(-Nd)`.
 - **Container swap**: Incus 7 on cgroup v2 writes `memory.swap.max=0` for every
   container unless `limits.memory.swap` carries an explicit byte amount
   (`true`/`false` both end up as 0), so without an explicit value containers

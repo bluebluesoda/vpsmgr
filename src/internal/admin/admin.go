@@ -61,8 +61,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/logout", s.requireAuth(s.requirePost(s.handleLogout)))
 	mux.HandleFunc("/", s.requireAuth(s.handleOverview))
 	mux.HandleFunc("/domains", s.requireAuth(s.handleDomains))
-	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
-	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
+	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleDomainDel))))
+	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleDomainUpdate))))
 	mux.HandleFunc("/blocked-domains", s.requireAuth(s.requirePost(s.handleBlockedDomains)))
 	mux.HandleFunc("/ipv6pool", s.requireAuth(s.handleIPv6Pool))
 	mux.HandleFunc("/ipv6pool-add", s.requireAuth(s.requirePost(s.handleIPv6PoolAdd)))
@@ -71,14 +71,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/audit/api", s.requireAuth(s.handleAuditAPI))
 	mux.HandleFunc("/user-add", s.requireAuth(s.requirePost(s.handleUserAdd)))
 	mux.HandleFunc("/user-del", s.requireAuth(s.requirePost(s.handleUserDel)))
-	mux.HandleFunc("/user-quota", s.requireAuth(s.requirePost(s.handleUserQuota)))
-	mux.HandleFunc("/user-color", s.requireAuth(s.requirePost(s.handleUserColor)))
-	mux.HandleFunc("/user-bandwidth-reset", s.requireAuth(s.requirePost(s.handleUserBandwidthReset)))
-	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.handlePower)))
-	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
+	mux.HandleFunc("/user-quota", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserQuota))))
+	mux.HandleFunc("/user-expiry", s.requireAuth(s.requirePost(s.handleUserExpiry)))
+	mux.HandleFunc("/user-color", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserColor))))
+	mux.HandleFunc("/user-bandwidth-reset", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserBandwidthReset))))
+	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.requireTargetActive(s.handlePower))))
+	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleResetPanelPass))))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
 	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
-	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.handleLoginAs)))
+	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleLoginAs))))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +224,26 @@ func (s *Server) requirePost(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next(w, r)
+	}
+}
+
+// requireTargetActive rejects a mutation aimed at an expired user. An expired
+// account is locked to read-only for everyone; the only operations left are the
+// admin's extend (/user-expiry) and delete (/user-del), which are not wrapped.
+// The target is the "name" form field, present on every per-user form.
+func (s *Server) requireTargetActive(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if name := r.FormValue("name"); name != "" {
+			if u, err := s.db.GetUserByName(name); err == nil && mgr.IsExpired(u.ExpiresAt, time.Now().UTC()) {
+				s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_account_expired"))
+				return
+			}
+		}
 		next(w, r)
 	}
 }

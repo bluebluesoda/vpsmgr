@@ -24,6 +24,9 @@ const (
 	// user"). When set, audit events are attributed "000+<user>" and the panel
 	// shows a "logged in as" banner.
 	impersonatedKey ctxKey = 1
+	// expiredKey marks a session whose quota validity has passed. An expired
+	// account is locked to read-only; only the admin can extend or delete it.
+	expiredKey ctxKey = 2
 )
 
 // loginDummyHash is compared against when the username is unknown so that a
@@ -74,7 +77,27 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		ctx := context.WithValue(r.Context(), userKey, u)
 		ctx = context.WithValue(ctx, impersonatedKey, imp)
+		ctx = context.WithValue(ctx, expiredKey, mgr.IsExpired(u.ExpiresAt, time.Now().UTC()))
 		next(w, r.WithContext(ctx))
+	}
+}
+
+// isExpired reports whether the current account's quota validity has passed.
+func (s *Server) isExpired(r *http.Request) bool {
+	v, _ := r.Context().Value(expiredKey).(bool)
+	return v
+}
+
+// requireActive rejects state-changing requests from an expired account. An
+// expired container is locked to read-only (the admin can still extend or
+// delete it); read-only GET routes stay reachable so the user sees the reason.
+func (s *Server) requireActive(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.isExpired(r) {
+			s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_account_expired"))
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -623,6 +646,11 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		data, _ := s.db.GetStickyNotes(u.ID)
 		writeNotesJSON(w, true, "", data != "", data)
+		return
+	}
+	// Expired accounts are locked: reads stay open (above), writes do not.
+	if s.isExpired(r) {
+		writeNotesJSON(w, false, "account expired", true, "")
 		return
 	}
 	var req struct {

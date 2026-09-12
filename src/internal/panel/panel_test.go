@@ -1858,3 +1858,50 @@ func TestOverviewImpersonationBanner(t *testing.T) {
 		}
 	}
 }
+
+// TestExpiredUserPanelLocked verifies an expired account is read-only: the
+// overview renders the countdown/locked banner, and a mutating POST is rejected
+// without touching the container.
+func TestExpiredUserPanelLocked(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateUserExpiry(u.ID, time.Now().UTC().Add(-25*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	body := doReq(t, h, http.MethodGet, prefix, nil, cookie).Body.String()
+	for _, want := range []string{`class="expbanner"`, "data-expires=", "已到期"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expired overview missing %q", want)
+		}
+	}
+	if strings.Contains(body, "/power") {
+		t.Error("expired overview should hide the power forms")
+	}
+
+	// The init-script POST is one of the locked mutations.
+	rr := doReq(t, h, http.MethodPost, prefix+"/init-script", url.Values{"script": {"#!/bin/sh\necho x"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("init-script on expired = %d, want 302 redirect", rr.Code)
+	}
+	got, _ := d.GetUserByName("alice")
+	if got.InitScript != "" {
+		t.Errorf("init script changed on expired user: %q", got.InitScript)
+	}
+
+	// A live (non-expired) account still gets the power forms.
+	if err := d.UpdateUserExpiry(u.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	body = doReq(t, h, http.MethodGet, prefix, nil, cookie).Body.String()
+	if !strings.Contains(body, "/power") {
+		t.Error("active overview should render the power forms")
+	}
+}

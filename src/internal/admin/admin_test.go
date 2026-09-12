@@ -1082,3 +1082,93 @@ func (s *Server) renderToString(t *testing.T, name string, data pageData) string
 	}
 	return b.String()
 }
+
+// TestUserExpiryExtendAndClear verifies the /user-expiry endpoint extends a
+// deadline (max(now, current) + duration), clears it, and audits quota.expiry.
+func TestUserExpiryExtendAndClear(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	if _, err := d.CreateUser("alice", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	rr := doReq(t, h, http.MethodPost, prefix+"/user-expiry", url.Values{"name": {"alice"}, "extend": {"30d"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("extend = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+	u, _ := d.GetUserByName("alice")
+	exp, err := time.Parse(time.RFC3339, u.ExpiresAt)
+	if err != nil {
+		t.Fatalf("ExpiresAt = %q: %v", u.ExpiresAt, err)
+	}
+	if want := time.Now().UTC().Add(30 * 24 * time.Hour); exp.Sub(want).Abs() > time.Minute {
+		t.Errorf("extended expiry = %v, want ~%v", exp, want)
+	}
+	rows, _ := d.ListAuditLog(0, 10)
+	var found bool
+	for _, r := range rows {
+		if r.Actor == "000+alice" && r.Action == "quota.expiry" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit rows = %+v, want 000+alice quota.expiry", rows)
+	}
+
+	rr = doReq(t, h, http.MethodPost, prefix+"/user-expiry", url.Values{"name": {"alice"}, "extend": {"forever"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clear = %d, want 302", rr.Code)
+	}
+	u, _ = d.GetUserByName("alice")
+	if u.ExpiresAt != "" {
+		t.Errorf("ExpiresAt after forever = %q, want empty", u.ExpiresAt)
+	}
+}
+
+// TestExpiredUserLockedInAdmin verifies the admin lockdown: on an expired
+// account only extend and delete work; quota and power are rejected.
+func TestExpiredUserLockedInAdmin(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	u, err := d.CreateUser("bob", "x", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateUserExpiry(u.ID, time.Now().UTC().Add(-3*24*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// Quota changes are blocked (the stored quota is unchanged).
+	rr := doReq(t, h, http.MethodPost, prefix+"/user-quota",
+		url.Values{"name": {"bob"}, "cpu": {"4"}, "mem": {"2048"}, "disk": {"40"}, "bandwidth": {"0"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("quota on expired = %d, want 302 redirect", rr.Code)
+	}
+	got, _ := d.GetUserByName("bob")
+	if got.CPU != 1 || got.MemMB != 1024 || got.DiskGB != 10 {
+		t.Errorf("quota changed on expired user: cpu=%d mem=%d disk=%d", got.CPU, got.MemMB, got.DiskGB)
+	}
+
+	// Power is blocked too.
+	doReq(t, h, http.MethodPost, prefix+"/power", url.Values{"name": {"bob"}, "action": {"start"}}, cookie)
+	got, _ = d.GetUserByName("bob")
+	if got.Status != db.StatusReady {
+		t.Errorf("power changed status to %q", got.Status)
+	}
+
+	// Extend still works.
+	rr = doReq(t, h, http.MethodPost, prefix+"/user-expiry", url.Values{"name": {"bob"}, "extend": {"90d"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("extend expired = %d, want 302", rr.Code)
+	}
+	got, _ = d.GetUserByName("bob")
+	if exp, err := time.Parse(time.RFC3339, got.ExpiresAt); err != nil || time.Now().After(exp) {
+		t.Errorf("extend did not move bob out of expiry: %q (%v)", got.ExpiresAt, err)
+	}
+}

@@ -473,6 +473,14 @@ func (c *Client) Stop(name string) error {
 		stateAction{Action: "stop"}, 2*time.Minute)
 }
 
+// ForceStop stops a container immediately (force, no graceful shutdown
+// timeout). Used by quota-expiry enforcement, where the guest may be
+// uncooperative: the same body Delete uses before removing a running instance.
+func (c *Client) ForceStop(name string) error {
+	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
+		stateAction{Action: "stop", Force: true, Timeout: -1}, 2*time.Minute)
+}
+
 func (c *Client) Restart(name string) error {
 	if err := c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
 		stateAction{Action: "restart"}, 2*time.Minute); err != nil {

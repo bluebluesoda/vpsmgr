@@ -102,6 +102,10 @@ func tr(l, key string, args ...any) string {
 		"color_updated":         {"已设置 %[1]v 的专属颜色", "color set for %[1]v"},
 		"color_reset":           {"已清除 %[1]v 的专属颜色", "color cleared for %[1]v"},
 		"err_invalid_color":     {"颜色不在可选范围内", "color is not in the allowed palette"},
+		"err_account_expired":   {"账户已到期，机器已锁定，仅可延期或删除。", "account expired — the machine is locked; only extend or delete is allowed"},
+		"err_invalid_days":      {"有效期天数必须是不小于 0 的整数（0 = 无限期）", "validity days must be an integer >= 0 (0 = permanent)"},
+		"err_invalid_extend":    {"延期的自定义天数必须是正整数", "custom extend days must be a positive integer"},
+		"expiry_updated":        {"已更新 %[1]v 的有效期", "expiry updated for %[1]v"},
 	}
 	pair, ok := m[key]
 	if !ok {
