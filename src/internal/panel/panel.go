@@ -133,7 +133,7 @@ type sshKeyRow struct {
 type groupMemberRow struct {
 	Name  string // account name, used as the <option> value
 	Label string // "A" for the base account, else the numeric suffix
-	Specs string // compact quota tag, e.g. "4c8g40g"
+	Specs string // compact quota tag, e.g. "4c 8g 40g"
 }
 
 type pageData struct {
