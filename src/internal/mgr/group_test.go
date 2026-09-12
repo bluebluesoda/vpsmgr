@@ -51,6 +51,10 @@ func TestMachineSpecs(t *testing.T) {
 		{40, 8192, 40, "4c 8192m 40g"},
 		{5, 512, 10, "0.5c 512m 10g"},
 		{20, 1536, 20, "2c 1536m 20g"},
+		{20, 9600, 20, "2c 9600m 20g"}, // boundary stays MiB
+		{20, 10000, 20, "2c 10g 20g"},  // 9.77 -> 10
+		{20, 10240, 20, "2c 10g 20g"},  // exact GiB
+		{20, 11264, 20, "2c 11g 20g"},  // 11 GiB
 	} {
 		if got := MachineSpecs(test.cpu, test.mem, test.disk); got != test.want {
 			t.Errorf("MachineSpecs(%d, %d, %d) = %q, want %q", test.cpu, test.mem, test.disk, got, test.want)
