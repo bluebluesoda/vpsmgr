@@ -47,10 +47,10 @@ func TestMachineSpecs(t *testing.T) {
 		cpu, mem, disk int
 		want           string
 	}{
-		{10, 1024, 10, "1c1g10g"},
-		{40, 8192, 40, "4c8g40g"},
-		{5, 512, 10, "0.5c0.5g10g"},
-		{20, 1536, 20, "2c1.5g20g"},
+		{10, 1024, 10, "1c 1g 10g"},
+		{40, 8192, 40, "4c 8g 40g"},
+		{5, 512, 10, "0.5c 0.5g 10g"},
+		{20, 1536, 20, "2c 1.5g 20g"},
 	} {
 		if got := MachineSpecs(test.cpu, test.mem, test.disk); got != test.want {
 			t.Errorf("MachineSpecs(%d, %d, %d) = %q, want %q", test.cpu, test.mem, test.disk, got, test.want)

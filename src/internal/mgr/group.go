@@ -21,12 +21,12 @@ func UserGroupLabel(name string) string {
 }
 
 // MachineSpecs renders a compact quota tag for the container switcher:
-// "<cpu>c<mem>g<disk>g", e.g. "4c8g40g". CPU reuses FormatCPU (tenths of a
+// "<cpu>c <mem>g <disk>g", e.g. "4c 8g 40g". CPU reuses FormatCPU (tenths of a
 // core, so 0.5 stays fractional); memory is MiB rendered as GiB with a trimmed
 // decimal (1024 -> "1", 512 -> "0.5"); disk is already GiB.
 func MachineSpecs(cpuTenths, memMB, diskGB int) string {
 	mem := strconv.FormatFloat(float64(memMB)/1024, 'f', -1, 64)
-	return FormatCPU(cpuTenths) + "c" + mem + "g" + strconv.Itoa(diskGB) + "g"
+	return FormatCPU(cpuTenths) + "c " + mem + "g " + strconv.Itoa(diskGB) + "g"
 }
 
 type UserGroup struct {

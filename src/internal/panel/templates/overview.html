@@ -234,7 +234,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
 {{if gt .GroupCount 1}}
-<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}您的用户组内有多台机器，当前机器序号为{{else}}Your user group has multiple containers. Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container before operating.{{end}}{{if gt (len .GroupUsers) 1}}<form action="{{.Prefix}}/switch-user" method="post" class="inline group-switch"><select name="name" onchange="this.form.submit()" aria-label="{{if eq .Lang "zh"}}切换机器{{else}}Switch container{{end}}">{{range .GroupUsers}}<option value="{{.Name}}"{{if eq .Name $.User.Name}} selected{{end}}>{{.Label}}-{{.Specs}}</option>{{end}}</select></form>{{end}}</div>
+<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}您的用户组内有多台机器，当前机器序号为{{else}}Your user group has multiple containers. Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container before operating.{{end}}{{if gt (len .GroupUsers) 1}}<form action="{{.Prefix}}/switch-user" method="post" class="inline group-switch"><select name="name" onchange="this.form.submit()" aria-label="{{if eq .Lang "zh"}}切换机器{{else}}Switch container{{end}}">{{range .GroupUsers}}<option value="{{.Name}}"{{if eq .Name $.User.Name}} selected{{end}}>{{.Label}} - {{.Specs}}</option>{{end}}</select></form>{{end}}</div>
 {{end}}
 {{if .Impersonated}}
 <div class="impbanner">
