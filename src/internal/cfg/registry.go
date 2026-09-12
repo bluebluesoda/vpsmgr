@@ -227,6 +227,18 @@ var Fields = []Field{
 			c.Panel.ShowFooter = b
 			return nil
 		}},
+	{"panel.bandwidth_reset_day", KindOperator, ApplyRestart,
+		"day of month the monthly bandwidth quota resets (1-28; 28 keeps February safe)",
+		"1",
+		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.BandwidthResetDay) }),
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 1 || n > 28 {
+				return fmt.Errorf("panel.bandwidth_reset_day must be an integer 1-28")
+			}
+			c.Panel.BandwidthResetDay = n
+			return nil
+		}},
 	{"panel.admin_pass_hash", KindSpecial, ApplyNone,
 		"admin password bcrypt hash — set via `vps admin-passwd` (stored in the DB)",
 		"",

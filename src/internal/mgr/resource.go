@@ -80,7 +80,7 @@ func (m *Manager) SampleResources() error {
 		samples = append(samples, s)
 	}
 
-	period := time.Now().UTC().Format("2006-01")
+	period := BandwidthPeriod(time.Now(), m.cfg.Panel.BandwidthResetDay)
 	cutoff := sampleMinute - int64(resourceRetention/time.Second)
 	if err := m.db.RecordResourceSamples(samples, observations, period, cutoff); err != nil {
 		return fmt.Errorf("record resource samples: %w", err)
