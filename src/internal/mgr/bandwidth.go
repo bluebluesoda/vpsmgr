@@ -42,6 +42,23 @@ func shouldThrottle(used uint64, quotaGB int) bool {
 	return used >= uint64(quotaGB)<<30
 }
 
+// BandwidthPeriod returns the monthly bandwidth period key ("YYYY-MM") for the
+// given time and configured reset day. The period starts on day resetDay, so
+// before that day the key is the previous month's (which is what rolls the
+// counters over). resetDay is clamped to 1..28 — 28 keeps February safe — and
+// any out-of-range value falls back to 1.
+func BandwidthPeriod(t time.Time, resetDay int) string {
+	if resetDay < 1 || resetDay > 28 {
+		resetDay = 1
+	}
+	t = t.UTC()
+	if t.Day() >= resetDay {
+		return t.Format("2006-01")
+	}
+	firstOfMonth := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return firstOfMonth.AddDate(0, -1, 0).Format("2006-01")
+}
+
 // ParseBandwidthGB parses a bandwidth quota in GiB: empty or "0" = unlimited,
 // otherwise a non-negative integer.
 func ParseBandwidthGB(s string) (int, error) {

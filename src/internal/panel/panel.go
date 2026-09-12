@@ -155,6 +155,7 @@ type pageData struct {
 	BandwidthQuotaGB   int    // monthly bandwidth quota GiB, 0 = unlimited
 	BandwidthUsedGB    string // used this month (GB, 1 decimal) — only set when limited
 	BandwidthPct       int    // used/quota * 100, clamped to 100
+	BandwidthResetDay  int    // day of month the bandwidth period resets (1-28)
 	Throttled          bool   // over quota: NIC limited to 1Mbps
 	ExpiresAt          string // quota validity deadline (RFC3339 UTC), "" = permanent
 	Expired            bool   // deadline passed: account locked to read-only
@@ -368,6 +369,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		QuotaMem:          itoa(u.MemMB) + " MiB",
 		QuotaDisk:         itoa(u.DiskGB) + " GiB",
 		ExpiresAt:         u.ExpiresAt,
+		BandwidthResetDay: s.cfg.Panel.BandwidthResetDay,
 		Msg:               msg,
 		Err:               errMsg,
 	}

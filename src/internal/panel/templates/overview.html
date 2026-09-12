@@ -274,7 +274,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="muted bandwidth-line">{{if eq .Lang "zh"}}本月流量{{else}}Bandwidth{{end}} ↑ {{.UpGB}} / ↓ {{.DownGB}} GB{{if not .BandwidthQuotaGB}} · {{if eq .Lang "zh"}}无限制{{else}}unlimited{{end}}{{end}}</div>
 {{if .BandwidthQuotaGB}}
 <div class="bandwidth-quota">
-<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额{{else}}Bandwidth quota{{end}}</span><span>{{.BandwidthUsedGB}} / {{.BandwidthQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
+<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额（至次月{{.BandwidthResetDay}}号）{{else}}Bandwidth quota (until day {{.BandwidthResetDay}} next month){{end}}</span><span>{{.BandwidthUsedGB}} / {{.BandwidthQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
 <div class="bar"><div class="fill" style="width:{{.BandwidthPct}}%"></div></div>
 </div>
 {{end}}
