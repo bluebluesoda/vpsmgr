@@ -35,6 +35,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
 | `panel.show_footer` | operator | restart panel | user panel footer with project link and installed/build version; `false` hides the entire footer |
+| `panel.bandwidth_reset_day` | operator | restart panel | day of month the monthly bandwidth quota resets, `1`-`28` (28 keeps February safe); default `1` |
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
@@ -90,6 +91,7 @@ panel:
   public_ip: AUTO              # NIC IPv4 used by the firewall / routing; on NAT-ing clouds (AWS/Alibaba) this is a private address
   display_ip: AUTO             # address shown to users (panel URL, SSH hints); any string without spaces (IP or domain); auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3              # login session lifetime (days)
+  bandwidth_reset_day: 1       # day of month the monthly bandwidth quota resets (1-28)
   url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
   admin_url_path: AUTO         # random secret path of the admin panel; do not change after first install
   admin_pass_hash: AUTO        # bcrypt hash of the admin password — stored in the DB, not in this file

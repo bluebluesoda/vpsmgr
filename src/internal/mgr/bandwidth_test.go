@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -54,6 +55,30 @@ func TestShouldThrottle(t *testing.T) {
 	for _, c := range cases {
 		if got := shouldThrottle(c.used, c.quotaGB); got != c.want {
 			t.Errorf("shouldThrottle(%d, %d) = %v, want %v", c.used, c.quotaGB, got, c.want)
+		}
+	}
+}
+
+func TestBandwidthPeriod(t *testing.T) {
+	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
+	cases := []struct {
+		name  string
+		t     time.Time
+		reset int
+		want  string
+	}{
+		{"day 1 any time is the current month", day(2026, 3, 31), 1, "2026-03"},
+		{"before reset keeps previous month", day(2026, 3, 14), 15, "2026-02"},
+		{"on reset rolls to current month", day(2026, 3, 15), 15, "2026-03"},
+		{"year boundary", day(2026, 1, 10), 15, "2025-12"},
+		{"day 28 early Feb", day(2026, 2, 27), 28, "2026-01"},
+		{"day 28 on Feb 28", day(2026, 2, 28), 28, "2026-02"},
+		{"out of range clamps to 1", day(2026, 3, 1), 0, "2026-03"},
+		{"out of range clamps to 1 (high)", day(2026, 3, 31), 40, "2026-03"},
+	}
+	for _, c := range cases {
+		if got := BandwidthPeriod(c.t, c.reset); got != c.want {
+			t.Errorf("%s: BandwidthPeriod(%s, %d) = %q, want %q", c.name, c.t.Format("2006-01-02"), c.reset, got, c.want)
 		}
 	}
 }

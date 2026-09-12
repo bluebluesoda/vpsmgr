@@ -1858,3 +1858,16 @@ func TestOverviewImpersonationBanner(t *testing.T) {
 		}
 	}
 }
+
+// TestOverviewBandwidthResetDayLabel verifies the quota label shows the
+// configured monthly reset day ("至次月 N 号").
+func TestOverviewBandwidthResetDayLabel(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User: &db.User{Name: "alice"}, Prefix: "/" + testSecret, Lang: langZh,
+		BandwidthQuotaGB: 100, BandwidthUsedGB: "1.0", BandwidthResetDay: 5,
+	})
+	if !strings.Contains(html, "流量配额（至次月5号）") {
+		t.Error("overview missing the bandwidth reset-day label")
+	}
+}
