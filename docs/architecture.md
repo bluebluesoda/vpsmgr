@@ -261,6 +261,16 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   reinstalled is treated as a plain restore, since cloning-then-deleting would
   destroy the snapshot first.
 
+  The whole feature is behind an **admin toggle** (`snapshot_share_enabled`,
+  shown on the admin overview; absent = **enabled**, so an upgraded host gets it
+  on). Turning it off hides the user-side share/import entry points and makes
+  the manager refuse new shares and installs, but deliberately keeps the stored
+  codes and leaves every container and checkpoint alone: re-enabling restores
+  the codes for as long as their checkpoint still exists. The code→checkpoint
+  mapping is only ever removed when the checkpoint itself is deleted (from the
+  panel) or the container goes away, and a code whose checkpoint has vanished
+  is reported as invalid instead of half-building a container.
+
 ### User groups (multi-container users)
 
 One login can manage several containers by grouping panel accounts under a

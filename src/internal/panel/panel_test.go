@@ -1239,6 +1239,7 @@ func TestOverviewSnapshotShareUI(t *testing.T) {
 	body := srv.renderToString(t, "overview.html", pageData{
 		User:           &db.User{Name: "alice"},
 		Prefix:         "/" + testSecret,
+		ShareEnabled:   true,
 		ShareCode:      "11111111-2222-4333-8444-555555555555",
 		SharedSnapshot: "snap-shared",
 		Snapshots: []snapshotRow{
@@ -1259,6 +1260,32 @@ func TestOverviewSnapshotShareUI(t *testing.T) {
 	// The published checkpoint must not also offer a Share button.
 	if strings.Contains(body, `shareSnap('snap-shared'`) {
 		t.Error("published checkpoint still offers a Share button")
+	}
+}
+
+// TestOverviewSnapshotShareDisabled verifies the admin toggle hides the share
+// and import entry points while leaving the checkpoint usable.
+func TestOverviewSnapshotShareDisabled(t *testing.T) {
+	srv, _ := newTestServer(t)
+	body := srv.renderToString(t, "overview.html", pageData{
+		User:           &db.User{Name: "alice"},
+		Prefix:         "/" + testSecret,
+		ShareEnabled:   false,
+		ShareCode:      "11111111-2222-4333-8444-555555555555",
+		SharedSnapshot: "snap-shared",
+		Snapshots: []snapshotRow{
+			{Name: "snap-shared", CreatedAt: "2026-08-01T00:00:00Z", Size: "10 MiB"},
+		},
+	})
+	for _, absent := range []string{`data-copy="11111111`, `shareSnap('snap-shared'`, `unshareSnap()`, `name="share"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("disabled overview still shows share UI %q", absent)
+		}
+	}
+	// The checkpoint itself stays usable: restore/delete remain.
+	if !strings.Contains(body, `onclick="restoreSnap('snap-shared')"`) ||
+		!strings.Contains(body, `onclick="delSnap('snap-shared')"`) {
+		t.Error("disabled overview dropped the checkpoint restore/delete buttons")
 	}
 }
 

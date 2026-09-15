@@ -67,11 +67,33 @@ func olderSnapshotNames(snaps []lx.SnapshotInfo, target string) []string {
 	return older
 }
 
+// SnapshotShareEnabled reports whether the admin has left snapshot sharing on.
+// A read failure is treated as enabled (the default) so a transient DB error
+// never silently hides the feature.
+func (m *Manager) SnapshotShareEnabled() bool {
+	on, err := m.db.SnapshotShareEnabled()
+	if err != nil {
+		return true
+	}
+	return on
+}
+
+// SetSnapshotShareEnabled turns snapshot sharing on or off. Disabling keeps the
+// stored codes (so re-enabling restores them) and leaves existing containers
+// and checkpoints untouched — it only hides the user-side UI and refuses new
+// shares/installs.
+func (m *Manager) SetSnapshotShareEnabled(on bool) error {
+	return m.db.SetSnapshotShareEnabled(on)
+}
+
 // ShareSnapshot publishes a checkpoint: it deletes the older checkpoints (which
 // become unreachable once the clone exists) and stores a fresh code, replacing
 // any previous share. It returns the code and the names of the removed
 // checkpoints so the caller can tell the user what happened.
 func (m *Manager) ShareSnapshot(name, snapName string) (string, []string, error) {
+	if !m.SnapshotShareEnabled() {
+		return "", nil, errors.New("snapshot sharing is disabled by the administrator")
+	}
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
@@ -177,6 +199,9 @@ func (m *Manager) resolveShare(code string) (*db.User, string, error) {
 // temporary container, the old container is deleted, and the clone is renamed
 // into place — so a clone failure never leaves the user with nothing.
 func (m *Manager) ReinstallFromShare(name, code string) (string, error) {
+	if !m.SnapshotShareEnabled() {
+		return "", errors.New("snapshot sharing is disabled by the administrator")
+	}
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 

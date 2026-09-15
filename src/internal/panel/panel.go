@@ -180,8 +180,12 @@ type pageData struct {
 	SnapshotLimit     int // configured per-container snapshot cap (for display)
 	// Snapshot share: the code others can use to install from a checkpoint, and
 	// the checkpoint it points at ("" when the user has no active share).
-	ShareCode          string
-	SharedSnapshot     string
+	ShareCode      string
+	SharedSnapshot string
+	// ShareEnabled is the admin's snapshot-sharing toggle. When off, the share
+	// and import entry points are hidden (the manager also refuses the
+	// operations server-side).
+	ShareEnabled       bool
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
 	AdminKeysAnyActive bool        // at least one admin key is granted: expand the disclosure by default
@@ -435,7 +439,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	// Snapshots come from Incus (one list call). A failure is non-fatal: the
 	// page still renders, and the snapshot modal shows the empty state.
 	shareCode, shareSnap, hasShare := s.mgr.SnapshotShareInfo(u.Name)
-	if hasShare {
+	d.ShareEnabled = s.mgr.SnapshotShareEnabled()
+	if d.ShareEnabled && hasShare {
 		d.ShareCode = shareCode
 		d.SharedSnapshot = shareSnap
 	}
@@ -445,7 +450,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 				Name:      sn.Name,
 				CreatedAt: sn.CreatedAt,
 				Size:      mgr.HumanBytes(sn.Size),
-				Shared:    hasShare && sn.Name == shareSnap,
+				Shared:    d.ShareEnabled && hasShare && sn.Name == shareSnap,
 			})
 		}
 	}

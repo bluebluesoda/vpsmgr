@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
 	mux.HandleFunc("/cpu-limit", s.requireAuth(s.requirePost(s.handleCPULimitRule)))
+	mux.HandleFunc("/share-toggle", s.requireAuth(s.requirePost(s.handleShareToggle)))
 	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
 	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.handleLoginAs)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))

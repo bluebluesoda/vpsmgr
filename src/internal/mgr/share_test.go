@@ -127,6 +127,42 @@ func TestSnapshotShareInfoAndRevoke(t *testing.T) {
 	}
 }
 
+func TestSnapshotSharingToggleEnforced(t *testing.T) {
+	c := cfg.Default()
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	d, err := db.Open(filepath.Join(t.TempDir(), "share-toggle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.CreateUser("dave", "h", "10.115.0.5", 4, 30004, 10300, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	m := New(c, d)
+
+	// Default is enabled (the feature is on after an upgrade).
+	if !m.SnapshotShareEnabled() {
+		t.Fatal("sharing should default to enabled")
+	}
+	if err := m.SetSnapshotShareEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.ShareSnapshot("dave", "snap-x"); err == nil ||
+		!strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("share while disabled = %v, want a disabled error", err)
+	}
+	if _, err := m.ReinstallFromShare("dave", "any-code"); err == nil ||
+		!strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("install while disabled = %v, want a disabled error", err)
+	}
+	if err := m.SetSnapshotShareEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !m.SnapshotShareEnabled() {
+		t.Fatal("re-enable did not stick")
+	}
+}
+
 func TestReinstallFromShareUnknownCode(t *testing.T) {
 	c := cfg.Default()
 	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"

@@ -59,6 +59,9 @@ type pageData struct {
 	CPULimitHours   int
 	CPULimitDurMin  int
 	CPULimitActive  []cpuLimitRow
+	// ShareEnabled is the snapshot-sharing toggle (admin-managed, default on
+	// after an upgrade).
+	ShareEnabled bool
 }
 
 // cpuLimitRow is one container currently under the dynamic CPU limit, shown in
@@ -172,6 +175,7 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		d.CPULimitHours = rule.DurationSeconds / 3600
 		d.CPULimitDurMin = (rule.DurationSeconds % 3600) / 60
 	}
+	d.ShareEnabled = s.mgr.SnapshotShareEnabled()
 	nowUnix := time.Now().Unix()
 	for name, st := range s.mgr.CPULimits() {
 		if st.Until <= nowUnix {
@@ -707,6 +711,23 @@ func (s *Server) handleCPULimitRule(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.AddAuditLog("000", "cpu_limit.update")
 	s.redirect(w, r, s.p(""), s.t(r, "cpu_limit_saved"))
+}
+
+// handleShareToggle turns the snapshot-sharing feature on or off. Disabling is
+// purely a visibility/authorisation gate: stored codes and existing containers
+// are left untouched, so re-enabling restores sharing while the checkpoint
+// still exists.
+func (s *Server) handleShareToggle(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := s.mgr.SetSnapshotShareEnabled(r.FormValue("enabled") != ""); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000", "share.toggle")
+	s.redirect(w, r, s.p(""), s.t(r, "share_toggled"))
 }
 
 // handleLoginAs ("log in as user" / impersonation) creates a user-panel

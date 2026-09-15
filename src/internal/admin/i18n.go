@@ -103,6 +103,7 @@ func tr(l, key string, args ...any) string {
 		"color_reset":            {"已清除 %[1]v 的专属颜色", "color cleared for %[1]v"},
 		"err_invalid_color":      {"颜色不在可选范围内", "color is not in the allowed palette"},
 		"cpu_limit_saved":        {"CPU 动态限制规则已保存", "dynamic CPU limit rule saved"},
+		"share_toggled":          {"快照分享设置已保存", "snapshot sharing setting saved"},
 		"err_cpu_limit_window":   {"连续时长必须是 ≥1 的整数分钟", "window must be an integer >= 1 minute"},
 		"err_cpu_limit_percent":  {"百分比必须是 1..100 的整数", "percent must be an integer between 1 and 100"},
 		"err_cpu_limit_cores":    {"限制核心数必须是 0.1..1.0（步长 0.1）", "cores must be a one-decimal value in 0.1..1.0"},
