@@ -257,7 +257,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}机器管理{{else}}Machine{{end}}{{if eq .State "Running"}}<span class="pill up" style="margin-left:.5rem">{{if eq .Lang "zh"}}运行中{{else}}Running{{end}}</span>{{else}}<span class="pill down" style="margin-left:.5rem">{{.State}}</span>{{end}}</h2>
 <div class="qgrid">
-<div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}</span></div>
+<div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}{{if .CPULimited}} <span class="pill down" id="cpuLimitPill" data-until="{{.CPULimitUntil}}" title="{{if eq .Lang "zh"}}受管理员 CPU 动态限制规则限制，到期自动恢复原配额{{else}}capped by the admin's dynamic CPU limit rule; the normal quota returns when the countdown ends{{end}}">{{if eq .Lang "zh"}}限制中{{else}}limited{{end}} <span id="cpuLimitCount"></span></span>{{end}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}</span><span class="qval">{{.QuotaDisk}}</span></div>
 </div>
@@ -550,6 +550,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 </div>
 
 <script>
+// Dynamic CPU limit countdown: while capped, tick down the remaining time
+// locally from the server-provided expiry; when it reaches zero, reload so the
+// page shows the restored quota.
+(function(){
+  var pill=document.getElementById('cpuLimitPill');
+  if(!pill)return;
+  var out=document.getElementById('cpuLimitCount');
+  var until=parseInt(pill.getAttribute('data-until'),10)*1000;
+  function pad(n){return (n<10?'0':'')+n;}
+  function tick(){
+    var left=Math.floor((until-Date.now())/1000);
+    if(left<=0){ if(out)out.textContent=''; location.reload(); return; }
+    var h=Math.floor(left/3600), m=Math.floor((left%3600)/60), s=left%60;
+    if(out)out.textContent=h>0?(h+':'+pad(m)+':'+pad(s)):(pad(m)+':'+pad(s));
+  }
+  tick();
+  setInterval(tick,1000);
+})();
 (function(){
   var P='{{.Prefix}}';
   function toast(msg,isErr){

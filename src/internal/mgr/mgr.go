@@ -71,6 +71,13 @@ type Manager struct {
 	// deliberately NOT held while Del removes domain files — Del already holds
 	// opMu, and holding both would risk lock-order deadlock with AddDomain.
 	domainMu sync.Mutex
+
+	// cpuLimitMu serializes the dynamic CPU limit enforcement. It is held by
+	// the 60s sampler and by the admin handler when a rule change is applied
+	// immediately, so a rule toggle cannot race with the periodic pass. The
+	// active-limit state itself lives in the DB (SettingCPULimitActive), so a
+	// panel restart keeps every countdown and still restores on expiry.
+	cpuLimitMu sync.Mutex
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {

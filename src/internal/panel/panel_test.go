@@ -416,6 +416,33 @@ func TestOverviewShowsBandwidthQuota(t *testing.T) {
 	}
 }
 
+// TestOverviewShowsCPULimit verifies the dynamic CPU limit badge (capped core
+// count plus the expiry the frontend counts down) renders while a limit is
+// active and stays absent otherwise.
+func TestOverviewShowsCPULimit(t *testing.T) {
+	srv, _ := newTestServer(t)
+	limited := srv.renderToString(t, "overview.html", pageData{
+		User:          &db.User{Name: "alice"},
+		Prefix:        "/" + testSecret,
+		QuotaCPU:      "0.5",
+		CPULimited:    true,
+		CPULimitUntil: 4102444800,
+	})
+	for _, want := range []string{`id="cpuLimitPill"`, `data-until="4102444800"`, "0.5"} {
+		if !strings.Contains(limited, want) {
+			t.Errorf("limited overview missing %q", want)
+		}
+	}
+	plain := srv.renderToString(t, "overview.html", pageData{
+		User:     &db.User{Name: "alice"},
+		Prefix:   "/" + testSecret,
+		QuotaCPU: "4",
+	})
+	if strings.Contains(plain, `id="cpuLimitPill"`) {
+		t.Error("unlimited overview should not render the CPU limit badge")
+	}
+}
+
 // TestOverviewThemeColor verifies the operator-assigned accent color is
 // injected as a CSS variable override block only when set: with a theme color
 // the overview carries the tinted background and recolored accents, without it

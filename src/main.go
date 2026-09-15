@@ -734,7 +734,8 @@ func pathUnder(path, prefix string) bool {
 // the panels, so opening a page never triggers live Incus sampling. After every
 // sample it enforces bandwidth quotas: users over their monthly limit get their
 // NIC rate-limited to 1Mbps, users back under (e.g. monthly rollover) get the
-// limit removed.
+// limit removed. It then enforces the global dynamic CPU limit rule, capping
+// containers that stayed over their quota and restoring expired ones.
 func sampleResourceLoop(m *mgr.Manager) {
 	if err := m.SampleResources(); err != nil {
 		log.Printf("resource sample: %v", err)
@@ -742,6 +743,9 @@ func sampleResourceLoop(m *mgr.Manager) {
 	m.RefreshHostStats()
 	if err := m.EnforceBandwidthLimits(); err != nil {
 		log.Printf("bandwidth quota enforcement: %v", err)
+	}
+	if err := m.EnforceCPULimits(); err != nil {
+		log.Printf("cpu dynamic limit enforcement: %v", err)
 	}
 	tick := time.NewTicker(mgr.BandwidthInterval)
 	defer tick.Stop()
@@ -752,6 +756,9 @@ func sampleResourceLoop(m *mgr.Manager) {
 		m.RefreshHostStats()
 		if err := m.EnforceBandwidthLimits(); err != nil {
 			log.Printf("bandwidth quota enforcement: %v", err)
+		}
+		if err := m.EnforceCPULimits(); err != nil {
+			log.Printf("cpu dynamic limit enforcement: %v", err)
 		}
 	}
 }
