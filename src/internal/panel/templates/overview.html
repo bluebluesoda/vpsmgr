@@ -178,6 +178,33 @@ footer a{color:var(--muted);text-decoration:underline}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
 .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
+/* knowledge base: a large panel (nearly fullscreen on phones) with the article
+   list and server-rendered Markdown */
+.kb-modal{max-width:1000px;width:96vw;max-height:90vh;overflow:auto;display:flex;flex-direction:column;align-items:stretch}
+.kb-modal .kb-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem}
+.kb-modal .kb-head h3{margin:0}
+.kb-list{display:flex;flex-direction:column;gap:.4rem}
+.kb-item{display:flex;justify-content:space-between;align-items:center;gap:.6rem;text-align:left;width:100%;padding:.55rem .7rem;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);cursor:pointer;font:inherit}
+.kb-item:hover{border-color:var(--accent)}
+.kb-item .kb-ts{color:var(--muted);font-size:.76rem;white-space:nowrap}
+.kb-article{line-height:1.55;overflow-wrap:anywhere}
+.kb-article h1{font-size:1.35rem;margin:.7rem 0 .4rem}
+.kb-article h2{font-size:1.2rem;margin:.7rem 0 .4rem}
+.kb-article h3{font-size:1.06rem;margin:.7rem 0 .4rem}
+.kb-article p{margin:.5rem 0}
+.kb-article a{color:var(--accent)}
+.kb-article blockquote{border-left:3px solid var(--border);margin:.5rem 0;padding:.1rem .8rem;color:var(--muted)}
+.kb-article ul,.kb-article ol{margin:.4rem 0;padding-left:1.3rem}
+.kb-article hr{border:none;border-top:1px solid var(--border);margin:.8rem 0}
+.kb-article code{background:var(--code-bg);color:var(--code);padding:.05rem .35rem;border-radius:5px;font-size:.88em}
+.kb-article pre{position:relative;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:1.8rem .8rem .7rem;overflow:auto;margin:.55rem 0}
+.kb-article pre code{background:none;color:inherit;padding:0}
+.kb-article .kb-copy{position:absolute;top:.35rem;right:.35rem;font-size:.72rem;padding:.15rem .5rem}
+.kb-back{align-self:flex-start;margin-bottom:.5rem}
+@media (max-width:600px){
+  .overlay{padding:0}
+  .kb-modal{width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0;padding:1rem}
+}
 .pwcheck{list-style:none;margin:.1rem 0 .7rem 4.2rem;padding:0;font-size:.8rem;color:var(--muted)}
 .pwcheck li{margin:.12rem 0}
 .pwcheck li:before{content:"○";display:inline-block;width:1.05em;color:var(--muted)}
@@ -281,6 +308,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
 <button class="btn violet" id="snapBtn">{{if eq .Lang "zh"}}时光机{{else}}Time machine{{end}}</button>
+<button class="btn" id="kbBtn">{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</button>
 <button class="btn" id="sshKeysBtn">{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</button>
 <button class="btn" id="initBtn">{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
@@ -486,6 +514,36 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="actions">
 <button class="btn" type="button" id="snapClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
 </div>
+</div>
+</div>
+
+<div class="overlay" id="kbModal">
+<div class="modal kb-modal">
+<div class="kb-head">
+<h3>{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</h3>
+<button class="btn" type="button" id="kbClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+</div>
+{{if .Knowledge}}
+{{if gt (len .Knowledge) 1}}
+<div class="kb-list" id="kbList">
+{{range .Knowledge}}
+<button type="button" class="kb-item" data-kb="{{.ID}}">
+<span class="kb-title">{{.Title}}</span>
+<span class="kb-ts" data-ts="{{.UpdatedAt}}">{{.UpdatedAt}}</span>
+</button>
+{{end}}
+</div>
+{{end}}
+{{range .Knowledge}}
+<div class="kb-article" id="kb-art-{{.ID}}"{{if gt (len $.Knowledge) 1}} hidden{{end}}>
+{{if gt (len $.Knowledge) 1}}<button type="button" class="btn kb-back" data-kb-back="1">{{if eq $.Lang "zh"}}← 返回{{else}}← Back{{end}}</button>{{end}}
+<h2>{{.Title}}</h2>
+{{.HTML}}
+</div>
+{{end}}
+{{else}}
+<div class="muted">{{if eq .Lang "zh"}}暂无内容{{else}}Nothing published yet{{end}}</div>
+{{end}}
 </div>
 </div>
 
@@ -949,6 +1007,53 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var createForm=document.querySelector('#snapModal form[action*="/snapshot"]');
   if(createForm)createForm.addEventListener('submit',function(){location.hash='snapshots';});
   if(location.hash==='#snapshots')open();
+})();
+// Knowledge base: a large overlay listing the operator's articles, each
+// rendered from Markdown on the server. Code blocks get a copy button.
+(function(){
+  var modal=document.getElementById('kbModal');
+  var btn=document.getElementById('kbBtn');
+  var close=document.getElementById('kbClose');
+  if(!modal||!btn)return;
+  var LANG='{{.Lang}}';
+  var list=document.getElementById('kbList');
+  var arts=Array.prototype.slice.call(modal.querySelectorAll('.kb-article'));
+  function open(){modal.classList.add('show');}
+  function closeM(){modal.classList.remove('show');}
+  function showList(){if(list)list.style.display='';arts.forEach(function(a){a.hidden=true;});}
+  function showArt(id){if(list)list.style.display='none';arts.forEach(function(a){a.hidden=(a.id!=='kb-art-'+id);});}
+  btn.addEventListener('click',function(){
+    open();
+    if(arts.length===1)showArt(arts[0].id.replace('kb-art-',''));
+  });
+  if(close)close.addEventListener('click',closeM);
+  modal.addEventListener('click',function(e){if(e.target===modal)closeM();});
+  modal.querySelectorAll('.kb-item').forEach(function(el){
+    el.addEventListener('click',function(){showArt(el.getAttribute('data-kb'));});
+  });
+  modal.querySelectorAll('[data-kb-back]').forEach(function(el){
+    el.addEventListener('click',showList);
+  });
+  function pad2(n){return (n<10?'0':'')+n;}
+  modal.querySelectorAll('.kb-ts').forEach(function(el){
+    var d=new Date(el.getAttribute('data-ts'));
+    if(!isNaN(d))el.textContent=d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes());
+  });
+  function copy(text,el){
+    function done(){var t=el.textContent;el.textContent=(LANG==='zh')?'已复制':'Copied';setTimeout(function(){el.textContent=t;},1200);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){});}
+    else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){}ta.remove();}
+  }
+  modal.querySelectorAll('.kb-article pre').forEach(function(pre){
+    var b=document.createElement('button');
+    b.type='button'; b.className='btn kb-copy';
+    b.textContent=(LANG==='zh')?'复制':'Copy';
+    b.addEventListener('click',function(){
+      var code=pre.querySelector('code');
+      copy(code?code.innerText:pre.innerText, b);
+    });
+    pre.appendChild(b);
+  });
 })();
 // Resource usage charts (last 24h, per-minute). Vanilla canvas, no deps:
 // shared pan/zoom view across the three charts, adaptive time ticks, stable

@@ -159,6 +159,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <h1>{{if eq .Lang "zh"}}管理员面板{{else}}Admin Panel{{end}}</h1>
   <div class="actions">
     <a href="{{.Prefix}}/domains" class="btn">{{if eq .Lang "zh"}}域名管理{{else}}Domains{{end}}</a>
+    <a href="{{.Prefix}}/knowledge" class="btn">{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</a>
     {{if .IPv6PoolMode}}<a href="{{.Prefix}}/ipv6pool" class="btn">{{if eq .Lang "zh"}}IPv6 池{{else}}IPv6 pool{{end}}</a>{{end}}
     <a href="{{.Prefix}}/audit" class="btn">{{if eq .Lang "zh"}}审计日志{{else}}Audit{{end}}</a>
     <button class="btn" id="keysBtn">{{if eq .Lang "zh"}}公钥管理{{else}}SSH keys{{end}}</button>

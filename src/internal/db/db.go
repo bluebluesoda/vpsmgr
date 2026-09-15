@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 14
+const schemaVersion = 15
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -253,6 +253,17 @@ var migrations = []struct {
 			user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
 			snapshot TEXT NOT NULL,
 			created_at TEXT NOT NULL
+		)`,
+	}},
+	// v15: knowledge-base articles, authored by the operator in the admin panel
+	// and shown read-only to users. Content is Markdown, rendered server-side.
+	{15, []string{
+		`CREATE TABLE IF NOT EXISTS knowledge(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			title TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		)`,
 	}},
 }

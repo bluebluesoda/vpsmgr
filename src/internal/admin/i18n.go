@@ -102,6 +102,11 @@ func tr(l, key string, args ...any) string {
 		"color_updated":         {"已设置 %[1]v 的专属颜色", "color set for %[1]v"},
 		"color_reset":           {"已清除 %[1]v 的专属颜色", "color cleared for %[1]v"},
 		"err_invalid_color":     {"颜色不在可选范围内", "color is not in the allowed palette"},
+		"knowledge_saved":       {"知识库文章已保存", "knowledge-base article saved"},
+		"knowledge_deleted":     {"知识库文章已删除", "knowledge-base article deleted"},
+		"err_kb_title":          {"标题不能为空", "the title is required"},
+		"err_kb_content":        {"内容不能为空", "the content is required"},
+		"err_kb_too_large":      {"内容过大（上限 256 KiB）", "the content is too large (256 KiB max)"},
 	}
 	pair, ok := m[key]
 	if !ok {

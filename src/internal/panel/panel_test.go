@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1966,5 +1967,46 @@ func TestOverviewBandwidthResetDayLabel(t *testing.T) {
 	})
 	if !strings.Contains(html, "流量配额（至次月5号）") {
 		t.Error("overview missing the bandwidth reset-day label")
+	}
+}
+
+// TestOverviewKnowledgeModal verifies the knowledge-base button + modal: a
+// single article opens straight away, multiple articles get a list with back
+// buttons, and the server-rendered Markdown is embedded unescaped.
+func TestOverviewKnowledgeModal(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	one := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+		Knowledge: []knowledgeArticle{{
+			ID: 7, Title: "Getting started", UpdatedAt: "2026-08-01T10:00:00Z",
+			HTML: template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
+		}},
+	})
+	for _, want := range []string{
+		`id="kbBtn"`, `id="kbModal"`, `id="kb-art-7"`,
+		"<h1>Getting started</h1>", "<pre><code>ls -la</code></pre>",
+	} {
+		if !strings.Contains(one, want) {
+			t.Errorf("single-article knowledge modal missing %q", want)
+		}
+	}
+	if strings.Contains(one, `id="kbList"`) {
+		t.Error("a single article should not render the list")
+	}
+
+	two := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		Prefix: "/" + testSecret,
+		Knowledge: []knowledgeArticle{
+			{ID: 1, Title: "A", UpdatedAt: "2026-08-01T10:00:00Z", HTML: template.HTML("<p>a</p>")},
+			{ID: 2, Title: "B", UpdatedAt: "2026-08-02T10:00:00Z", HTML: template.HTML("<p>b</p>")},
+		},
+	})
+	for _, want := range []string{`id="kbList"`, `data-kb="1"`, `data-kb="2"`, `data-kb-back="1"`} {
+		if !strings.Contains(two, want) {
+			t.Errorf("multi-article knowledge modal missing %q", want)
+		}
 	}
 }
