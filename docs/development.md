@@ -47,10 +47,25 @@ usermod -aG incus-admin "$USER"    # socket access without root
 
 ## Releasing
 
-Tag a version (`v*`); the `.github/workflows/release.yml` builds amd64/arm64
-with `CGO_ENABLED=0`, runs vet+test, attests build provenance (SLSA) and
-uploads a release with checksums. `install.sh` downloads the prebuilt binary
+Tag a version (`v*`); the `.github/workflows/release.yml` release action builds
+amd64/arm64 with `CGO_ENABLED=0`, runs vet+test, attests build provenance (SLSA)
+and uploads a release with checksums. `install.sh` downloads the prebuilt binary
 from the latest release, falling back to a local build.
+
+The release page's notes are the **tag's own annotation** — write them at tag
+time with an annotated tag:
+
+```sh
+git tag -a v1.8.0 -m "知识库 + 快照分享
+
+- 管理员可编写 Markdown 知识库文章，用户端可阅读
+- 用户可分享检查点，他人凭分享码重装"
+git push origin v1.8.0
+```
+
+A **lightweight** tag (`git tag v1.8.0`, no `-a`) carries no message, so the
+release body falls back to `fix some bugs`. Either way GitHub appends its
+auto-generated "Full changelog" compare link below the notes.
 
 ## Conventions
 
