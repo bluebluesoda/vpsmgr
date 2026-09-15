@@ -196,8 +196,8 @@ func usage() {
 	fmt.Print(`vps ` + ver.Version + `
 usage:
   vps list [name]                  all users, or one user's detail
-  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100]
-  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200]
+  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--days 30]
+  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--days 30] [--clear-expiry]
   vps power <name> start|stop|restart
   vps passwd <name>                reissue user panel password (shown once)
   vps admin-passwd                 reset admin panel password (shown once)
@@ -210,6 +210,8 @@ system:
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
+days:      quota validity in days (add: from now; quota: extend by); empty = permanent,
+           use 'vps quota <name> --clear-expiry' to remove a deadline
 `)
 }
 
@@ -767,6 +769,9 @@ func sampleResourceLoop(m *mgr.Manager) {
 	if err := m.EnforceCPULimits(); err != nil {
 		log.Printf("cpu dynamic limit enforcement: %v", err)
 	}
+	if err := m.EnforceQuotaExpiry(); err != nil {
+		log.Printf("quota expiry enforcement: %v", err)
+	}
 	tick := time.NewTicker(mgr.BandwidthInterval)
 	defer tick.Stop()
 	for range tick.C {
@@ -779,6 +784,9 @@ func sampleResourceLoop(m *mgr.Manager) {
 		}
 		if err := m.EnforceCPULimits(); err != nil {
 			log.Printf("cpu dynamic limit enforcement: %v", err)
+		}
+		if err := m.EnforceQuotaExpiry(); err != nil {
+			log.Printf("quota expiry enforcement: %v", err)
 		}
 	}
 }
@@ -1225,10 +1233,12 @@ func userAdd(args []string) error {
 	fs.SetOutput(io.Discard)
 	var cpuS string
 	var memS, diskS, bandwidthS string
+	var days int
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
+	fs.IntVar(&days, "days", 0, "")                // validity in days, 0 = permanent
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1297,6 +1307,9 @@ func userAdd(args []string) error {
 			bandwidth, _ = mgr.ParseBandwidthGB(s)
 		}
 	}
+	if days < 0 {
+		return fmt.Errorf("--days must be >= 0 (0 = permanent)")
+	}
 
 	c, err := cfg.Load()
 	if err != nil {
@@ -1308,7 +1321,7 @@ func userAdd(args []string) error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth})
+	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth, Days: days})
 	if err != nil {
 		return err
 	}
@@ -1336,17 +1349,21 @@ func userDel(name string) error {
 
 func userQuota(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100]")
+		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100] [--days 30] [--clear-expiry]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
 	var memS, diskS, bandwidthS string
+	var days int
+	var clearExpiry bool
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0 = unlimited
+	fs.IntVar(&days, "days", 0, "")                // extend validity by N days
+	fs.BoolVar(&clearExpiry, "clear-expiry", false, "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1430,12 +1447,14 @@ func userQuota(args []string) error {
 	}
 
 	bandwidthChanged := setBandwidth || bandwidthGB != u.BandwidthQuotaGB
-	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged {
+	setDays, clearExpiry := provided["days"], provided["clear-expiry"]
+	expiryChanged := setDays || clearExpiry
+	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged && !expiryChanged {
 		if inter.IsTTY() {
 			fmt.Println("no changes, exiting")
 			return nil
 		}
-		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth")
+		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth/--days/--clear-expiry")
 	}
 	if disk < u.DiskGB {
 		return fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, disk)
@@ -1448,6 +1467,18 @@ func userQuota(args []string) error {
 			tgb = bandwidthGB
 		}
 		if _, err := m.UpdateQuotasAndBandwidth(name, cpu, mem, disk, tgb); err != nil {
+			return err
+		}
+	}
+	if clearExpiry {
+		if _, err := m.SetExpiry(name, ""); err != nil {
+			return err
+		}
+	} else if setDays {
+		if days <= 0 {
+			return fmt.Errorf("--days must be positive (use --clear-expiry to remove the deadline)")
+		}
+		if _, err := m.ExtendExpiryFor(name, time.Duration(days)*24*time.Hour); err != nil {
 			return err
 		}
 	}

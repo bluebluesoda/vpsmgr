@@ -91,6 +91,7 @@ func tr(l, key string, args ...any) string {
 		"snapshot_shared":     {"分享码已生成（已移除 %[1]v 个更早的检查点）", "share code created (%[1]v older checkpoint(s) removed)"},
 		"snapshot_unshared":   {"分享已撤销", "share revoked"},
 		"snapshot_restored":   {"已从该检查点恢复", "restored from that checkpoint"},
+		"err_account_expired": {"账户已到期，机器已锁定，请联系管理员延期。", "Account expired — the machine is locked. Contact the administrator to extend it."},
 		"ssh_keys_apply_warn": {"机器当前不可达，密钥已保存，将在下次重装后写入。", "Machine unreachable — keys saved and will be applied on the next reinstall."},
 	}
 	pair, ok := m[key]

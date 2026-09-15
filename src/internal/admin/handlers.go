@@ -122,6 +122,13 @@ type userView struct {
 	IPv6        string
 	Procs       int64  // live process count (0 when stopped)
 	ProcsLimit  string // per-container pids.max cap, e.g. "4096"
+	// Quota validity: Expired locks the account to read-only (only the admin's
+	// extend/delete work). ExpiredDays is whole days past the deadline, floored
+	// (a same-day expiry shows 0). ExpiresShort is the UTC date for display.
+	ExpiresAt    string
+	ExpiresShort string
+	Expired      bool
+	ExpiredDays  int
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
@@ -216,29 +223,45 @@ func (s *Server) loadUsers(d *pageData) {
 		return
 	}
 	vs := make([]userView, 0, len(statuses))
+	now := time.Now().UTC()
 	for _, st := range statuses {
 		u := st.User
+		expired := mgr.IsExpired(u.ExpiresAt, now)
+		expDays := 0
+		if expired {
+			if rem := mgr.ExpiryRemaining(u.ExpiresAt, now); rem < 0 {
+				expDays = int((-rem).Hours() / 24)
+			}
+		}
+		expShort := u.ExpiresAt
+		if len(expShort) >= 10 {
+			expShort = expShort[:10]
+		}
 		vs = append(vs, userView{
-			Name:        u.Name,
-			Color:       u.Color,
-			State:       st.State,
-			Status:      u.Status,
-			Ports:       mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
-			PortsShort:  mgr.UserPortsShort(u.StartPort),
-			SSHPort:     strconv.Itoa(u.SSHPort),
-			QuotaCPU:    mgr.FormatCPU(u.CPU),
-			QuotaMem:    strconv.Itoa(u.MemMB) + " MiB",
-			QuotaDisk:   strconv.Itoa(u.DiskGB) + " GiB",
-			BandwidthGB: u.BandwidthQuotaGB,
-			CPUUse:      st.CPUUse,
-			MemUse:      st.MemUse,
-			DiskUsed:    st.DiskUsed,
-			UpGB:        st.UpGB,
-			DownGB:      st.DownGB,
-			BWTotal:     st.BWTotal,
-			IPv6:        st.IPv6,
-			Procs:       st.Procs,
-			ProcsLimit:  lx.DefaultProcessesLimit,
+			Name:         u.Name,
+			Color:        u.Color,
+			State:        st.State,
+			Status:       u.Status,
+			Ports:        mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+			PortsShort:   mgr.UserPortsShort(u.StartPort),
+			SSHPort:      strconv.Itoa(u.SSHPort),
+			QuotaCPU:     mgr.FormatCPU(u.CPU),
+			QuotaMem:     strconv.Itoa(u.MemMB) + " MiB",
+			QuotaDisk:    strconv.Itoa(u.DiskGB) + " GiB",
+			BandwidthGB:  u.BandwidthQuotaGB,
+			CPUUse:       st.CPUUse,
+			MemUse:       st.MemUse,
+			DiskUsed:     st.DiskUsed,
+			UpGB:         st.UpGB,
+			DownGB:       st.DownGB,
+			BWTotal:      st.BWTotal,
+			IPv6:         st.IPv6,
+			Procs:        st.Procs,
+			ProcsLimit:   lx.DefaultProcessesLimit,
+			ExpiresAt:    u.ExpiresAt,
+			ExpiresShort: expShort,
+			Expired:      expired,
+			ExpiredDays:  expDays,
 		})
 	}
 	d.Users = vs
@@ -458,7 +481,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	if ipv6 == "auto" {
 		ipv6 = ""
 	}
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true})
+	days, err := strconv.Atoi(strings.TrimSpace(r.FormValue("days")))
+	if err != nil || days < 0 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_days"))
+		return
+	}
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true, Days: days})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
@@ -528,6 +556,56 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.AddAuditLog("000+"+name, "quota.update")
 	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
+}
+
+// handleUserExpiry extends (or clears) a user's quota validity. It is the one
+// per-user mutation still allowed on an expired account, alongside delete, so
+// it is deliberately NOT wrapped in requireTargetActive. The dropdown choices
+// map to durations; extension is max(now, current) + duration.
+func (s *Server) handleUserExpiry(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	switch choice := r.FormValue("extend"); choice {
+	case "", "none":
+		s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
+		return
+	case "forever":
+		if _, err := s.mgr.SetExpiry(name, ""); err != nil {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+			return
+		}
+	default:
+		var d time.Duration
+		switch choice {
+		case "72h":
+			d = 72 * time.Hour
+		case "30d":
+			d = 30 * 24 * time.Hour
+		case "90d":
+			d = 90 * 24 * time.Hour
+		case "180d":
+			d = 180 * 24 * time.Hour
+		case "custom":
+			n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("days")))
+			if err != nil || n <= 0 {
+				s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_extend"))
+				return
+			}
+			d = time.Duration(n) * 24 * time.Hour
+		default:
+			s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_extend"))
+			return
+		}
+		if _, err := s.mgr.ExtendExpiryFor(name, d); err != nil {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+			return
+		}
+	}
+	_ = s.db.AddAuditLog("000+"+name, "quota.expiry")
+	s.redirect(w, r, s.p(""), s.t(r, "quota_expiry_updated", name))
 }
 
 // handleUserBandwidthReset zeroes a user's monthly traffic counters without

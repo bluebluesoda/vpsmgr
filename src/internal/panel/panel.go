@@ -168,6 +168,9 @@ type pageData struct {
 	BandwidthPct      int    // used/quota * 100, clamped to 100
 	BandwidthResetDay int    // day of month the bandwidth period resets (1-28)
 	Throttled         bool   // over quota: NIC limited to 1Mbps
+	ExpiresAt         string // quota validity deadline (RFC3339 UTC), "" = permanent
+	Expired           bool   // deadline passed: account locked to read-only
+	ExpiresSoon       bool   // within 72h of the deadline
 	CPULimited        bool   // under the admin's dynamic CPU limit
 	CPULimitUntil     int64  // unix seconds the dynamic CPU limit expires
 	Domains           []domainRow
@@ -219,24 +222,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/logout", s.requireAuth(s.requirePost(s.handleLogout)))
 	mux.HandleFunc("/switch-user", s.requireAuth(s.requirePost(s.handleSwitchUser)))
 	mux.HandleFunc("/", s.requireAuth(s.handleOverview))
-	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.handlePower)))
-	mux.HandleFunc("/reinstall", s.requireAuth(s.requirePost(s.handleReinstall)))
-	mux.HandleFunc("/password", s.requireAuth(s.requirePost(s.handlePanelPassword)))
-	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
-	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
-	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
-	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
-	mux.HandleFunc("/init-script", s.requireAuth(s.requirePost(s.handleInitScript)))
+	mux.HandleFunc("/power", s.requireAuth(s.requireActive(s.requirePost(s.handlePower))))
+	mux.HandleFunc("/reinstall", s.requireAuth(s.requireActive(s.requirePost(s.handleReinstall))))
+	mux.HandleFunc("/password", s.requireAuth(s.requireActive(s.requirePost(s.handlePanelPassword))))
+	mux.HandleFunc("/root-reset", s.requireAuth(s.requireActive(s.requirePost(s.handleRootReset))))
+	mux.HandleFunc("/domain-add", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainAdd))))
+	mux.HandleFunc("/domain-del", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainDel))))
+	mux.HandleFunc("/domain-update", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainUpdate))))
+	mux.HandleFunc("/init-script", s.requireAuth(s.requireActive(s.requirePost(s.handleInitScript))))
 	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
-	mux.HandleFunc("/snapshot", s.requireAuth(s.requirePost(s.handleSnapshot)))
-	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))
-	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requirePost(s.handleSnapshotRestore)))
-	mux.HandleFunc("/snapshot-share", s.requireAuth(s.requirePost(s.handleSnapshotShare)))
-	mux.HandleFunc("/snapshot-unshare", s.requireAuth(s.requirePost(s.handleSnapshotUnshare)))
-	mux.HandleFunc("/ssh-keys", s.requireAuth(s.requirePost(s.handleSSHKeys)))
+	mux.HandleFunc("/snapshot", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshot))))
+	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotDel))))
+	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotRestore))))
+	mux.HandleFunc("/snapshot-share", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotShare))))
+	mux.HandleFunc("/snapshot-unshare", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotUnshare))))
+	mux.HandleFunc("/ssh-keys", s.requireAuth(s.requireActive(s.requirePost(s.handleSSHKeys))))
 	mux.HandleFunc("/notes", s.requireAuth(s.handleNotes))
-	mux.HandleFunc("/notes/reset", s.requireAuth(s.requirePost(s.handleNotesReset)))
+	mux.HandleFunc("/notes/reset", s.requireAuth(s.requireActive(s.requirePost(s.handleNotesReset))))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -392,8 +395,16 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		QuotaMem:          itoa(u.MemMB) + " MiB",
 		QuotaDisk:         itoa(u.DiskGB) + " GiB",
 		BandwidthResetDay: s.cfg.Panel.BandwidthResetDay,
+		ExpiresAt:         u.ExpiresAt,
 		Msg:               msg,
 		Err:               errMsg,
+	}
+	// Quota validity: the client renders the live countdown from ExpiresAt; the
+	// server flags the expired/locked state (authoritative for enforcement).
+	{
+		now := time.Now().UTC()
+		d.Expired = mgr.IsExpired(u.ExpiresAt, now)
+		d.ExpiresSoon = u.ExpiresAt != "" && !d.Expired && mgr.ExpiryRemaining(u.ExpiresAt, now) <= 72*time.Hour
 	}
 	// Resource usage comes from the persisted sampler snapshot (five-minute
 	// CPU average plus latest memory/disk), never from a live Incus sample.

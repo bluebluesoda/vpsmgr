@@ -43,7 +43,7 @@ func TestPickPoolIPv6Auto(t *testing.T) {
 func TestPickPoolIPv6ExplicitAndUsed(t *testing.T) {
 	m, d := poolTestManager(t, []string{"2001:db8::1", "2001:db8::2"})
 	// Reserve ::2 by creating a user with it.
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::2"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::2", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Explicitly picking a used address fails.
@@ -66,7 +66,7 @@ func TestPickPoolIPv6ExplicitAndUsed(t *testing.T) {
 
 func TestPickPoolIPv6Exhausted(t *testing.T) {
 	m, d := poolTestManager(t, []string{"2001:db8::1"})
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1", ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.pickPoolIPv6("")
@@ -80,7 +80,7 @@ func TestPickPoolIPv6Exhausted(t *testing.T) {
 
 func TestFreePoolIPv6List(t *testing.T) {
 	m, d := poolTestManager(t, []string{"2001:db8::1", "2001:db8::2", "2001:db8::3"})
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::2"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::2", ""); err != nil {
 		t.Fatal(err)
 	}
 	free := m.FreePoolIPv6List()
@@ -101,7 +101,7 @@ func TestIPv6PoolUsage(t *testing.T) {
 	if total != 2 || used != 0 {
 		t.Errorf("empty pool usage = %d/%d, want 2/0", used, total)
 	}
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1", ""); err != nil {
 		t.Fatal(err)
 	}
 	total, used, _ = m.IPv6PoolUsage()
@@ -141,7 +141,7 @@ func TestAddPoolIPv6s(t *testing.T) {
 func TestRemovePoolIPv6(t *testing.T) {
 	m, d := poolTestManager(t, []string{"2001:db8::1", "2001:db8::2"})
 	// Assigned address cannot be removed.
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.RemovePoolIPv6("2001:db8::1"); err == nil {
@@ -163,7 +163,7 @@ func TestRemovePoolIPv6(t *testing.T) {
 
 func TestPoolList(t *testing.T) {
 	m, d := poolTestManager(t, []string{"2001:db8::1", "2001:db8::2"})
-	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1"); err != nil {
+	if _, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, db.StatusReady, "2001:db8::1", ""); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := m.PoolList()
