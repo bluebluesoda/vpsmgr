@@ -464,12 +464,14 @@ footer a{color:var(--muted);text-decoration:underline}
 <td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
 <td><span class="muted">{{.Size}}</span></td>
 <td>
+{{if $.ShareEnabled}}
 {{if .Shared}}
 <div class="muted" style="font-size:.72rem">{{if eq $.Lang "zh"}}分享码{{else}}share code{{end}}</div>
 <code class="copyable" data-copy="{{$.ShareCode}}">{{$.ShareCode}}</code>
 <button type="button" class="btn danger" onclick="unshareSnap()">{{if eq $.Lang "zh"}}撤销分享{{else}}Revoke{{end}}</button>
 {{else}}
 <button type="button" class="btn" onclick="shareSnap('{{.Name}}','{{.CreatedAt}}')">{{if eq $.Lang "zh"}}分享{{else}}Share{{end}}</button>
+{{end}}
 {{end}}
 <button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
 <button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
@@ -540,10 +542,12 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
 <div id="reDesc"></div>
+{{if .ShareEnabled}}
 <div class="field" style="margin-top:.6rem">
 <label class="muted" style="font-size:.82rem">{{if eq .Lang "zh"}}或：从分享的检查点安装（填入分享码；填了则忽略上面的系统选择）{{else}}Or: install from a shared checkpoint (enter a code; the system choice above is then ignored){{end}}</label>
 <input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
 </div>
+{{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>

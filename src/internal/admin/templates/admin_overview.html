@@ -336,6 +336,20 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       {{end}}
     </div>
   </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}快照分享{{else}}Snapshot sharing{{end}}</h2>
+    <form action="{{.Prefix}}/share-toggle" method="post" id="shareForm">
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600">
+          <input type="checkbox" name="enabled" id="shareEnabled" {{if .ShareEnabled}}checked{{end}}>
+          {{if eq .Lang "zh"}}允许用户分享检查点，并从分享码安装{{else}}Allow users to share a checkpoint and install from a share code{{end}}
+        </label>
+      </div>
+      <button type="submit" class="primary neutral" id="shareBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+    </form>
+    <small style="color:#9aa0a8;display:block;margin-top:8px">{{if eq .Lang "zh"}}默认开启。关闭后用户端不再显示分享/导入入口；已存在的分享码保留在数据库中（重新开启后仍可使用，前提是检查点还在），已有容器与检查点不受影响。{{else}}On by default. When off, the user panels hide the share/import entry points; stored codes are kept in the database (they work again after re-enabling, as long as the checkpoint still exists) and existing containers and checkpoints are unaffected.{{end}}</small>
+  </div>
 </main>
 
 <!-- modal -->

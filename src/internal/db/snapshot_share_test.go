@@ -59,6 +59,30 @@ func TestSnapshotShareStore(t *testing.T) {
 	}
 }
 
+func TestSnapshotShareEnabledSetting(t *testing.T) {
+	d, err := Open(t.TempDir() + "/share-flag.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	// Absent key means enabled: the feature is on by default after an upgrade.
+	if on, err := d.SnapshotShareEnabled(); err != nil || !on {
+		t.Fatalf("default = %v, err=%v, want true", on, err)
+	}
+	if err := d.SetSnapshotShareEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := d.SnapshotShareEnabled(); on {
+		t.Fatal("still enabled after disabling")
+	}
+	if err := d.SetSnapshotShareEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := d.SnapshotShareEnabled(); !on {
+		t.Fatal("not enabled after re-enabling")
+	}
+}
+
 func TestSnapshotShareCascadeOnUserDelete(t *testing.T) {
 	d, err := Open(t.TempDir() + "/share-cascade.db")
 	if err != nil {

@@ -47,6 +47,15 @@ const (
 	// dynamic CPU limit (name -> {until, cores_x10}). Persisted so the limit
 	// survives a panel restart and the countdown stays accurate.
 	SettingCPULimitActive = "cpu_limit_active"
+
+	// SettingSnapshotShareEnabled toggles the snapshot-sharing feature (publish
+	// a checkpoint behind a code, install from someone's checkpoint). Absent
+	// means ENABLED, so a host upgraded to this version gets the feature on by
+	// default; the admin can turn it off. Disabling hides the user-side UI and
+	// refuses new shares/installs, but the stored codes are deliberately kept
+	// (not deleted) so re-enabling restores them while their checkpoint still
+	// exists. Stored as "1"/"0".
+	SettingSnapshotShareEnabled = "snapshot_share_enabled"
 )
 
 // GetSetting returns a settings value; ok is false when the key is absent.
@@ -89,4 +98,26 @@ func (d *DB) GetBlockedDomains() ([]string, error) {
 // SetBlockedDomains persists the blocked-domains list, one domain per line.
 func (d *DB) SetBlockedDomains(list []string) error {
 	return d.SetSetting(SettingBlockedDomains, strings.Join(list, "\n"))
+}
+
+// SnapshotShareEnabled reports whether snapshot sharing is on. An absent key
+// means enabled — the feature's default after an upgrade.
+func (d *DB) SnapshotShareEnabled() (bool, error) {
+	v, ok, err := d.GetSetting(SettingSnapshotShareEnabled)
+	if err != nil {
+		return false, err
+	}
+	if !ok || v == "" {
+		return true, nil
+	}
+	return v != "0" && v != "false", nil
+}
+
+// SetSnapshotShareEnabled turns snapshot sharing on or off (stored as "1"/"0").
+func (d *DB) SetSnapshotShareEnabled(on bool) error {
+	v := "0"
+	if on {
+		v = "1"
+	}
+	return d.SetSetting(SettingSnapshotShareEnabled, v)
 }
