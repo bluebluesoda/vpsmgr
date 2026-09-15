@@ -53,7 +53,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
 | `snapshots.limit` | operator | restart panel | max checkpoints a user may keep per container (`0` = disable new snapshots). Restoring to an older checkpoint auto-deletes the ones created after it (see below) |
-| `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it (`true` by default). Turning it off hides the user-side entry points and refuses new shares/installs; stored codes are kept, so re-enabling restores them while the checkpoint exists |
+| `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default** (new installs and upgrades alike) and CLI-only — no panel UI: `vps config set snapshots.share true`. Stored codes are kept while it is off |
 | `cpu_limit.enabled` | operator | **applied immediately** | global dynamic CPU limit (default `false`). With it on, a container that stays over `cpu_limit.percent` of its own quota for `cpu_limit.window_minutes` in a row is capped to `cpu_limit.cores` for the configured duration |
 | `cpu_limit.window_minutes` | operator | **applied immediately** | consecutive minutes over the threshold before the cap applies (`>= 1`) |
 | `cpu_limit.percent` | operator | **applied immediately** | percent of the container's **own** quota that counts as over (`1`-`100`) |
@@ -131,8 +131,8 @@ incus:
 
 snapshots:
   limit: 1                                # 0 disables new snapshots
-  share: true                             # allow checkpoint share codes (install
-                                          # from someone's checkpoint)
+  share: false                            # allow checkpoint share codes (opt-in:
+                                          # install from someone's checkpoint)
 
 cpu_limit:
   enabled: false                          # global dynamic CPU cap (default off)

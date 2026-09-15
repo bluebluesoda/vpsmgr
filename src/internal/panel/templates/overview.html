@@ -982,25 +982,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       :('Restoring to checkpoint '+n+' loses the current data and all later checkpoints. Confirm?');
     if(confirm(msg)) submitSnap('/snapshot-restore',{name:n});
   };
-  // Publish a checkpoint. The warning is explicit: the checkpoint (and
-  // everything inside the container, credentials included) becomes available to
-  // whoever holds the code, and the OLDER checkpoints become unreachable once a
-  // clone exists — so they are removed now.
+  // Publish a checkpoint. Two confirmations when the publish also DELETES the
+  // older checkpoints (a clone pins its origin, so they can never be restored
+  // to again): the first explains the exposure, the second the irreversibility.
   window.shareSnap=function(n,ts){
     var older=0;
     document.querySelectorAll('#snapModal .snapts').forEach(function(el){
       var t=el.getAttribute('data-ts');
       if(t&&ts&&t<ts) older++;
     });
-    var msg;
+    var m1=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。确认继续？')
+      :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Continue?');
+    if(!confirm(m1))return;
     if(older>0){
-      msg=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。一旦有人据此克隆，更早的 '+older+' 个检查点将无法再恢复，因此会被删除。确认继续？')
-        :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Once someone clones it, the '+older+' older checkpoint(s) can no longer be restored to and will be deleted. Continue?');
-    }else{
-      msg=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。确认继续？')
-        :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Continue?');
+      var m2=(LANG==='zh')?('再次确认：一旦有人据此克隆，更早的 '+older+' 个检查点将永久无法恢复，现在就会被删除。确定要分享并删除它们吗？')
+        :('Confirm again: once someone clones this, the '+older+' older checkpoint(s) can never be restored to and will be DELETED now. Share and delete them?');
+      if(!confirm(m2))return;
     }
-    if(confirm(msg)) submitSnap('/snapshot-share',{name:n});
+    submitSnap('/snapshot-share',{name:n});
   };
   window.unshareSnap=function(){
     var msg=(LANG==='zh')?'撤销分享？已据此安装的容器不受影响。':'Revoke the share? Containers already installed from it are unaffected.';

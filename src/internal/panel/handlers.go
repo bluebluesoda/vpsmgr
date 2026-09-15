@@ -303,12 +303,18 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 	// A code pointing at this very container is handled as a restore and yields
 	// no new root password.
 	if share := strings.TrimSpace(r.FormValue("share")); share != "" {
+		// Resolve first so the audit row records whose checkpoint was installed.
+		owner, _, _ := s.mgr.ResolveShare(share)
 		pass, err := s.mgr.ReinstallFromShare(u.Name, share)
 		if err != nil {
 			s.redirect(w, r, s.p(""), "error: "+err.Error())
 			return
 		}
-		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "reinstall.share")
+		action := "reinstall.share"
+		if owner != "" {
+			action += "." + owner
+		}
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), action)
 		if pass == "" {
 			s.redirect(w, r, s.p(""), s.t(r, "snapshot_restored"))
 			return
@@ -384,7 +390,7 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain.add")
 	s.redirect(w, r, s.p(""), "ok: domain added")
 }
 
@@ -421,7 +427,7 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "ok: no changes")
 		return
 	}
-	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain.update")
 	s.redirect(w, r, s.p(""), "ok: domain settings saved")
 }
 
@@ -435,7 +441,7 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain_update")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "domain.delete")
 	s.redirect(w, r, s.p(""), "ok: domain removed")
 }
 
@@ -604,7 +610,7 @@ func (s *Server) handleSnapshotShare(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.share")
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.share."+name)
 	s.redirect(w, r, s.p(""), s.t(r, "snapshot_shared", len(removed)))
 }
 
@@ -716,6 +722,7 @@ func (s *Server) handleNotes(w http.ResponseWriter, r *http.Request) {
 		writeNotesJSON(w, false, "storage error", true, "")
 		return
 	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "notes.update")
 	writeNotesJSON(w, true, "", true, req.Data)
 }
 

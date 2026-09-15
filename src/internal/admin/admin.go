@@ -80,7 +80,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/user-color", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserColor))))
 	mux.HandleFunc("/user-bandwidth-reset", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserBandwidthReset))))
 	mux.HandleFunc("/power", s.requireAuth(s.requirePost(s.requireTargetActive(s.handlePower))))
-	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleResetPanelPass))))
+	// Resetting the panel password is allowed on an expired account too (only
+	// its container is locked); the user can also change it themselves.
+	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
 	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
 	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleLoginAs))))

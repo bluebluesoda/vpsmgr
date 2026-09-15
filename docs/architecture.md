@@ -131,12 +131,14 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   loop force-stops the container (`stop` with `force:true`) and disables
   `boot.autostart`, and the account is locked to read-only for both the user and
   the admin — the only operations left are the admin extending the deadline
-  (extend = `max(now, current) + duration`) or deleting the account. Extending
-  past the deadline lifts the lock; a manual start is then required (autostart
-  stays off). The user panel shows a countdown under the bandwidth bar; the admin
-  users table dims expired rows and tags the name `(-Nd)`. The container and its
-  snapshots are never deleted, so a checkpoint shared before expiry stays
-  installable by others.
+  (extend = `max(now, current) + duration`), deleting the account, and either
+  side changing the **panel login password** (the user via the panel, the admin
+  via reset-password), which stays available so the account never becomes
+  unreachable. Extending past the deadline lifts the lock; a manual start is
+  then required (autostart stays off). The user panel shows a countdown under
+  the bandwidth bar; the admin users table dims expired rows and tags the name
+  `(-Nd)`. The container and its snapshots are never deleted, so a checkpoint
+  shared before expiry stays installable by others.
 - **Container swap**: Incus 7 on cgroup v2 writes `memory.swap.max=0` for every
   container unless `limits.memory.swap` carries an explicit byte amount
   (`true`/`false` both end up as 0), so without an explicit value containers
@@ -272,16 +274,17 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   reinstalled is treated as a plain restore, since cloning-then-deleting would
   destroy the snapshot first.
 
-  The whole feature is behind the `snapshots.share` config setting (`vps config
-  set snapshots.share false`; shown read-only on the admin overview; absent =
-  **enabled**, so an upgraded host gets it on). Turning it off hides the
-  user-side share/import entry points and makes the manager refuse new shares
-  and installs, but deliberately keeps the stored codes and leaves every
-  container and checkpoint alone: re-enabling restores the codes for as long as
-  their checkpoint still exists. The code→checkpoint mapping is only ever
-  removed when the checkpoint itself is deleted (from the panel) or the
-  container goes away, and a code whose checkpoint has vanished is reported as
-  invalid instead of half-building a container.
+  The whole feature is **opt-in and off by default** (new installs and upgrades
+  alike): enable it with `vps config set snapshots.share true`. It is a CLI-only
+  setting — there is no admin-panel UI for it. While off, the user-side
+  share/import entry points are hidden and the manager refuses new shares and
+  installs, but the stored codes are kept and every container and checkpoint is
+  left alone, so switching it back on restores the codes for as long as their
+  checkpoint still exists. The code→checkpoint mapping is only ever removed when
+  the checkpoint itself is deleted (from the panel) or the container goes away,
+  and a code whose checkpoint has vanished is reported as invalid instead of
+  half-building a container. Installs are audited as `reinstall.share.<owner>`,
+  sharing as `snapshot.share.<checkpoint>`.
 
 ### User groups (multi-container users)
 

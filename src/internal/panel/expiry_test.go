@@ -34,6 +34,17 @@ func TestExpiredAccountLocked(t *testing.T) {
 		t.Fatalf("blocked mutation did not report the expiry: %s", fr.Body.String())
 	}
 
+	// Changing the panel password IS still allowed on an expired account.
+	rr = doReq(t, h, http.MethodPost, prefix+"/password",
+		url.Values{"new_password": {"NewPass1234"}, "confirm_password": {"NewPass1234"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expired POST /password = %d, want 302", rr.Code)
+	}
+	fr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	if strings.Contains(strings.ToLower(fr.Body.String()), "expired") {
+		t.Fatalf("password change was blocked on an expired account: %s", fr.Body.String())
+	}
+
 	// The overview shows the banner + locked note and hides the action buttons.
 	rr = doReq(t, h, http.MethodGet, prefix, nil, cookie)
 	body := rr.Body.String()

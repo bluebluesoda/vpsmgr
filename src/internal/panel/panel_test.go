@@ -1029,16 +1029,16 @@ func TestDomainAddLogsAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The login also writes a session.login row; assert the domain_update row
-	// is present (and attributed to the acting user).
+	// The login also writes a session.login row; assert the domain.add row is
+	// present (and attributed to the acting user).
 	var found bool
 	for _, r := range rows {
-		if r.Actor == "alice" && r.Action == "domain_update" {
+		if r.Actor == "alice" && r.Action == "domain.add" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("audit rows = %+v, want a domain_update row for alice", rows)
+		t.Errorf("audit rows = %+v, want a domain.add row for alice", rows)
 	}
 }
 
