@@ -107,6 +107,7 @@ type Config struct {
 	Net       NetCfg       `yaml:"net"`
 	Incus     IncusCfg     `yaml:"incus"`
 	Snapshots SnapshotsCfg `yaml:"snapshots"`
+	CPULimit  CPULimitCfg  `yaml:"cpu_limit"`
 }
 
 type PanelCfg struct {
@@ -239,6 +240,27 @@ type SnapshotsCfg struct {
 	// new ones, but existing snapshots are left untouched. Negative is treated
 	// as 0 (the config validator rejects negatives anyway).
 	Limit int `yaml:"limit"`
+	// Share enables snapshot sharing: a user may publish a checkpoint behind a
+	// random code and another user may install a container by cloning it.
+	// Default true (an upgraded host gets it on). Disabling hides the user-side
+	// entry points and refuses new shares/installs, but keeps the stored codes
+	// and leaves every container and checkpoint untouched. See
+	// `vps config set snapshots.share false`.
+	Share bool `yaml:"share"`
+}
+
+// CPULimitCfg is the global dynamic CPU limit rule: when a container keeps
+// using over Percent of its own CPU quota for WindowMinutes in a row, it is
+// capped to Cores (a time slice, like a fractional quota) for the configured
+// duration. Managed with `vps config set cpu_limit.*` (the admin panel shows
+// the rule read-only).
+type CPULimitCfg struct {
+	Enabled         bool    `yaml:"enabled"`
+	WindowMinutes   int     `yaml:"window_minutes"`
+	Percent         int     `yaml:"percent"`
+	Cores           float64 `yaml:"cores"`
+	DurationHours   int     `yaml:"duration_hours"`
+	DurationMinutes int     `yaml:"duration_minutes"`
 }
 
 func Default() *Config {
@@ -246,7 +268,8 @@ func Default() *Config {
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, BandwidthResetDay: 1}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
-	c.Snapshots = SnapshotsCfg{Limit: 1}
+	c.Snapshots = SnapshotsCfg{Limit: 1, Share: true}
+	c.CPULimit = CPULimitCfg{Enabled: false, WindowMinutes: 10, Percent: 60, Cores: 0.5, DurationHours: 2, DurationMinutes: 30}
 	return c
 }
 

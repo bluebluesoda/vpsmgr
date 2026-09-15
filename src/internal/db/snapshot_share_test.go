@@ -59,27 +59,27 @@ func TestSnapshotShareStore(t *testing.T) {
 	}
 }
 
-func TestSnapshotShareEnabledSetting(t *testing.T) {
-	d, err := Open(t.TempDir() + "/share-flag.db")
+func TestSnapshotShareMirror(t *testing.T) {
+	d, err := Open(t.TempDir() + "/share-mirror.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	// Absent key means enabled: the feature is on by default after an upgrade.
-	if on, err := d.SnapshotShareEnabled(); err != nil || !on {
-		t.Fatalf("default = %v, err=%v, want true", on, err)
+	// Unset: ok=false so the caller falls back to the config file.
+	if _, ok, err := d.SnapshotShareEnabled(); err != nil || ok {
+		t.Fatalf("unset mirror: ok=%v err=%v", ok, err)
 	}
 	if err := d.SetSnapshotShareEnabled(false); err != nil {
 		t.Fatal(err)
 	}
-	if on, _ := d.SnapshotShareEnabled(); on {
-		t.Fatal("still enabled after disabling")
+	if v, ok, _ := d.SnapshotShareEnabled(); !ok || v != "0" {
+		t.Fatalf("mirror after disable = %q, ok=%v", v, ok)
 	}
 	if err := d.SetSnapshotShareEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if on, _ := d.SnapshotShareEnabled(); !on {
-		t.Fatal("not enabled after re-enabling")
+	if v, ok, _ := d.SnapshotShareEnabled(); !ok || v != "1" {
+		t.Fatalf("mirror after enable = %q, ok=%v", v, ok)
 	}
 }
 
