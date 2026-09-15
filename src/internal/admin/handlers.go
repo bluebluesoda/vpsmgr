@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/lx"
+	"vpsmgr/internal/markdown"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/pw"
 )
@@ -798,6 +800,136 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		d.Blocked = strings.Join(blocked, "\n")
 	}
 	s.renderDomains(w, r, d)
+}
+
+// maxKnowledgeBytes caps one article's Markdown source (the whole knowledge
+// base is embedded in the user panel, so keep it modest).
+const maxKnowledgeBytes = 256 << 10
+
+// knowledgeRow is one article in the admin knowledge-base list.
+type knowledgeRow struct {
+	ID        int64
+	Title     string
+	UpdatedAt string
+}
+
+type knowledgePageData struct {
+	Title    string
+	Prefix   string
+	Msg      string
+	Err      string
+	Lang     string
+	Articles []knowledgeRow
+	// Editing is the article currently open in the editor (nil = new one).
+	Editing *knowledgeRow
+	// Content is the Markdown source shown in the editor.
+	Content string
+}
+
+func (s *Server) renderKnowledge(w http.ResponseWriter, r *http.Request, d knowledgePageData) {
+	t, err := s.templates()
+	if err != nil {
+		http.Error(w, "template error: "+err.Error(), 500)
+		return
+	}
+	if d.Lang == "" {
+		d.Lang = langEn
+		if l, ok := r.Context().Value(langCtxKey).(string); ok && l != "" {
+			d.Lang = l
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := t.ExecuteTemplate(w, "admin_knowledge.html", d); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// handleKnowledge renders the knowledge-base page: every article plus the
+// editor (prefilled via ?edit=<id>).
+func (s *Server) handleKnowledge(w http.ResponseWriter, r *http.Request) {
+	d := knowledgePageData{Title: "VPS Manager Admin — Knowledge base", Prefix: s.prefix()}
+	all, err := s.db.ListKnowledge()
+	if err != nil {
+		d.Err = err.Error()
+	}
+	for _, k := range all {
+		d.Articles = append(d.Articles, knowledgeRow{ID: k.ID, Title: k.Title, UpdatedAt: k.UpdatedAt})
+	}
+	if id, err := strconv.ParseInt(r.URL.Query().Get("edit"), 10, 64); err == nil && id > 0 {
+		if k, err := s.db.GetKnowledge(id); err == nil && k != nil {
+			d.Editing = &knowledgeRow{ID: k.ID, Title: k.Title, UpdatedAt: k.UpdatedAt}
+			d.Content = k.Content
+		}
+	}
+	s.renderKnowledge(w, r, d)
+}
+
+// handleKnowledgeSave creates (id empty/0) or updates an article.
+func (s *Server) handleKnowledgeSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+	title := strings.TrimSpace(r.FormValue("title"))
+	content := strings.TrimSpace(r.FormValue("content"))
+	if title == "" {
+		s.redirect(w, r, s.p("/knowledge"), "error: "+s.t(r, "err_kb_title"))
+		return
+	}
+	if content == "" {
+		s.redirect(w, r, s.p("/knowledge"), "error: "+s.t(r, "err_kb_content"))
+		return
+	}
+	if len(content) > maxKnowledgeBytes {
+		s.redirect(w, r, s.p("/knowledge"), "error: "+s.t(r, "err_kb_too_large"))
+		return
+	}
+	if id > 0 {
+		if err := s.db.UpdateKnowledge(id, title, content); err != nil {
+			s.redirect(w, r, s.p("/knowledge"), "error: "+err.Error())
+			return
+		}
+		_ = s.db.AddAuditLog("000", "knowledge.update")
+		s.redirect(w, r, s.p("/knowledge")+"?edit="+strconv.FormatInt(id, 10), s.t(r, "knowledge_saved"))
+		return
+	}
+	newID, err := s.db.CreateKnowledge(title, content)
+	if err != nil {
+		s.redirect(w, r, s.p("/knowledge"), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000", "knowledge.create")
+	s.redirect(w, r, s.p("/knowledge")+"?edit="+strconv.FormatInt(newID, 10), s.t(r, "knowledge_saved"))
+}
+
+// handleKnowledgeDel deletes an article.
+func (s *Server) handleKnowledgeDel(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+	if err := s.db.DeleteKnowledge(id); err != nil {
+		s.redirect(w, r, s.p("/knowledge"), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000", "knowledge.delete")
+	s.redirect(w, r, s.p("/knowledge"), s.t(r, "knowledge_deleted"))
+}
+
+// handleKnowledgePreview renders Markdown to HTML for the editor's live
+// preview. The response is JSON: {"html": "..."}.
+func (s *Server) handleKnowledgePreview(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		HTML template.HTML `json:"html"`
+	}{markdown.Render(r.FormValue("content"))})
 }
 
 // handleDomainDel deletes a domain (admin path). It finds the owning user and

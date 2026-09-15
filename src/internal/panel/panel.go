@@ -14,6 +14,7 @@ import (
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/csrf"
 	"vpsmgr/internal/db"
+	"vpsmgr/internal/markdown"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/ver"
 )
@@ -121,6 +122,15 @@ type snapshotRow struct {
 	Shared    bool   // this checkpoint is published behind the share code
 }
 
+// knowledgeArticle is one knowledge-base article, already rendered from
+// Markdown to HTML for the user panel's knowledge modal.
+type knowledgeArticle struct {
+	ID        int64
+	Title     string
+	UpdatedAt string
+	HTML      template.HTML
+}
+
 // sshKeyRow is one public key shown in the SSH-key management panel.
 type sshKeyRow struct {
 	ID     int64  `json:"id"`
@@ -185,7 +195,10 @@ type pageData struct {
 	// ShareEnabled is the admin's snapshot-sharing toggle. When off, the share
 	// and import entry points are hidden (the manager also refuses the
 	// operations server-side).
-	ShareEnabled       bool
+	ShareEnabled bool
+	// Knowledge is the operator's knowledge base, rendered, shown in the
+	// knowledge modal. Empty = nothing published yet.
+	Knowledge          []knowledgeArticle
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
 	AdminKeysAnyActive bool        // at least one admin key is granted: expand the disclosure by default
@@ -455,6 +468,14 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		}
 	}
 	d.SnapshotLimit = s.mgr.SnapshotLimit()
+	// Knowledge base: operator-authored articles, rendered from Markdown.
+	if arts, err := s.db.ListKnowledge(); err == nil {
+		for _, a := range arts {
+			d.Knowledge = append(d.Knowledge, knowledgeArticle{
+				ID: a.ID, Title: a.Title, UpdatedAt: a.UpdatedAt, HTML: markdown.Render(a.Content),
+			})
+		}
+	}
 	keys, _ := s.db.ListSSHKeys(u.ID)
 	for _, k := range keys {
 		d.SSHKeys = append(d.SSHKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})

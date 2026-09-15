@@ -527,6 +527,18 @@ into the kernel.
   access via group membership, only whitelisted commands via sudo.
 - Containers are Incus-unprivileged with `security.nesting=true`.
 
+## Knowledge base
+
+The operator can author Markdown articles in the admin panel (`/knowledge`);
+users open them read-only from a **知识库 / Knowledge base** button on the
+machine card, which opens a large overlay (nearly fullscreen on phones). Content
+is stored verbatim in the `knowledge` table and rendered **server-side** by
+`internal/markdown` — a hand-written, dependency-free renderer for a basic
+subset (headings, fenced code, inline code, bold/italic, links, lists,
+blockquotes, rules). It escapes HTML first and only allows http/https/mailto/#/
+links, so article content can never inject markup. The rendered HTML is embedded
+in the panel page; a small script adds a copy button to each code block.
+
 ## Bandwidth accounting
 
 Per-container NIC counters come from Incus. A background goroutine in the panel

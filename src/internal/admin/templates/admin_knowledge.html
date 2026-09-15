@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Lang "zh"}}知识库 — VPS Manager{{else}}Knowledge base — VPS Manager{{end}}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #1c1e21; }
+@media (prefers-color-scheme: dark) { body { background: #14161a; color: #e6e8eb; } }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+@media (prefers-color-scheme: dark) { header { background: #1e2126; border-bottom-color: #2c3036; } }
+header h1 { font-size: 17px; margin: 0; }
+header .actions { display: flex; gap: 8px; align-items: center; }
+main { padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3036; } }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin: 0 0 12px; }
+@media (prefers-color-scheme: dark) { .card h2 { color: #9aa0a8; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; }
+@media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
+th { color: #6b7280; font-weight: 600; }
+@media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+button:hover, .btn:hover { background: #f3f4f6; }
+@media (prefers-color-scheme: dark) { button:hover, .btn:hover { background: #343a41; } }
+button.danger { border-color: #fca5a5; color: #b91c1c; }
+@media (prefers-color-scheme: dark) { button.danger { color: #f87171; } }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover { background: #1d4ed8; }
+button.go { background: #1c1e21; border-color: #1c1e21; color: #fff; }
+input, textarea { width: 100%; font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 7px; background: #fff; color: inherit; }
+@media (prefers-color-scheme: dark) { input, textarea { background: #14161a; border-color: #3a3f47; } }
+textarea { min-height: 240px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+label { display: block; font-size: 12px; color: #6b7280; margin: 10px 0 4px; }
+@media (prefers-color-scheme: dark) { label { color: #9aa0a8; } }
+.empty { color: #9ca3af; text-align: center; padding: 20px; }
+.msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
+.err { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .err { background: #3b1414; color: #fca5a5; border-color: #7f1d1d; } }
+.lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+.muted { color: #6b7280; }
+.md { border: 1px dashed #d1d5db; border-radius: 8px; padding: 10px 14px; min-height: 120px; overflow-wrap: anywhere; }
+@media (prefers-color-scheme: dark) { .md { border-color: #3a3f47; } }
+.md h1, .md h2, .md h3, .md h4 { margin: .6em 0 .3em; }
+.md h1 { font-size: 1.4em; } .md h2 { font-size: 1.22em; } .md h3 { font-size: 1.08em; }
+.md p { margin: .5em 0; }
+.md pre { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; overflow: auto; }
+.md code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: .92em; }
+@media (prefers-color-scheme: dark) { .md code { background: #14161a; } }
+.md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 3px solid #d1d5db; margin: .5em 0; padding: 2px 12px; color: #6b7280; }
+.md ul, .md ol { margin: .4em 0; padding-left: 1.4em; }
+.md hr { border: none; border-top: 1px solid #d1d5db; margin: .8em 0; }
+.growbar { margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</h1>
+  <div class="actions">
+    <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}总览{{else}}Overview{{end}}</a>
+    <a href="{{.Prefix}}/domains" class="btn">{{if eq .Lang "zh"}}域名管理{{else}}Domains{{end}}</a>
+    <a href="{{.Prefix}}/audit" class="btn">{{if eq .Lang "zh"}}审计日志{{else}}Audit{{end}}</a>
+    <span class="lang"><a href="{{.Prefix}}/knowledge?lang=zh">中文</a><a href="{{.Prefix}}/knowledge?lang=en">EN</a></span>
+    <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
+  </div>
+</header>
+<main>
+  {{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}文章（按最后修改排序）{{else}}Articles (most recently updated first){{end}}</h2>
+    {{if .Articles}}
+    <table>
+      <thead><tr>
+        <th>{{if eq .Lang "zh"}}标题{{else}}Title{{end}}</th>
+        <th>{{if eq .Lang "zh"}}最后修改（本地时区）{{else}}Last modified (local){{end}}</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {{range .Articles}}
+      <tr>
+        <td><a href="{{$.Prefix}}/knowledge?edit={{.ID}}">{{.Title}}</a></td>
+        <td><span class="muted kts" data-ts="{{.UpdatedAt}}">{{.UpdatedAt}}</span></td>
+        <td>
+          <a class="btn" href="{{$.Prefix}}/knowledge?edit={{.ID}}">{{if eq $.Lang "zh"}}编辑{{else}}Edit{{end}}</a>
+          <form action="{{$.Prefix}}/knowledge-del" method="post" class="inline" onsubmit="return confirm({{if eq $.Lang "zh"}}'删除这篇文章？'{{else}}'Delete this article?'{{end}})">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button class="danger">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">{{if eq .Lang "zh"}}暂无文章{{else}}No articles yet{{end}}</div>
+    {{end}}
+  </div>
+
+  <div class="card">
+    <h2>{{if .Editing}}{{if eq .Lang "zh"}}编辑文章{{else}}Edit article{{end}}{{else}}{{if eq .Lang "zh"}}新建文章{{else}}New article{{end}}{{end}}</h2>
+    <form action="{{.Prefix}}/knowledge-save" method="post" id="kbForm">
+      <input type="hidden" name="id" value="{{if .Editing}}{{.Editing.ID}}{{end}}">
+      <label for="kbTitle">{{if eq .Lang "zh"}}标题{{else}}Title{{end}}</label>
+      <input id="kbTitle" name="title" maxlength="200" required value="{{if .Editing}}{{.Editing.Title}}{{end}}">
+      <label for="kbContent">{{if eq .Lang "zh"}}内容（Markdown：标题、列表、代码块、粗体/斜体、链接、引用）{{else}}Content (Markdown: headings, lists, code blocks, bold/italic, links, quotes){{end}}</label>
+      <textarea id="kbContent" name="content" spellcheck="false" required>{{.Content}}</textarea>
+      <div class="growbar">
+        <button type="button" class="btn" id="kbPreviewBtn">{{if eq .Lang "zh"}}预览{{else}}Preview{{end}}</button>
+        <button type="submit" class="primary" id="kbSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+        {{if .Editing}}<a class="btn" href="{{.Prefix}}/knowledge">{{if eq .Lang "zh"}}新建（清空表单）{{else}}New (clear form){{end}}</a>{{end}}
+      </div>
+    </form>
+    <div class="growbar">
+      <div class="muted" style="font-size:12px;margin-bottom:6px">{{if eq .Lang "zh"}}预览{{else}}Preview{{end}}</div>
+      <div class="md" id="kbPreview">{{if eq .Lang "zh"}}点击“预览”查看渲染结果。{{else}}Click “Preview” to render.{{end}}</div>
+    </div>
+  </div>
+</main>
+<script>
+(function(){
+  var P='{{.Prefix}}';
+  var ta=document.getElementById('kbContent');
+  var pv=document.getElementById('kbPreview');
+  var btn=document.getElementById('kbPreviewBtn');
+  if(btn)btn.addEventListener('click',function(){
+    var fd=new FormData(); fd.append('content', ta.value);
+    btn.disabled=true;
+    fetch(P+'/knowledge-preview',{method:'POST',body:fd,credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(j){pv.innerHTML=j.html||'';})
+      .catch(function(){})
+      .then(function(){btn.disabled=false;});
+  });
+  document.querySelectorAll('.kts').forEach(function(el){
+    var d=new Date(el.getAttribute('data-ts'));
+    function p(n){return (n<10?'0':'')+n;}
+    if(!isNaN(d))el.textContent=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  });
+})();
+</script>
+</body>
+</html>
