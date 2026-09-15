@@ -68,6 +68,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # Needed to read the tag object below; fetch-depth 0 also pulls the tags.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -79,9 +85,34 @@ jobs:
           cd dist
           sha256sum vps-amd64 vps-arm64 | tee SHA256SUMS
 
+      # The release body is the tag's own annotation: write the notes at tag
+      # time with
+      #   git tag -a v1.2.3 -m "new feature X
+      #
+      #   - bullet"
+      # A lightweight tag (`git tag v1.2.3`) carries no message, so the release
+      # falls back to "fix some bugs". GitHub appends the auto-generated
+      # "Full changelog" compare link to whatever body we pass.
+      - name: Build release notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          notes=""
+          if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = "tag" ]; then
+            notes="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"
+            # A signed tag's message carries a PGP block; drop it.
+            notes="${notes%%-----BEGIN PGP SIGNATURE-----*}"
+          fi
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            notes="fix some bugs"
+          fi
+          printf '%s\n' "$notes" > release-notes.md
+          echo "----- release notes -----"
+          cat release-notes.md
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           files: |
             dist/vps-amd64
             dist/vps-arm64
