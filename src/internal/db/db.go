@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 13
+const schemaVersion = 14
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -242,6 +242,18 @@ var migrations = []struct {
 	// old idx derivation), so the index applies cleanly.
 	{13, []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_start_port ON users(start_port)`,
+	}},
+	// v14: snapshot shares. A user may publish one checkpoint behind a random
+	// code; anyone can install a new container by cloning that snapshot. One
+	// active share per container (UNIQUE(user_id)) — publishing a new one
+	// replaces the old. Cascades away with the user.
+	{14, []string{
+		`CREATE TABLE IF NOT EXISTS snapshot_shares(
+			code TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+			snapshot TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 	}},
 }
 

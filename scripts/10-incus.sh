@@ -249,6 +249,16 @@ if [[ $LOOP_BACKED -eq 1 ]]; then
   SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
 fi
 
+# ZFS volumes created from here on use refquota: the disk limit counts all the
+# blocks a container references (a hard cap), instead of the default `quota`
+# that only charges a CoW clone's own delta and leaves inherited snapshot data
+# unaccounted. Only new volumes are affected — existing containers keep their
+# accounting. No-op for non-ZFS drivers.
+REFQUOTA_LINE=""
+if [[ "$DRIVER" == "zfs" ]]; then
+  REFQUOTA_LINE="    volume.zfs.use_refquota: \"true\""
+fi
+
 # --- incus admin init (preseed) ---
 # IPv6 pass-through: when VPSMGR_IPV6_SUBNET is set, incusbr0 carries the global
 # prefix (no NAT) and containers SLAAC global addresses from it. The bridge
@@ -289,6 +299,7 @@ storage_pools:
 - config:
 $SRC_LINE
 $SIZE_LINE
+$REFQUOTA_LINE
   description: ""
   name: $POOL
   driver: $DRIVER
@@ -318,7 +329,7 @@ EOF
       case "$STORAGE" in
         zfs)
           [[ -n "$POOL_SIZE_MB" ]] || die "no loop-file size decided for the ZFS pool"
-          incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || die "zfs pool creation (loop file) failed"
+          incus storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" volume.zfs.use_refquota=true || die "zfs pool creation (loop file) failed"
           ;;
         btrfs)
           if [[ -n "$BTRFS_SOURCE" ]]; then
@@ -354,6 +365,13 @@ incus profile device set default eth0 parent incusbr0 2>/dev/null || true
 # only thing that stops Incus from publishing <username>.lxd DNS/PTR records
 # that let any tenant enumerate every other user's username with a subnet scan.
 incus network set incusbr0 dns.mode=none 2>/dev/null || true
+
+# ZFS hard-quota default: re-assert on EVERY run (fresh install and upgrade
+# alike) so a pool created before this setting still gives NEW containers a
+# refquota hard limit. Existing volumes are left as they are.
+if [[ "$(incus storage show "$POOL" 2>/dev/null | awk -F': ' '/driver:/{print $2}')" == "zfs" ]]; then
+  incus storage set "$POOL" volume.zfs.use_refquota=true 2>/dev/null || true
+fi
 
 DRIVER_NOW=$(incus storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"

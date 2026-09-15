@@ -239,6 +239,28 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   container deletes every checkpoint, which the reinstall dialog warns about
   with the exact count.
 
+- **Snapshot sharing (install from someone's checkpoint)**: a user can publish
+  one checkpoint behind a random v4-UUID code (`snapshot_shares`, one row per
+  user). Another user enters that code in the reinstall dialog and gets a
+  container cloned **copy-on-write** from the checkpoint — no image is built, so
+  it costs no real disk until it diverges. The clone is then re-provisioned as
+  the new owner's container: own IP/ports/quota/network, a fresh random
+  hostname, a new root password, a fresh machine-id, and the source's
+  `authorized_keys` cleared before the new owner's keys are written. The source
+  container and its checkpoint are untouched, so one code can serve many
+  installs, and the init script is deliberately not run (the clone already
+  carries the checkpoint's state).
+
+  Cloning from a checkpoint **pins** it: ZFS cannot roll the source back past a
+  snapshot that a clone depends on. Publishing therefore deletes the older
+  checkpoints (the panel warns with the exact count first — they could never be
+  restored to again once a clone exists) and keeps only the published one. On
+  deleting the snapshot, reinstalling or deleting the container, the share is
+  revoked with it (`ReinstallFromShare` reports a clear error rather than
+  building a half-container). A code that points at the **same** container being
+  reinstalled is treated as a plain restore, since cloning-then-deleting would
+  destroy the snapshot first.
+
 ### User groups (multi-container users)
 
 One login can manage several containers by grouping panel accounts under a
@@ -316,7 +338,15 @@ no driver branch in the panel code, and the single driver-aware helper
   80% by default, 90% when ≥ 20 GiB free. New installations never scan, select,
   format, or modify secondary disks. The loop file only allocates blocks as the
   pool actually fills. On very small hosts, cap the ZFS ARC (`zfs.arc_max`) so
-  container memory keeps priority over the pool's cache.
+  container memory keeps priority over the pool's cache. New containers get a
+  **hard** disk limit: the pool carries `volume.zfs.use_refquota=true` (set by
+  `10-incus.sh` on creation and re-asserted on every run, plus an
+  `EnsurePoolRefQuota` pass in `vps install`), so a volume's disk usage counts
+  every block it references — including blocks inherited from the image or a
+  shared checkpoint through CoW clones. Without it, ZFS's default `quota`
+  charges a clone only for its own delta, so a limit would not match what the
+  user sees inside the container. Existing volumes are untouched: pool defaults
+  apply to new volumes only.
 - **btrfs (beta)**. Selecting `VPSMGR_STORAGE=btrfs` is flagged as beta and
   `install.sh` asks for an explicit confirmation up front (default yes — on a
   btrfs root there is no ZFS fallback). When `/` is itself a btrfs filesystem,

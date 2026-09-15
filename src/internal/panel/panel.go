@@ -118,6 +118,7 @@ type snapshotRow struct {
 	Name      string
 	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
 	Size      string // human-readable disk usage, e.g. "184 MiB"; may be empty
+	Shared    bool   // this checkpoint is published behind the share code
 }
 
 // sshKeyRow is one public key shown in the SSH-key management panel.
@@ -137,46 +138,50 @@ type groupMemberRow struct {
 }
 
 type pageData struct {
-	Title              string
-	User               *db.User
-	GroupUsers         []groupMemberRow
-	GroupIndex         string
-	GroupCount         int
-	State              string
-	IP                 string
-	SSHPort            int
-	StartPort          int
-	Ports              string // full user-port block, e.g. 10700-10799
-	PortsPrefix        string // whole-hundred block number, e.g. 107 → "10700-10799"
-	SSH                string
-	V4Forward          bool   // false = IPv6-only box: v4 ssh/ports not offered
-	TraefikEnabled     bool   // false = domain proxy disabled; domains cannot be added
-	InitScript         string // custom init script, run after a reinstall
-	BandwidthQuotaGB   int    // monthly bandwidth quota GiB, 0 = unlimited
-	BandwidthUsedGB    string // used this month (GB, 1 decimal) — only set when limited
-	BandwidthPct       int    // used/quota * 100, clamped to 100
-	BandwidthResetDay  int    // day of month the bandwidth period resets (1-28)
-	Throttled          bool   // over quota: NIC limited to 1Mbps
-	CPULimited         bool   // under the admin's dynamic CPU limit
-	CPULimitUntil      int64  // unix seconds the dynamic CPU limit expires
-	Domains            []domainRow
-	QuotaCPU           string
-	QuotaMem           string
-	QuotaDisk          string
-	CPUUse             string // 5-minute CPU average ("12%" or "-")
-	MemUse             string // latest sampled memory usage ("345 MiB" or "-")
-	DiskUsed           string // latest sampled disk usage ("184 MiB" or "-")
-	Msg                string
-	Err                string
-	PublicIP           string
-	Prefix             string
-	Lang               string
-	UpGB               string
-	DownGB             string
-	IPv6               string // primary global address (the one to connect to)
-	IPv6Block          string // the /112 block the container owns (informational)
-	Snapshots          []snapshotRow
-	SnapshotLimit      int // configured per-container snapshot cap (for display)
+	Title             string
+	User              *db.User
+	GroupUsers        []groupMemberRow
+	GroupIndex        string
+	GroupCount        int
+	State             string
+	IP                string
+	SSHPort           int
+	StartPort         int
+	Ports             string // full user-port block, e.g. 10700-10799
+	PortsPrefix       string // whole-hundred block number, e.g. 107 → "10700-10799"
+	SSH               string
+	V4Forward         bool   // false = IPv6-only box: v4 ssh/ports not offered
+	TraefikEnabled    bool   // false = domain proxy disabled; domains cannot be added
+	InitScript        string // custom init script, run after a reinstall
+	BandwidthQuotaGB  int    // monthly bandwidth quota GiB, 0 = unlimited
+	BandwidthUsedGB   string // used this month (GB, 1 decimal) — only set when limited
+	BandwidthPct      int    // used/quota * 100, clamped to 100
+	BandwidthResetDay int    // day of month the bandwidth period resets (1-28)
+	Throttled         bool   // over quota: NIC limited to 1Mbps
+	CPULimited        bool   // under the admin's dynamic CPU limit
+	CPULimitUntil     int64  // unix seconds the dynamic CPU limit expires
+	Domains           []domainRow
+	QuotaCPU          string
+	QuotaMem          string
+	QuotaDisk         string
+	CPUUse            string // 5-minute CPU average ("12%" or "-")
+	MemUse            string // latest sampled memory usage ("345 MiB" or "-")
+	DiskUsed          string // latest sampled disk usage ("184 MiB" or "-")
+	Msg               string
+	Err               string
+	PublicIP          string
+	Prefix            string
+	Lang              string
+	UpGB              string
+	DownGB            string
+	IPv6              string // primary global address (the one to connect to)
+	IPv6Block         string // the /112 block the container owns (informational)
+	Snapshots         []snapshotRow
+	SnapshotLimit     int // configured per-container snapshot cap (for display)
+	// Snapshot share: the code others can use to install from a checkpoint, and
+	// the checkpoint it points at ("" when the user has no active share).
+	ShareCode          string
+	SharedSnapshot     string
 	SSHKeys            []sshKeyRow
 	AdminSSHKeys       []sshKeyRow // operator's own public keys, shown read-only
 	AdminKeysAnyActive bool        // at least one admin key is granted: expand the disclosure by default
@@ -210,6 +215,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requirePost(s.handleSnapshot)))
 	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requirePost(s.handleSnapshotDel)))
 	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requirePost(s.handleSnapshotRestore)))
+	mux.HandleFunc("/snapshot-share", s.requireAuth(s.requirePost(s.handleSnapshotShare)))
+	mux.HandleFunc("/snapshot-unshare", s.requireAuth(s.requirePost(s.handleSnapshotUnshare)))
 	mux.HandleFunc("/ssh-keys", s.requireAuth(s.requirePost(s.handleSSHKeys)))
 	mux.HandleFunc("/notes", s.requireAuth(s.handleNotes))
 	mux.HandleFunc("/notes/reset", s.requireAuth(s.requirePost(s.handleNotesReset)))
@@ -427,9 +434,19 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	}
 	// Snapshots come from Incus (one list call). A failure is non-fatal: the
 	// page still renders, and the snapshot modal shows the empty state.
+	shareCode, shareSnap, hasShare := s.mgr.SnapshotShareInfo(u.Name)
+	if hasShare {
+		d.ShareCode = shareCode
+		d.SharedSnapshot = shareSnap
+	}
 	if snaps, err := s.mgr.SnapshotList(u.Name); err == nil {
 		for _, sn := range snaps {
-			d.Snapshots = append(d.Snapshots, snapshotRow{Name: sn.Name, CreatedAt: sn.CreatedAt, Size: mgr.HumanBytes(sn.Size)})
+			d.Snapshots = append(d.Snapshots, snapshotRow{
+				Name:      sn.Name,
+				CreatedAt: sn.CreatedAt,
+				Size:      mgr.HumanBytes(sn.Size),
+				Shared:    hasShare && sn.Name == shareSnap,
+			})
 		}
 	}
 	d.SnapshotLimit = s.mgr.SnapshotLimit()

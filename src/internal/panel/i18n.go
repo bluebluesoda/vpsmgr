@@ -88,6 +88,9 @@ func tr(l, key string, args ...any) string {
 		"err_pass_weak":       {"密码需同时包含大写字母、小写字母和数字", "password must contain uppercase letters, lowercase letters and digits"},
 		"new_root_password":   {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
 		"reinstall_done":      {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
+		"snapshot_shared":     {"分享码已生成（已移除 %[1]v 个更早的检查点）", "share code created (%[1]v older checkpoint(s) removed)"},
+		"snapshot_unshared":   {"分享已撤销", "share revoked"},
+		"snapshot_restored":   {"已从该检查点恢复", "restored from that checkpoint"},
 		"ssh_keys_apply_warn": {"机器当前不可达，密钥已保存，将在下次重装后写入。", "Machine unreachable — keys saved and will be applied on the next reinstall."},
 	}
 	pair, ok := m[key]
