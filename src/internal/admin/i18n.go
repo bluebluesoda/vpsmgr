@@ -107,6 +107,10 @@ func tr(l, key string, args ...any) string {
 		"err_kb_title":          {"标题不能为空", "the title is required"},
 		"err_kb_content":        {"内容不能为空", "the content is required"},
 		"err_kb_too_large":      {"内容过大（上限 256 KiB）", "the content is too large (256 KiB max)"},
+		"err_invalid_days":      {"有效期天数必须是非负整数（0 = 无限期）", "validity days must be a non-negative integer (0 = permanent)"},
+		"err_invalid_extend":    {"延期时长无效", "invalid extension duration"},
+		"quota_expiry_updated":  {"已更新 %[1]v 的有效期", "validity updated for %[1]v"},
+		"err_account_expired":   {"账户已到期，仅可延期或删除", "account expired — only extend or delete is allowed"},
 	}
 	pair, ok := m[key]
 	if !ok {
