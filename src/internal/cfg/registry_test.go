@@ -162,6 +162,56 @@ func TestAdminPassHashManagedElsewhere(t *testing.T) {
 	}
 }
 
+func TestSnapshotShareAndCPULimitFields(t *testing.T) {
+	c := Default()
+
+	// snapshots.share: boolean toggle, junk refused.
+	if err := FieldFor("snapshots.share").Assign(c, "false"); err != nil || c.Snapshots.Share {
+		t.Fatalf("snapshots.share=false: err=%v share=%v", err, c.Snapshots.Share)
+	}
+	if err := FieldFor("snapshots.share").Assign(c, "true"); err != nil || !c.Snapshots.Share {
+		t.Fatalf("snapshots.share=true: err=%v share=%v", err, c.Snapshots.Share)
+	}
+	if err := FieldFor("snapshots.share").Assign(c, "maybe"); err == nil {
+		t.Error("snapshots.share=maybe accepted")
+	}
+
+	// cpu_limit per-field ranges.
+	bad := []struct{ key, val string }{
+		{"cpu_limit.window_minutes", "0"},
+		{"cpu_limit.percent", "101"},
+		{"cpu_limit.percent", "0"},
+		{"cpu_limit.cores", "1.5"},
+		{"cpu_limit.cores", "0.05"},
+		{"cpu_limit.duration_minutes", "60"},
+		{"cpu_limit.duration_hours", "-1"},
+	}
+	for _, tc := range bad {
+		if err := FieldFor(tc.key).Assign(c, tc.val); err == nil {
+			t.Errorf("%s=%q accepted", tc.key, tc.val)
+		}
+	}
+	if err := FieldFor("cpu_limit.cores").Assign(c, "0.5"); err != nil {
+		t.Fatalf("cores=0.5: %v", err)
+	}
+	if c.CPULimit.Cores != 0.5 {
+		t.Errorf("cores = %v, want 0.5", c.CPULimit.Cores)
+	}
+
+	// Cross-field: enabling requires a positive duration; zeroing the duration
+	// while enabled is refused.
+	c2 := Default()
+	if err := FieldFor("cpu_limit.duration_minutes").Assign(c2, "0"); err != nil {
+		t.Fatalf("duration_minutes=0 (disabled): %v", err)
+	}
+	if err := FieldFor("cpu_limit.enabled").Assign(c2, "true"); err != nil {
+		t.Fatalf("enabling with hours=2: %v", err)
+	}
+	if err := FieldFor("cpu_limit.duration_hours").Assign(c2, "0"); err == nil {
+		t.Error("zeroing the duration while enabled accepted")
+	}
+}
+
 func TestEditableClassification(t *testing.T) {
 	cases := map[string]string{
 		"panel.listen":          "yes",

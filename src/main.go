@@ -458,6 +458,18 @@ func cmdInstall() error {
 	if err := m2.ApplyV4State(); err != nil {
 		return fmt.Errorf("apply v4 policy: %w", err)
 	}
+	// Mirror the config-owned runtime settings the panel reads live (the DB is
+	// the channel between the CLI and the long-running panel), so an upgrade or
+	// a hand-edited config.yaml takes effect without a restart.
+	if err := m2.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
+		return fmt.Errorf("apply cpu limit rule: %w", err)
+	}
+	if err := m2.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
+		return fmt.Errorf("apply snapshot share toggle: %w", err)
+	}
+	if err := m2.EnforceCPULimits(); err != nil {
+		log.Printf("warn: cpu dynamic limit enforcement: %v", err)
+	}
 	// Admin panel: on a FRESH install (admin enabled and no hash yet in the
 	// DB) generate a random admin password and show it once. When admin is
 	// disabled nothing is printed.
@@ -1004,6 +1016,28 @@ func configSet(args []string) error {
 	case cfg.ApplyNextAdd:
 		fmt.Printf("%s saved. Applies on the next vps add / reinstall.\n", key)
 	case cfg.ApplyImmediate:
+		// Config-owned runtime settings the panel reads live: write the DB mirror
+		// (the channel to the long-running panel) and apply now. No restart.
+		if strings.HasPrefix(key, "cpu_limit.") || key == "snapshots.share" {
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				return fmt.Errorf("config saved, but applying it failed: %w", err)
+			}
+			defer d.Close()
+			m := mgr.New(c, d)
+			if strings.HasPrefix(key, "cpu_limit.") {
+				if err := m.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
+					return fmt.Errorf("config saved, but applying the CPU limit rule failed: %w", err)
+				}
+				if err := m.EnforceCPULimits(); err != nil {
+					return fmt.Errorf("config saved, but enforcing CPU limits failed: %w", err)
+				}
+			} else if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
+				return fmt.Errorf("config saved, but applying the share toggle failed: %w", err)
+			}
+			fmt.Printf("%s updated and applied.\n", key)
+			return nil
+		}
 		if key == "incus.swap_ratio" {
 			// The panel daemon reads the config at startup, but swap-reapply
 			// needs the live config (the ratio just saved) plus the DB. It

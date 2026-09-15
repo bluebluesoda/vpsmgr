@@ -63,23 +63,3 @@ func FormatCPU(tenths int) string {
 	}
 	return "0." + strconv.Itoa(tenths)
 }
-
-// ParseLimitCores parses the dynamic CPU limit target z into tenths of a core.
-// Unlike ParseCPU it is capped at one core: z is a time-slice limit, so it
-// accepts any one-decimal value in 0.1..1.0 (e.g. "0.1", "0.5", "1", "1.0"),
-// yielding 1..10 tenths.
-func ParseLimitCores(s string) (int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, errors.New("cores: empty input")
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, errors.New("cores must be a value in 0.1..1.0 (one-decimal steps)")
-	}
-	t := int(f*10 + 0.5)
-	if t < 1 || t > 10 || f*10-float64(t) > 1e-9 || float64(t)-f*10 > 1e-9 {
-		return 0, errors.New("cores must be a value in 0.1..1.0 (one-decimal steps)")
-	}
-	return t, nil
-}

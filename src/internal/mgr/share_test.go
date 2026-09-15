@@ -140,10 +140,12 @@ func TestSnapshotSharingToggleEnforced(t *testing.T) {
 	}
 	m := New(c, d)
 
-	// Default is enabled (the feature is on after an upgrade).
+	// Default is enabled (snapshots.share defaults to true).
 	if !m.SnapshotShareEnabled() {
 		t.Fatal("sharing should default to enabled")
 	}
+	// `vps config set snapshots.share false` mirrors the toggle; the running
+	// panel sees it without a restart.
 	if err := m.SetSnapshotShareEnabled(false); err != nil {
 		t.Fatal(err)
 	}

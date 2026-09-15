@@ -67,21 +67,21 @@ func olderSnapshotNames(snaps []lx.SnapshotInfo, target string) []string {
 	return older
 }
 
-// SnapshotShareEnabled reports whether the admin has left snapshot sharing on.
-// A read failure is treated as enabled (the default) so a transient DB error
-// never silently hides the feature.
+// SnapshotShareEnabled reports whether snapshot sharing is enabled: the DB
+// mirror written by `vps config set snapshots.share`, falling back to the
+// config file when unset. The mirror is what lets the running panel see the
+// change without a restart (same pattern as net.v4_forward).
 func (m *Manager) SnapshotShareEnabled() bool {
-	on, err := m.db.SnapshotShareEnabled()
-	if err != nil {
-		return true
+	if v, ok, err := m.db.SnapshotShareEnabled(); err == nil && ok {
+		return v == "1"
 	}
-	return on
+	return m.cfg.Snapshots.Share
 }
 
-// SetSnapshotShareEnabled turns snapshot sharing on or off. Disabling keeps the
-// stored codes (so re-enabling restores them) and leaves existing containers
-// and checkpoints untouched — it only hides the user-side UI and refuses new
-// shares/installs.
+// SetSnapshotShareEnabled writes the mirror so the running panel applies the
+// toggle immediately. Called by `vps config set snapshots.share` and by
+// `vps install`. Disabling keeps the stored codes and leaves existing
+// containers and checkpoints untouched.
 func (m *Manager) SetSnapshotShareEnabled(on bool) error {
 	return m.db.SetSnapshotShareEnabled(on)
 }

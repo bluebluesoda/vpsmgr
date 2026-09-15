@@ -9,26 +9,6 @@ import (
 	"vpsmgr/internal/db"
 )
 
-func TestParseLimitCores(t *testing.T) {
-	valid := map[string]int{"0.1": 1, "0.5": 5, "0.9": 9, "1": 10, "1.0": 10, ".5": 5}
-	for in, want := range valid {
-		got, err := ParseLimitCores(in)
-		if err != nil {
-			t.Errorf("ParseLimitCores(%q) error: %v", in, err)
-			continue
-		}
-		if got != want {
-			t.Errorf("ParseLimitCores(%q) = %d, want %d", in, got, want)
-		}
-	}
-	invalid := []string{"", "  ", "0", "0.0", "0.05", "1.1", "1.5", "2", "-0.5", "abc", "1e2"}
-	for _, in := range invalid {
-		if _, err := ParseLimitCores(in); err == nil {
-			t.Errorf("ParseLimitCores(%q) accepted, want error", in)
-		}
-	}
-}
-
 func TestValidateCPULimitRule(t *testing.T) {
 	valid := []CPULimitRule{
 		{Enabled: true, WindowMinutes: 1, Percent: 100, CoresX10: 1, DurationSeconds: 60},
@@ -56,32 +36,44 @@ func TestValidateCPULimitRule(t *testing.T) {
 	}
 }
 
-func TestCPULimitRuleRoundTrip(t *testing.T) {
+func TestCPULimitRuleFromConfig(t *testing.T) {
+	c := cfg.Default()
+	c.CPULimit = cfg.CPULimitCfg{
+		Enabled: true, WindowMinutes: 3, Percent: 25,
+		Cores: 0.2, DurationHours: 1, DurationMinutes: 5,
+	}
 	d, err := db.Open(filepath.Join(t.TempDir(), "rule.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	m := New(cfg.Default(), d)
+	m := New(c, d)
 
-	// Unset: the disabled prefilled default is returned.
-	got, err := m.CPULimitRule()
+	want := CPULimitRule{Enabled: true, WindowMinutes: 3, Percent: 25, CoresX10: 2, DurationSeconds: 3600 + 300}
+	if got := m.CPULimitRule(); got != want {
+		t.Fatalf("CPULimitRule() = %+v, want %+v", got, want)
+	}
+	if err := ValidateCPULimitRule(m.CPULimitRule()); err != nil {
+		t.Fatalf("config-derived rule should validate: %v", err)
+	}
+	// The mirror (written by `vps config set`) takes precedence over the file.
+	mirror := CPULimitRule{Enabled: true, WindowMinutes: 1, Percent: 90, CoresX10: 1, DurationSeconds: 60}
+	if err := m.SetCPULimitRule(mirror); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.CPULimitRule(); got != mirror {
+		t.Fatalf("mirrored rule not used: %+v", got)
+	}
+	// The default config is the disabled 10/60/0.5/2h30m rule (fresh DB).
+	d2, err := db.Open(filepath.Join(t.TempDir(), "rule2.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != DefaultCPULimitRule() {
-		t.Fatalf("unset rule = %+v, want default %+v", got, DefaultCPULimitRule())
-	}
-	want := CPULimitRule{Enabled: true, WindowMinutes: 3, Percent: 25, CoresX10: 2, DurationSeconds: 3600}
-	if err := m.SetCPULimitRule(want); err != nil {
-		t.Fatal(err)
-	}
-	got, err = m.CPULimitRule()
-	if err != nil || got != want {
-		t.Fatalf("round trip = %+v, err=%v, want %+v", got, err, want)
-	}
-	if err := m.SetCPULimitRule(CPULimitRule{Enabled: true, WindowMinutes: 0}); err == nil {
-		t.Fatal("invalid rule accepted")
+	defer d2.Close()
+	m2 := New(cfg.Default(), d2)
+	got := m2.CPULimitRule()
+	if got.Enabled || got.WindowMinutes != 10 || got.Percent != 60 || got.CoresX10 != 5 || got.DurationSeconds != 9000 {
+		t.Fatalf("default rule = %+v", got)
 	}
 }
 

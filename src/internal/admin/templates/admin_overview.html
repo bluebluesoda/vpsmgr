@@ -98,7 +98,6 @@ form.inline[hidden] { display: none; }
 .field small.hint-bad { color: #b91c1c; }
 @media (prefers-color-scheme: dark) { .field small.hint-bad { color: #f87171; } }
 #adminPassForm .pwcheck { grid-column: 1 / -1; margin: -2px 0 0; }
-#cpuLimitForm .cpu-limit-off input[type="number"] { opacity: .5; }
 .pwcheck { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: #6b7280; }
 @media (prefers-color-scheme: dark) { .pwcheck { color: #9aa0a8; } }
 .pwcheck li { display: inline-block; margin: 2px 14px 2px 0; }
@@ -309,22 +308,13 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   </div>
 
   <div class="card">
-    <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局）{{else}}Dynamic CPU limit rule (global){{end}}</h2>
-    <form action="{{.Prefix}}/cpu-limit" method="post" class="form-grid" id="cpuLimitForm">
-      <div class="field" style="grid-column:1/-1">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:600">
-          <input type="checkbox" name="enabled" id="cpuLimitEnabled" {{if .CPULimitEnabled}}checked{{end}}>
-          {{if eq .Lang "zh"}}启用限制（默认：不限制）{{else}}Enable limit (default: no limit){{end}}
-        </label>
-      </div>
-      <div class="field"><label>{{if eq .Lang "zh"}}连续 x 分钟{{else}}Consecutive x minutes{{end}}</label><input name="window_minutes" id="cpuLimitWindow" type="number" min="1" step="1" value="{{.CPULimitMinutes}}" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}占用配额超过 y%{{else}}Over quota y%{{end}}</label><input name="percent" id="cpuLimitPercent" type="number" min="1" max="100" step="1" value="{{.CPULimitPercent}}" required title="{{if eq .Lang "zh"}}相对于容器自身配额；如 4 核配额下 60% = 单分钟持续超过 2.4 核{{else}}relative to the container's own quota; e.g. 60% of a 4-core quota = sustained >2.4 cores for a minute{{end}}"></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}限制到 z 核{{else}}Limit to z cores{{end}}</label><input name="cores" id="cpuLimitCores" type="number" min="0.1" max="1" step="0.1" value="{{.CPULimitCores}}" required title="{{if eq .Lang "zh"}}0.1~1.0（步长 0.1），单核的时间片占比{{else}}0.1..1.0 (steps of 0.1), a time slice of one core{{end}}"></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}持续 n 小时{{else}}For n hours{{end}}</label><input name="hours" id="cpuLimitHours" type="number" min="0" step="1" value="{{.CPULimitHours}}" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}m 分钟{{else}}m minutes{{end}}</label><input name="dur_minutes" id="cpuLimitDurMin" type="number" min="0" max="59" step="1" value="{{.CPULimitDurMin}}" required></div>
-      <button type="submit" class="primary neutral" id="cpuLimitBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
-    </form>
-    <small style="color:#9aa0a8;display:block;margin-top:8px">{{if eq .Lang "zh"}}容器连续 x 分钟占用其配额超过 y% 时，限制到 z 核，持续 n 小时 m 分钟后自动恢复原配额。配额本身不高于 z 的容器会被跳过。{{else}}When a container stays above y% of its quota for x minutes, it is capped to z cores for n hours m minutes, then its quota is restored. Containers whose own quota is at or below z are skipped.{{end}}</small>
+    <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局，只读）{{else}}Dynamic CPU limit rule (global, read-only){{end}}</h2>
+    {{if .CPULimitEnabled}}
+    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}容器连续 <b>{{.CPULimitMinutes}}</b> 分钟占用其配额超过 <b>{{.CPULimitPercent}}%</b> 时，限制到 <b>{{.CPULimitCores}}</b> 核，持续 <b>{{.CPULimitHours}}</b> 小时 <b>{{.CPULimitDurMin}}</b> 分钟后自动恢复原配额。配额本身不高于该核数的容器会被跳过。{{else}}When a container stays above <b>{{.CPULimitPercent}}%</b> of its quota for <b>{{.CPULimitMinutes}}</b> minutes, it is capped to <b>{{.CPULimitCores}}</b> core(s) for <b>{{.CPULimitHours}}</b>h <b>{{.CPULimitDurMin}}</b>m, then its quota is restored. Containers whose own quota is at or below that are skipped.{{end}}</p>
+    {{else}}
+    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}未启用（默认：不限制）。{{else}}Disabled (default: no limit).{{end}}</p>
+    {{end}}
+    <small style="color:#9aa0a8;display:block">{{if eq .Lang "zh"}}用 <code>vps config set cpu_limit.*</code> 修改（<code>vps config help</code> 查看各项）。面板不提供编辑入口。{{else}}Change it with <code>vps config set cpu_limit.*</code> (see <code>vps config help</code>); there is no editor in this panel.{{end}}</small>
     <div style="margin-top:10px">
       {{if .CPULimitActive}}
       <div style="font-size:12px;color:#6b7280;margin-bottom:6px">{{if eq .Lang "zh"}}当前被限制容器{{else}}Currently limited containers{{end}}（{{len .CPULimitActive}}）</div>
@@ -335,20 +325,6 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <small style="color:#9aa0a8">{{if eq .Lang "zh"}}当前没有容器被限制{{else}}No container is currently limited{{end}}</small>
       {{end}}
     </div>
-  </div>
-
-  <div class="card">
-    <h2>{{if eq .Lang "zh"}}快照分享{{else}}Snapshot sharing{{end}}</h2>
-    <form action="{{.Prefix}}/share-toggle" method="post" id="shareForm">
-      <div class="field">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:600">
-          <input type="checkbox" name="enabled" id="shareEnabled" {{if .ShareEnabled}}checked{{end}}>
-          {{if eq .Lang "zh"}}允许用户分享检查点，并从分享码安装{{else}}Allow users to share a checkpoint and install from a share code{{end}}
-        </label>
-      </div>
-      <button type="submit" class="primary neutral" id="shareBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
-    </form>
-    <small style="color:#9aa0a8;display:block;margin-top:8px">{{if eq .Lang "zh"}}默认开启。关闭后用户端不再显示分享/导入入口；已存在的分享码保留在数据库中（重新开启后仍可使用，前提是检查点还在），已有容器与检查点不受影响。{{else}}On by default. When off, the user panels hide the share/import entry points; stored codes are kept in the database (they work again after re-enabling, as long as the checkpoint still exists) and existing containers and checkpoints are unaffected.{{end}}</small>
   </div>
 </main>
 
@@ -710,22 +686,6 @@ var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
     if (!(ok.len&&ok.up&&ok.low&&ok.num)) { e.preventDefault(); f.reportValidity(); return; }
     np.setCustomValidity('');
     btn.disabled = true; btn.classList.add('busy');
-  });
-})();
-// Dynamic CPU limit rule: dim the parameters while the rule is disabled (they
-// stay enabled so their values are always submitted), and show a busy state on
-// save.
-(function(){
-  var f = document.getElementById('cpuLimitForm');
-  if (!f) return;
-  var en = document.getElementById('cpuLimitEnabled');
-  function sync(){ f.classList.toggle('cpu-limit-off', !(en && en.checked)); }
-  if (en) en.addEventListener('change', sync);
-  sync();
-  var btn = document.getElementById('cpuLimitBtn');
-  f.addEventListener('submit', function(){
-    if (!f.checkValidity()) return;
-    if (btn) { btn.disabled = true; btn.classList.add('busy'); }
   });
 })();
 // Quota update can take 10s+ (live LXD config changes); show a spinner on the

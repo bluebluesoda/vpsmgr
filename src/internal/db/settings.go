@@ -39,22 +39,19 @@ const (
 	// subdomains are refused by AddDomain (admin-managed via the web UI).
 	SettingBlockedDomains = "blocked_domains"
 
-	// SettingCPULimitRule is the admin-managed global dynamic CPU limit rule
-	// (JSON), applied to every container. Absent = the rule is disabled.
+	// SettingCPULimitRule mirrors the `cpu_limit.*` config values so the
+	// long-running panel applies a `vps config set cpu_limit.…` immediately
+	// (its in-memory config is only loaded at startup). The config file stays
+	// authoritative; this is the live channel, refreshed on set and on install.
 	SettingCPULimitRule = "cpu_limit_rule"
 
 	// SettingCPULimitActive is the JSON map of containers currently under a
-	// dynamic CPU limit (name -> {until, cores_x10}). Persisted so the limit
-	// survives a panel restart and the countdown stays accurate.
+	// dynamic CPU limit (name -> {until, cores_x10}). Persisted so an active
+	// limit survives a panel restart and the countdown stays accurate.
 	SettingCPULimitActive = "cpu_limit_active"
 
-	// SettingSnapshotShareEnabled toggles the snapshot-sharing feature (publish
-	// a checkpoint behind a code, install from someone's checkpoint). Absent
-	// means ENABLED, so a host upgraded to this version gets the feature on by
-	// default; the admin can turn it off. Disabling hides the user-side UI and
-	// refuses new shares/installs, but the stored codes are deliberately kept
-	// (not deleted) so re-enabling restores them while their checkpoint still
-	// exists. Stored as "1"/"0".
+	// SettingSnapshotShareEnabled mirrors `snapshots.share` so the panel sees a
+	// `vps config set snapshots.share` without a restart. Absent = enabled.
 	SettingSnapshotShareEnabled = "snapshot_share_enabled"
 )
 
@@ -100,20 +97,13 @@ func (d *DB) SetBlockedDomains(list []string) error {
 	return d.SetSetting(SettingBlockedDomains, strings.Join(list, "\n"))
 }
 
-// SnapshotShareEnabled reports whether snapshot sharing is on. An absent key
-// means enabled — the feature's default after an upgrade.
-func (d *DB) SnapshotShareEnabled() (bool, error) {
-	v, ok, err := d.GetSetting(SettingSnapshotShareEnabled)
-	if err != nil {
-		return false, err
-	}
-	if !ok || v == "" {
-		return true, nil
-	}
-	return v != "0" && v != "false", nil
+// SnapshotShareEnabled reports the mirrored snapshot-sharing toggle. An absent
+// key means unset (the caller falls back to the config file).
+func (d *DB) SnapshotShareEnabled() (value string, ok bool, err error) {
+	return d.GetSetting(SettingSnapshotShareEnabled)
 }
 
-// SetSnapshotShareEnabled turns snapshot sharing on or off (stored as "1"/"0").
+// SetSnapshotShareEnabled writes the mirror (stored as "1"/"0").
 func (d *DB) SetSnapshotShareEnabled(on bool) error {
 	v := "0"
 	if on {
