@@ -878,14 +878,12 @@ var (
 	}
 )
 
-// Launch creates a container with limits, static IPv4 (and optional static
-// IPv6 primary address + routed /112 block), root size and autostart enabled,
-// then starts it and waits until it is ready. security.nesting allows running
-// Docker / nested containers inside.
-// pool and bridge name the storage pool and managed bridge (from config).
-// cpu is a quota in tenths of a core (see cpuLimitConfig).
-// Everything is submitted in ONE create request — the config, the eth0 static
-// addresses and the root size — so no follow-up device overrides are needed.
+// instanceSpec builds the create-time config and device map for a container:
+// the root disk (pool + size), the NIC layout (a single bridged eth0, or a
+// routed eth0 + bridged eth1 in pool mode), the CPU/memory limits and the
+// hardening options. Shared by Launch (source = image) and CloneFromSnapshot
+// (source = a snapshot) so a clone is configured exactly like a fresh container
+// — own IP, own quotas — no matter what the source had.
 //
 // poolIPv6 ("" in prefix mode) switches the NIC layout: the container gets
 // TWO NICs — eth0 as a `routed` NIC on the EXTERNAL interface carrying the
@@ -893,12 +891,7 @@ var (
 // and eth1 as a `bridged` NIC on the Incus bridge carrying the private IPv4.
 // This is the layout that makes "one discrete public /128 per container" work
 // (the address is NOT bound on the host's eth0 — see docs/ipv6.md).
-func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, extIF string, cpu, memMB, diskGB int) error {
-	// The create source takes a plain local alias; strip a "remote:" prefix
-	// (the image is ensured to be cached locally before Launch is called).
-	if _, local, found := strings.Cut(image, ":"); found {
-		image = local
-	}
+func (c *Client) instanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF string, cpu, memMB, diskGB int) (map[string]string, map[string]device) {
 	devices := map[string]device{
 		"root": {"type": "disk", "path": "/", "pool": pool, "size": strconv.Itoa(diskGB) + "GiB"},
 	}
@@ -954,6 +947,24 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, ex
 	config["limits.processes"] = DefaultProcessesLimit
 	config["boot.autostart"] = "true"
 	config["security.nesting"] = "true"
+	return config, devices
+}
+
+// Launch creates a container with limits, static IPv4 (and optional static
+// IPv6 primary address + routed /112 block), root size and autostart enabled,
+// then starts it and waits until it is ready. security.nesting allows running
+// Docker / nested containers inside.
+// pool and bridge name the storage pool and managed bridge (from config).
+// cpu is a quota in tenths of a core (see cpuLimitConfig).
+// Everything is submitted in ONE create request — the config, the eth0 static
+// addresses and the root size — so no follow-up device overrides are needed.
+func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, extIF string, cpu, memMB, diskGB int) error {
+	// The create source takes a plain local alias; strip a "remote:" prefix
+	// (the image is ensured to be cached locally before Launch is called).
+	if _, local, found := strings.Cut(image, ":"); found {
+		image = local
+	}
+	config, devices := c.instanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF, cpu, memMB, diskGB)
 	req := createReq{
 		Name:     name,
 		Source:   map[string]string{"type": "image", "alias": image},
@@ -969,6 +980,59 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block, poolIPv6, ex
 		return err
 	}
 	return c.WaitReady(name, 120*time.Second)
+}
+
+// CloneFromSnapshot creates newName as a copy-on-write clone of a snapshot of
+// srcContainer, configured for its own user (network + quota) exactly like a
+// fresh Launch. The clone is left Stopped: the caller renames it into place and
+// provisions it (hostname, root password, keys), then starts it. The snapshot
+// itself is untouched and can serve further clones.
+func (c *Client) CloneFromSnapshot(srcContainer, snapshot, newName, pool, bridge, ip, ipv6, block, poolIPv6, extIF string, cpu, memMB, diskGB int) error {
+	config, devices := c.instanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF, cpu, memMB, diskGB)
+	req := createReq{
+		Name:     newName,
+		Source:   map[string]string{"type": "copy", "source": srcContainer + "/" + snapshot},
+		Config:   config,
+		Devices:  devices,
+		Profiles: []string{"default"},
+	}
+	return c.sendOp(http.MethodPost, "/1.0/instances", req, 5*time.Minute)
+}
+
+// RenameInstance renames an instance in place. Used to move a clone into the
+// name of the container it replaces (the old one is deleted first, so the name
+// is free and its snapshots — gone with it — are not needed).
+func (c *Client) RenameInstance(oldName, newName string) error {
+	return c.sendOp(http.MethodPost, "/1.0/instances/"+url.PathEscape(oldName),
+		map[string]string{"name": newName}, 2*time.Minute)
+}
+
+// EnsurePoolRefQuota switches the pool's ZFS volume default to refquota, so
+// every NEW container's disk limit counts the blocks it references (a real hard
+// cap), instead of the default `quota`, which only charges a CoW clone's own
+// delta and lets inherited snapshot data go unaccounted. Existing volumes are
+// untouched — pool defaults apply at creation only. No-op on non-ZFS pools
+// (btrfs quotas are already a hard limit; `dir` has none). Idempotent.
+func (c *Client) EnsurePoolRefQuota(pool string) error {
+	var p struct {
+		Driver string            `json:"driver"`
+		Config map[string]string `json:"config"`
+	}
+	if err := c.get("/1.0/storage-pools/"+url.PathEscape(pool), &p); err != nil {
+		return err
+	}
+	if p.Driver != "zfs" {
+		return nil
+	}
+	if p.Config["volume.zfs.use_refquota"] == "true" {
+		return nil
+	}
+	if p.Config == nil {
+		p.Config = map[string]string{}
+	}
+	p.Config["volume.zfs.use_refquota"] = "true"
+	return c.put("/1.0/storage-pools/"+url.PathEscape(pool),
+		map[string]any{"config": p.Config})
 }
 
 // WaitReady waits until the container is running and accepts exec.

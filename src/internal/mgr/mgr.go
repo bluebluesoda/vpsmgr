@@ -1064,7 +1064,12 @@ func (m *Manager) SnapshotDelete(name, snapName string) error {
 	if !ValidSnapName(snapName) {
 		return errors.New("invalid snapshot name")
 	}
-	return m.lx.SnapshotDelete(u.Name, snapName)
+	if err := m.lx.SnapshotDelete(u.Name, snapName); err != nil {
+		return err
+	}
+	// A share pointing at this checkpoint is now dead (the snapshot is gone).
+	_ = m.db.DeleteSnapshotShareBySnapshot(u.ID, snapName)
+	return nil
 }
 
 // SnapshotRestore restores the container disk from a snapshot, keeping the
@@ -1094,6 +1099,14 @@ func (m *Manager) SnapshotRestore(name, snapName string) error {
 	if !ValidSnapName(snapName) {
 		return errors.New("invalid snapshot name")
 	}
+	return m.snapshotRestoreLocked(u, snapName)
+}
+
+// snapshotRestoreLocked restores an already-resolved user's disk from a
+// snapshot. The caller holds opMu. On ANY failure the container is returned to
+// its original running state (restarted when it was running), so a rejected
+// restore never strands the user's container stopped.
+func (m *Manager) snapshotRestoreLocked(u *db.User, snapName string) error {
 	st, err := m.lx.State(u.Name)
 	if err != nil {
 		return err
@@ -1104,23 +1117,39 @@ func (m *Manager) SnapshotRestore(name, snapName string) error {
 			return err
 		}
 	}
-	if err := m.lx.SnapshotRestore(u.Name, snapName); err != nil {
+	restore := func() error { return m.lx.SnapshotRestore(u.Name, snapName) }
+	err = restore()
+	if err != nil && isSubsequentSnapshotErr(err) {
 		// Restore to an older checkpoint is refused while later ones exist and
 		// the volume lacks zfs.remove_snapshots. Delete them and retry once.
-		if !strings.Contains(err.Error(), "subsequent snapshot") {
-			return err
-		}
 		if derr := m.discardNewerSnapshots(u.Name, snapName); derr != nil {
-			return derr
+			err = derr
+		} else {
+			err = restore()
 		}
-		if err := m.lx.SnapshotRestore(u.Name, snapName); err != nil {
-			return err
+	}
+	if err != nil {
+		if wasRunning {
+			_ = m.lx.Start(u.Name)
 		}
+		return err
 	}
 	if wasRunning {
 		return m.lx.Start(u.Name)
 	}
 	return nil
+}
+
+// isSubsequentSnapshotErr reports whether a restore was refused because newer
+// snapshots exist. Incus emits two variants: "subsequent snapshot(s)" for plain
+// later checkpoints, and "subsequent internal snapshot(s) (from a copy)" when a
+// later checkpoint is the origin of a clone (a shared snapshot). The second is
+// not recoverable by deleting snapshots — those internal ones are not listed
+// and cannot be removed while a clone depends on them — but recognising it
+// keeps the failure path identical (restart the container, surface the error).
+func isSubsequentSnapshotErr(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "subsequent snapshot") || strings.Contains(s, "subsequent internal snapshot")
 }
 
 // ensureZfsRollbackVolume sets zfs.remove_snapshots on the container's root
@@ -1295,6 +1324,9 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", fmt.Errorf("delete container: %w", err)
 	}
+	// The container (and its snapshots) is gone, so any share pointing at one
+	// of them is dead.
+	_ = m.db.DeleteSnapshotShare(u.ID)
 	// Default image (or empty): resolve to the configured alias / fallback and
 	// pull the fallback if it is remote-qualified. A user-picked non-default
 	// image must already exist locally — never auto-fetch a surprise image.
@@ -1594,6 +1626,17 @@ func (m *Manager) ApplyZFSRemoveSnapshotsToAll() error {
 		}
 	}
 	return firstErr
+}
+
+// EnsurePoolRefQuota switches the storage pool's ZFS volume default to
+// refquota, so every container created after this runs gets a HARD disk limit
+// that counts all the blocks it references — including data inherited from a
+// cloned snapshot — instead of the default `quota`, which only charges the
+// clone's own delta. Existing containers are deliberately untouched (pool
+// defaults apply at creation only). No-op on non-ZFS pools. Idempotent; run on
+// every `vps install` so an --update upgrade also picks it up.
+func (m *Manager) EnsurePoolRefQuota() error {
+	return m.lx.EnsurePoolRefQuota(m.cfg.Incus.Pool)
 }
 
 // EnsureBlockRoutes adds the deterministic /112 block (ipv6.routes) to every

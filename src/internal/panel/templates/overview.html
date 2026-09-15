@@ -464,6 +464,13 @@ footer a{color:var(--muted);text-decoration:underline}
 <td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
 <td><span class="muted">{{.Size}}</span></td>
 <td>
+{{if .Shared}}
+<div class="muted" style="font-size:.72rem">{{if eq $.Lang "zh"}}分享码{{else}}share code{{end}}</div>
+<code class="copyable" data-copy="{{$.ShareCode}}">{{$.ShareCode}}</code>
+<button type="button" class="btn danger" onclick="unshareSnap()">{{if eq $.Lang "zh"}}撤销分享{{else}}Revoke{{end}}</button>
+{{else}}
+<button type="button" class="btn" onclick="shareSnap('{{.Name}}','{{.CreatedAt}}')">{{if eq $.Lang "zh"}}分享{{else}}Share{{end}}</button>
+{{end}}
 <button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
 <button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
 </td>
@@ -533,6 +540,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <input type="hidden" name="confirm" value="1">
 <div class="imglist" id="reImgs"></div>
 <div id="reDesc"></div>
+<div class="field" style="margin-top:.6rem">
+<label class="muted" style="font-size:.82rem">{{if eq .Lang "zh"}}或：从分享的检查点安装（填入分享码；填了则忽略上面的系统选择）{{else}}Or: install from a shared checkpoint (enter a code; the system choice above is then ignored){{end}}</label>
+<input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
+</div>
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>
@@ -898,6 +909,30 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var msg=(LANG==='zh')?('恢复到检查点 '+n+' 将丢失当前数据以及此后的所有检查点，确认？')
       :('Restoring to checkpoint '+n+' loses the current data and all later checkpoints. Confirm?');
     if(confirm(msg)) submitSnap('/snapshot-restore',{name:n});
+  };
+  // Publish a checkpoint. The warning is explicit: the checkpoint (and
+  // everything inside the container, credentials included) becomes available to
+  // whoever holds the code, and the OLDER checkpoints become unreachable once a
+  // clone exists — so they are removed now.
+  window.shareSnap=function(n,ts){
+    var older=0;
+    document.querySelectorAll('#snapModal .snapts').forEach(function(el){
+      var t=el.getAttribute('data-ts');
+      if(t&&ts&&t<ts) older++;
+    });
+    var msg;
+    if(older>0){
+      msg=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。一旦有人据此克隆，更早的 '+older+' 个检查点将无法再恢复，因此会被删除。确认继续？')
+        :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Once someone clones it, the '+older+' older checkpoint(s) can no longer be restored to and will be deleted. Continue?');
+    }else{
+      msg=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。确认继续？')
+        :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Continue?');
+    }
+    if(confirm(msg)) submitSnap('/snapshot-share',{name:n});
+  };
+  window.unshareSnap=function(){
+    var msg=(LANG==='zh')?'撤销分享？已据此安装的容器不受影响。':'Revoke the share? Containers already installed from it are unaffected.';
+    if(confirm(msg)) submitSnap('/snapshot-unshare',{});
   };
   // Create form and all destructive ops: keep the hash so the modal reopens
   // after the reload that follows the POST.

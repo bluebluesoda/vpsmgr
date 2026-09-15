@@ -1128,6 +1128,11 @@ func TestSnapshotRoutesRegistered(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("POST /snapshot-restore = %d, want 302", rr.Code)
 	}
+	// POST /snapshot-share: registered; fails on the unreachable Incus.
+	rr = doReq(t, h, http.MethodPost, prefix+"/snapshot-share", url.Values{"name": {"snap-x"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /snapshot-share = %d, want 302", rr.Code)
+	}
 
 	// No audit rows for the snapshot ops: every snapshot call failed before
 	// any successful action (the login row is expected).
@@ -1139,6 +1144,13 @@ func TestSnapshotRoutesRegistered(t *testing.T) {
 		if strings.HasPrefix(r.Action, "snapshot.") {
 			t.Errorf("failed snapshot op wrote an audit row: %+v", r)
 		}
+	}
+
+	// POST /snapshot-unshare: registered; revoking nothing succeeds (so it is
+	// checked after the "no audit row on failure" assertion above).
+	rr = doReq(t, h, http.MethodPost, prefix+"/snapshot-unshare", url.Values{}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /snapshot-unshare = %d, want 302", rr.Code)
 	}
 }
 
@@ -1216,6 +1228,37 @@ func TestOverviewSnapshotModal(t *testing.T) {
 		if i := strings.Index(body, "暂无快照"); i >= 0 && i < iModal {
 			t.Error("snapshot card content leaked outside the modal")
 		}
+	}
+}
+
+// TestOverviewSnapshotShareUI verifies the share UI: a published checkpoint
+// shows its code with a revoke button, an unpublished one shows a Share button,
+// and the reinstall modal carries the share-code field.
+func TestOverviewSnapshotShareUI(t *testing.T) {
+	srv, _ := newTestServer(t)
+	body := srv.renderToString(t, "overview.html", pageData{
+		User:           &db.User{Name: "alice"},
+		Prefix:         "/" + testSecret,
+		ShareCode:      "11111111-2222-4333-8444-555555555555",
+		SharedSnapshot: "snap-shared",
+		Snapshots: []snapshotRow{
+			{Name: "snap-shared", CreatedAt: "2026-08-01T00:00:00Z", Size: "10 MiB", Shared: true},
+			{Name: "snap-other", CreatedAt: "2026-08-02T00:00:00Z", Size: "11 MiB"},
+		},
+	})
+	for _, want := range []string{
+		`data-copy="11111111-2222-4333-8444-555555555555"`,
+		`onclick="unshareSnap()"`,
+		`onclick="shareSnap('snap-other','2026-08-02T00:00:00Z')"`,
+		`name="share"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview share UI missing %q", want)
+		}
+	}
+	// The published checkpoint must not also offer a Share button.
+	if strings.Contains(body, `shareSnap('snap-shared'`) {
+		t.Error("published checkpoint still offers a Share button")
 	}
 }
 

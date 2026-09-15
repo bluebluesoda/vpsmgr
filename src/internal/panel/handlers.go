@@ -276,6 +276,23 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: please confirm reinstall")
 		return
 	}
+	// "Install from a shared checkpoint": the code replaces the image choice.
+	// A code pointing at this very container is handled as a restore and yields
+	// no new root password.
+	if share := strings.TrimSpace(r.FormValue("share")); share != "" {
+		pass, err := s.mgr.ReinstallFromShare(u.Name, share)
+		if err != nil {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+			return
+		}
+		_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "reinstall.share")
+		if pass == "" {
+			s.redirect(w, r, s.p(""), s.t(r, "snapshot_restored"))
+			return
+		}
+		s.redirectModal(w, r, s.p(""), s.t(r, "reinstall_done", pass))
+		return
+	}
 	pass, err := s.mgr.Reinstall(u.Name, r.FormValue("image"))
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
@@ -546,6 +563,37 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 		msg = "ok: checkpoint restored"
 	}
 	s.redirect(w, r, s.p(""), msg)
+}
+
+// handleSnapshotShare publishes a checkpoint behind a random code so other
+// users can install from it. Older checkpoints are deleted in the process: once
+// the snapshot is cloned it can no longer be rolled back past, so they would
+// only linger as dead entries. The panel warns before submitting.
+func (s *Server) handleSnapshotShare(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	name := r.FormValue("name")
+	_, removed, err := s.mgr.ShareSnapshot(u.Name, name)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.share")
+	s.redirect(w, r, s.p(""), s.t(r, "snapshot_shared", len(removed)))
+}
+
+// handleSnapshotUnshare revokes the user's share code.
+func (s *Server) handleSnapshotUnshare(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := s.mgr.RevokeSnapshotShare(u.Name); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.unshare")
+	s.redirect(w, r, s.p(""), s.t(r, "snapshot_unshared"))
 }
 
 // handleSSHKeys reconciles the user's SSH-key set from the management panel

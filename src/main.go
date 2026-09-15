@@ -349,6 +349,14 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("apply zfs remove_snapshots: %w", err)
 	}
+	// Hard disk quota for new containers: make the pool create new volumes with
+	// refquota, so a user's disk limit counts the data it holds (including a
+	// cloned checkpoint's inherited blocks), not just its own delta. Existing
+	// containers keep their current accounting (pool defaults apply at create).
+	if err := m.EnsurePoolRefQuota(); err != nil {
+		d.Close()
+		return fmt.Errorf("apply pool refquota: %w", err)
+	}
 	// Route inter-container IPv6 through the host (no L2 discovery / MITM),
 	// so a container can reach a peer whose address it knows. A user-controlled
 	// container may use an unsupported guest network stack; do not let that one
