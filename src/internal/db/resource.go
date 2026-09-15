@@ -186,6 +186,37 @@ func (d *DB) AverageCPU(since int64) (map[int64]float64, error) {
 	return out, rows.Err()
 }
 
+// RecentResourceSamples returns every user's samples at or after the given
+// minute, ordered by (user_id, sample_minute). One query feeds the dynamic CPU
+// limit check, so it can reconstruct each container's trailing run of minutes
+// over the quota without a per-user round trip.
+func (d *DB) RecentResourceSamples(since int64) ([]ResourceSample, error) {
+	rows, err := d.sql.Query(`
+		SELECT user_id, sample_minute, state, boot_time,
+		       cpu_seconds_ns, cpu_pct_x10, memory_mib, processes,
+		       disk_used_mib, rx_bytes_total, tx_bytes_total,
+		       disk_read_bytes_total, disk_write_bytes_total
+		FROM resource_samples
+		WHERE sample_minute >= ?
+		ORDER BY user_id, sample_minute`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ResourceSample
+	for rows.Next() {
+		var s ResourceSample
+		if err := rows.Scan(&s.UserID, &s.SampleMinute, &s.State, &s.BootTime,
+			&s.CPUSecondsNS, &s.CPUPercentX10, &s.MemoryMiB, &s.Processes,
+			&s.DiskUsedMiB, &s.RXBytesTotal, &s.TXBytesTotal,
+			&s.DiskReadBytes, &s.DiskWrittenBytes); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ResourceHistory returns samples for a future resource chart.
 func (d *DB) ResourceHistory(userID, since int64) ([]ResourceSample, error) {
 	rows, err := d.sql.Query(`

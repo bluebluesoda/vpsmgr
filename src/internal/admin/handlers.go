@@ -2,7 +2,9 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +50,23 @@ type pageData struct {
 	PoolTotal    int
 	// AdminKeys is the operator's own SSH-key store (management panel only).
 	AdminKeys []sshKeyRow
+	// Global dynamic CPU limit rule, prefilled into the overview form. The
+	// Active list is the containers currently capped by it.
+	CPULimitEnabled bool
+	CPULimitMinutes int
+	CPULimitPercent int
+	CPULimitCores   string
+	CPULimitHours   int
+	CPULimitDurMin  int
+	CPULimitActive  []cpuLimitRow
+}
+
+// cpuLimitRow is one container currently under the dynamic CPU limit, shown in
+// the rule card (name, the cap, and when it expires).
+type cpuLimitRow struct {
+	Name    string
+	Cores   string
+	Expires string
 }
 
 // sshKeyRow is one public key shown in the admin SSH-key management panel.
@@ -145,7 +164,47 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 			d.AdminKeys = append(d.AdminKeys, sshKeyRow{ID: k.ID, Name: k.Name, Key: k.Key, Active: k.Active})
 		}
 	}
+	if rule, err := s.mgr.CPULimitRule(); err == nil {
+		d.CPULimitEnabled = rule.Enabled
+		d.CPULimitMinutes = rule.WindowMinutes
+		d.CPULimitPercent = rule.Percent
+		d.CPULimitCores = mgr.FormatCPU(rule.CoresX10)
+		d.CPULimitHours = rule.DurationSeconds / 3600
+		d.CPULimitDurMin = (rule.DurationSeconds % 3600) / 60
+	}
+	nowUnix := time.Now().Unix()
+	for name, st := range s.mgr.CPULimits() {
+		if st.Until <= nowUnix {
+			continue
+		}
+		d.CPULimitActive = append(d.CPULimitActive, cpuLimitRow{
+			Name:    name,
+			Cores:   mgr.FormatCPU(st.CoresX10),
+			Expires: fmtCPURemaining(time.Unix(st.Until, 0)),
+		})
+	}
+	sort.Slice(d.CPULimitActive, func(i, j int) bool { return d.CPULimitActive[i].Name < d.CPULimitActive[j].Name })
 	return d
+}
+
+// fmtCPURemaining renders the time left on a dynamic CPU limit compactly
+// ("2h30m", "5m12s", "40s").
+func fmtCPURemaining(until time.Time) string {
+	d := time.Until(until).Truncate(time.Second)
+	if d < 0 {
+		d = 0
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm%ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
 }
 
 func (s *Server) loadUsers(d *pageData) {
@@ -590,6 +649,64 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.AddAuditLog("000", "admin.passwd")
 	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
+}
+
+// handleCPULimitRule saves the global dynamic CPU limit rule and applies it
+// immediately: a disabled rule restores every capped container right away
+// instead of waiting for the next 60s pass.
+func (s *Server) handleCPULimitRule(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	enabled := r.FormValue("enabled") != ""
+	minutes, err := strconv.Atoi(strings.TrimSpace(r.FormValue("window_minutes")))
+	if err != nil || minutes < 1 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_window"))
+		return
+	}
+	percent, err := strconv.Atoi(strings.TrimSpace(r.FormValue("percent")))
+	if err != nil || percent < 1 || percent > 100 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_percent"))
+		return
+	}
+	cores, err := mgr.ParseLimitCores(r.FormValue("cores"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_cores"))
+		return
+	}
+	hours, err := strconv.Atoi(strings.TrimSpace(r.FormValue("hours")))
+	if err != nil || hours < 0 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_duration"))
+		return
+	}
+	durMin, err := strconv.Atoi(strings.TrimSpace(r.FormValue("dur_minutes")))
+	if err != nil || durMin < 0 || durMin > 59 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_duration"))
+		return
+	}
+	duration := hours*3600 + durMin*60
+	if enabled && duration <= 0 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_cpu_limit_duration"))
+		return
+	}
+	rule := mgr.CPULimitRule{
+		Enabled:         enabled,
+		WindowMinutes:   minutes,
+		Percent:         percent,
+		CoresX10:        cores,
+		DurationSeconds: duration,
+	}
+	if err := s.mgr.SetCPULimitRule(rule); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	if err := s.mgr.EnforceCPULimits(); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000", "cpu_limit.update")
+	s.redirect(w, r, s.p(""), s.t(r, "cpu_limit_saved"))
 }
 
 // handleLoginAs ("log in as user" / impersonation) creates a user-panel

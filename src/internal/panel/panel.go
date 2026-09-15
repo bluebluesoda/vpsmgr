@@ -157,6 +157,8 @@ type pageData struct {
 	BandwidthPct       int    // used/quota * 100, clamped to 100
 	BandwidthResetDay  int    // day of month the bandwidth period resets (1-28)
 	Throttled          bool   // over quota: NIC limited to 1Mbps
+	CPULimited         bool   // under the admin's dynamic CPU limit
+	CPULimitUntil      int64  // unix seconds the dynamic CPU limit expires
 	Domains            []domainRow
 	QuotaCPU           string
 	QuotaMem           string
@@ -372,6 +374,13 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	// Resource usage comes from the persisted sampler snapshot (five-minute
 	// CPU average plus latest memory/disk), never from a live Incus sample.
 	d.CPUUse, d.MemUse, d.DiskUsed = s.mgr.PanelResources(u.ID)
+	// Dynamic CPU limit (admin global rule): while capped, show the cap instead
+	// of the quota and hand the template an expiry for its live countdown.
+	if st, ok := s.mgr.CPULimits()[u.Name]; ok && st.Until > time.Now().Unix() {
+		d.QuotaCPU = mgr.FormatCPU(st.CoresX10)
+		d.CPULimited = true
+		d.CPULimitUntil = st.Until
+	}
 	// One `incus list` call only for the container status (must be live).
 	// Bandwidth is read from the DB — the background sampler writes it every 60s.
 	st, err := s.mgr.State(u.Name)

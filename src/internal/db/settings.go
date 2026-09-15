@@ -38,6 +38,15 @@ const (
 	// newline-separated normalized domains. A blocked domain and all its
 	// subdomains are refused by AddDomain (admin-managed via the web UI).
 	SettingBlockedDomains = "blocked_domains"
+
+	// SettingCPULimitRule is the admin-managed global dynamic CPU limit rule
+	// (JSON), applied to every container. Absent = the rule is disabled.
+	SettingCPULimitRule = "cpu_limit_rule"
+
+	// SettingCPULimitActive is the JSON map of containers currently under a
+	// dynamic CPU limit (name -> {until, cores_x10}). Persisted so the limit
+	// survives a panel restart and the countdown stays accurate.
+	SettingCPULimitActive = "cpu_limit_active"
 )
 
 // GetSetting returns a settings value; ok is false when the key is absent.
