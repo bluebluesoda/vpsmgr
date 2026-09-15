@@ -74,31 +74,47 @@ var ACT={
   'reinstall':{zh:'重装系统',en:'reinstall'},
   'reset_root_password':{zh:'重置 root 密码',en:'reset root password'},
   'domain_update':{zh:'更新域名配置',en:'update domain config'},
+  'domain.add':{zh:'添加域名',en:'add domain'},
+  'domain.update':{zh:'更新域名配置',en:'update domain config'},
+  'domain.delete':{zh:'删除域名',en:'delete domain'},
   'user.create':{zh:'创建用户',en:'create user'},
   'user.delete':{zh:'删除用户',en:'delete user'},
   'passwd.change':{zh:'修改面板密码',en:'change panel password'},
   'passwd.reset':{zh:'重置面板密码',en:'reset panel password'},
   'admin.passwd':{zh:'修改管理员密码',en:'change admin password'},
   'quota.update':{zh:'修改配额',en:'update quota'},
+  'quota.expiry':{zh:'修改有效期',en:'update validity'},
   'color.update':{zh:'修改用户标识色',en:'update user color'},
   'blocked.update':{zh:'修改封禁域名列表',en:'update blocked domains'},
   'snapshot.create':{zh:'创建检查点',en:'create checkpoint'},
   'snapshot.delete':{zh:'删除检查点',en:'delete checkpoint'},
   'snapshot.restore':{zh:'恢复检查点',en:'restore checkpoint'},
+  'snapshot.share':{zh:'分享检查点',en:'share checkpoint'},
+  'snapshot.unshare':{zh:'撤销分享',en:'revoke share'},
   'session.login':{zh:'登录',en:'login'},
   'ssh_keys':{zh:'修改 SSH 密钥',en:'update SSH keys'},
   'admin.keys':{zh:'修改管理员公钥',en:'update admin public keys'},
   'init_script':{zh:'保存初始化脚本',en:'save init script'},
+  'notes.update':{zh:'保存便利贴',en:'save sticky notes'},
   'notes_reset':{zh:'重置便利贴',en:'reset sticky notes'},
+  'knowledge.create':{zh:'新建知识库文章',en:'create knowledge article'},
+  'knowledge.update':{zh:'修改知识库文章',en:'update knowledge article'},
+  'knowledge.delete':{zh:'删除知识库文章',en:'delete knowledge article'},
   'ipv6pool.add':{zh:'添加 IPv6 地址',en:'add IPv6 address'},
   'ipv6pool.del':{zh:'移除 IPv6 地址',en:'remove IPv6 address'},
   'bandwidth.reset':{zh:'重置流量统计',en:'reset bandwidth'}
 };
 function actLabel(a){
-  if(a.indexOf('session.switch.')===0){
-    var t=a.slice('session.switch.'.length);
-    return LANG==='zh'?('切换机器 → '+t):('switch container → '+t);
-  }
+  // Actions that carry a subject suffix: "<prefix><subject>".
+  var pre, rest;
+  pre='session.switch.';
+  if(a.indexOf(pre)===0){ rest=a.slice(pre.length); return LANG==='zh'?('切换机器 → '+rest):('switch container → '+rest); }
+  pre='reinstall.share.';
+  if(a.indexOf(pre)===0){ rest=a.slice(pre.length); return LANG==='zh'?('从分享安装 ← '+rest):('install from a shared checkpoint ← '+rest); }
+  pre='snapshot.share.';
+  if(a.indexOf(pre)===0){ rest=a.slice(pre.length); return LANG==='zh'?('分享检查点 '+rest):('share checkpoint '+rest); }
+  pre='quota.expire.';
+  if(a.indexOf(pre)===0){ rest=a.slice(pre.length); return LANG==='zh'?('到期停机：'+rest):('expired and stopped: '+rest); }
   var m=ACT[a]||{};return LANG==='zh'?(m.zh||a):(m.en||a);
 }
 function pad2(n){return (n<10?'0':'')+n;}

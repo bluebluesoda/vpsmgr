@@ -242,10 +242,11 @@ type SnapshotsCfg struct {
 	Limit int `yaml:"limit"`
 	// Share enables snapshot sharing: a user may publish a checkpoint behind a
 	// random code and another user may install a container by cloning it.
-	// Default true (an upgraded host gets it on). Disabling hides the user-side
+	// Default FALSE (both for new installs and upgrades): sharing hands another
+	// tenant a copy of the container's contents, so it is an explicit opt-in
+	// (`vps config set snapshots.share true`). Disabling hides the user-side
 	// entry points and refuses new shares/installs, but keeps the stored codes
-	// and leaves every container and checkpoint untouched. See
-	// `vps config set snapshots.share false`.
+	// and leaves every container and checkpoint untouched.
 	Share bool `yaml:"share"`
 }
 
@@ -268,7 +269,7 @@ func Default() *Config {
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, BandwidthResetDay: 1}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
-	c.Snapshots = SnapshotsCfg{Limit: 1, Share: true}
+	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}
 	c.CPULimit = CPULimitCfg{Enabled: false, WindowMinutes: 10, Percent: 60, Cores: 0.5, DurationHours: 2, DurationMinutes: 30}
 	return c
 }

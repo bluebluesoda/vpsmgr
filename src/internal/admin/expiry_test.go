@@ -36,6 +36,15 @@ func TestAdminExpiredUserLocked(t *testing.T) {
 		t.Fatalf("quota changed on an expired account: cpu=%d", got.CPU)
 	}
 
+	// Resetting the panel password IS allowed on an expired account.
+	rr = doReq(t, h, http.MethodPost, prefix+"/reset-panel-pass", url.Values{"name": {"alice"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expired /reset-panel-pass = %d, want 302", rr.Code)
+	}
+	if got, _ := d.GetUserByName("alice"); got.PassHash == "h" {
+		t.Fatal("admin password reset was blocked on an expired account")
+	}
+
 	// Deleting is still allowed (handled by the delete route, not locked).
 	// Extending the deadline is the other allowed operation.
 	rr = doReq(t, h, http.MethodPost, prefix+"/user-expiry",

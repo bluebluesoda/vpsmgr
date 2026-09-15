@@ -224,7 +224,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.requireAuth(s.handleOverview))
 	mux.HandleFunc("/power", s.requireAuth(s.requireActive(s.requirePost(s.handlePower))))
 	mux.HandleFunc("/reinstall", s.requireAuth(s.requireActive(s.requirePost(s.handleReinstall))))
-	mux.HandleFunc("/password", s.requireAuth(s.requireActive(s.requirePost(s.handlePanelPassword))))
+	// The panel password is deliberately NOT gated by requireActive: an expired
+	// account is locked out of its container, but it must still be able to
+	// change its own login password (the admin can also reset it).
+	mux.HandleFunc("/password", s.requireAuth(s.requirePost(s.handlePanelPassword)))
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requireActive(s.requirePost(s.handleRootReset))))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainAdd))))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainDel))))

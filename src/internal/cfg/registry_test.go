@@ -165,6 +165,11 @@ func TestAdminPassHashManagedElsewhere(t *testing.T) {
 func TestSnapshotShareAndCPULimitFields(t *testing.T) {
 	c := Default()
 
+	// Sharing is opt-in: the default is off (new installs and upgrades alike).
+	if c.Snapshots.Share {
+		t.Error("snapshots.share must default to false")
+	}
+
 	// snapshots.share: boolean toggle, junk refused.
 	if err := FieldFor("snapshots.share").Assign(c, "false"); err != nil || c.Snapshots.Share {
 		t.Fatalf("snapshots.share=false: err=%v share=%v", err, c.Snapshots.Share)

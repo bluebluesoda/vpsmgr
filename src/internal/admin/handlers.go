@@ -1024,7 +1024,7 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 	}
 	if dmn, err := s.db.GetDomainByDomain(domain); err == nil {
 		if owner, err := s.db.GetUserByID(dmn.UserID); err == nil {
-			_ = s.db.AddAuditLog("000+"+owner.Name, "domain_update")
+			_ = s.db.AddAuditLog("000+"+owner.Name, "domain.delete")
 		}
 	}
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domain_deleted", domain))

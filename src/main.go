@@ -702,6 +702,17 @@ func cmdServe() error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
+	// The config file is authoritative for the two runtime settings the panel
+	// applies itself; the DB mirrors exist only so a live `vps config set` is
+	// seen without a restart. Re-deriving them at every startup (same as
+	// `vps install` does) means a binary-only upgrade — or a hand-edited
+	// config.yaml — takes effect on restart and the mirrors can never go stale.
+	if err := m.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
+		log.Printf("warn: sync cpu limit rule mirror: %v", err)
+	}
+	if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
+		log.Printf("warn: sync snapshot share mirror: %v", err)
+	}
 	// Reconcile the traefik dynamic directory against the DB at every panel
 	// start (review P1-7/P2-11): a crash between a DB write and a file write
 	// leaves the two divergent, and the domain YAMLs are the only thing a

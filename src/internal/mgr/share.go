@@ -192,6 +192,17 @@ func (m *Manager) resolveShare(code string) (*db.User, string, error) {
 	return nil, "", errors.New("the shared checkpoint no longer exists (the owner deleted it)")
 }
 
+// ResolveShare returns the owner container and checkpoint behind a share code,
+// so callers can record where an install came from (audit) before acting. It
+// validates exactly like an install does.
+func (m *Manager) ResolveShare(code string) (owner, snap string, err error) {
+	u, snap, err := m.resolveShare(code)
+	if err != nil {
+		return "", "", err
+	}
+	return u.Name, snap, nil
+}
+
 // ReinstallFromShare rebuilds the user's container from a shared checkpoint.
 // When the code points at a checkpoint of the very container being reinstalled,
 // the operation is a plain rollback (the snapshot would be destroyed if the

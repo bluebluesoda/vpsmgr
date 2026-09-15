@@ -140,14 +140,9 @@ func TestSnapshotSharingToggleEnforced(t *testing.T) {
 	}
 	m := New(c, d)
 
-	// Default is enabled (snapshots.share defaults to true).
-	if !m.SnapshotShareEnabled() {
-		t.Fatal("sharing should default to enabled")
-	}
-	// `vps config set snapshots.share false` mirrors the toggle; the running
-	// panel sees it without a restart.
-	if err := m.SetSnapshotShareEnabled(false); err != nil {
-		t.Fatal(err)
+	// Sharing is OFF by default (both for new installs and upgrades).
+	if m.SnapshotShareEnabled() {
+		t.Fatal("sharing must default to disabled")
 	}
 	if _, _, err := m.ShareSnapshot("dave", "snap-x"); err == nil ||
 		!strings.Contains(err.Error(), "disabled") {
@@ -157,17 +152,26 @@ func TestSnapshotSharingToggleEnforced(t *testing.T) {
 		!strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("install while disabled = %v, want a disabled error", err)
 	}
+	// `vps config set snapshots.share true` mirrors the toggle; the running
+	// panel sees it without a restart. The share now reaches Incus, which is
+	// unreachable here, so the error is no longer the disabled one.
 	if err := m.SetSnapshotShareEnabled(true); err != nil {
 		t.Fatal(err)
 	}
 	if !m.SnapshotShareEnabled() {
-		t.Fatal("re-enable did not stick")
+		t.Fatal("enable did not stick")
+	}
+	if _, _, err := m.ShareSnapshot("dave", "snap-x"); err == nil ||
+		strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("share while enabled = %v, want an Incus error", err)
 	}
 }
 
 func TestReinstallFromShareUnknownCode(t *testing.T) {
 	c := cfg.Default()
 	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
+	// Sharing is opt-in: turn it on so the code is actually resolved.
+	c.Snapshots.Share = true
 	d, err := db.Open(filepath.Join(t.TempDir(), "share3.db"))
 	if err != nil {
 		t.Fatal(err)
