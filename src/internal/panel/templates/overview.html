@@ -117,6 +117,8 @@ footer a{color:var(--muted);text-decoration:underline}
 .toast.hide{opacity:0}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:99;padding:1rem}
 .overlay.show{display:flex}
+#cfmModal{z-index:150}
+#cfmText{white-space:pre-line}
  .modal{background:var(--card);border:2px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
 .imglist{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:.6rem;margin:.45rem 0 .9rem}
 .imgopt{position:relative;display:flex;flex-direction:column;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:12px;padding:.85rem .6rem .7rem;cursor:pointer;text-align:center;transition:border-color .15s,box-shadow .15s,background .15s,transform .12s}
@@ -133,6 +135,7 @@ footer a{color:var(--muted);text-decoration:underline}
 #reDesc{min-height:1.2em;margin-bottom:.65rem;font-size:.86rem;color:var(--muted)}
 .modal-wide{max-width:560px}
 .re-warn{margin-top:.7rem;text-align:center;color:var(--danger);font-weight:600;font-size:.9rem}
+.re-note{margin-top:.7rem;text-align:center;color:var(--accent);font-weight:600;font-size:.85rem}
 .keyrow{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;margin-bottom:.45rem}
 .keyrow .kact{width:1rem;height:1rem;flex:none;cursor:pointer}
 .keyrow .kname{flex:0 0 9rem;min-width:0}
@@ -446,6 +449,17 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 </div>
 
+<div class="overlay" id="cfmModal">
+<div class="modal">
+<h3 id="cfmTitle"></h3>
+<p class="muted" id="cfmText"></p>
+<div class="actions">
+<button class="btn" type="button" id="cfmNo">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+<button class="btn danger" type="button" id="cfmYes">{{if eq .Lang "zh"}}确定{{else}}Confirm{{end}}</button>
+</div>
+</div>
+</div>
+
 <div class="overlay" id="sshKeysModal">
 <div class="modal" style="max-width:560px">
 <h3>{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</h3>
@@ -615,6 +629,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <label class="muted" style="font-size:.82rem">{{if eq .Lang "zh"}}或：从分享的检查点安装（填入分享码；填了则忽略上面的系统选择）{{else}}Or: install from a shared checkpoint (enter a code; the system choice above is then ignored){{end}}</label>
 <input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
 </div>
+<div class="re-note" id="reHint" hidden>{{if eq .Lang "zh"}}已填入分享码：将从该检查点恢复，不安装上面的系统（上方系统选项已取消选中）。{{else}}Share code entered: the container will be rebuilt from that checkpoint, not from the system above (the system tiles are now unselected).{{end}}</div>
 {{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -696,6 +711,33 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var dispModal=document.getElementById('dispModal'),dispText=document.getElementById('dispText');
   function showDisp(txt){dispText.textContent=txt;dispModal.classList.add('show');}
 
+  // In-page confirmation dialog, the styled replacement for window.confirm:
+  // destructive actions now ask inside the panel instead of via a native
+  // browser popup. Returns a promise resolving to the user's choice, so a
+  // second confirmation can be chained onto the first.
+  var cfmModal=document.getElementById('cfmModal'),cfmTitle=document.getElementById('cfmTitle'),
+      cfmText=document.getElementById('cfmText'),cfmYes=document.getElementById('cfmYes'),cfmNo=document.getElementById('cfmNo');
+  window.ask=function(title,text,okLabel){
+    return new Promise(function(resolve){
+      cfmTitle.textContent=title||'';
+      cfmText.textContent=text||'';
+      cfmYes.textContent=okLabel||{{if eq .Lang "zh"}}'确定'{{else}}'Confirm'{{end}};
+      function onEsc(e){if(e.key==='Escape')done(false);}
+      function done(v){
+        cfmModal.classList.remove('show');
+        cfmYes.onclick=null;cfmNo.onclick=null;cfmModal.onclick=null;
+        document.removeEventListener('keydown',onEsc);
+        resolve(v);
+      }
+      cfmYes.onclick=function(){done(true);};
+      cfmNo.onclick=function(){done(false);};
+      cfmModal.onclick=function(e){if(e.target===cfmModal)done(false);};
+      document.addEventListener('keydown',onEsc);
+      cfmModal.classList.add('show');
+      cfmYes.focus();
+    });
+  };
+
   var reBtn=document.getElementById('reBtn'),reModal=document.getElementById('reModal'),reCancel=document.getElementById('reCancel');
   // The image list is fetched lazily when the reinstall button is clicked, not
   // on every page load. If it fails, the form submits with no image and
@@ -730,11 +772,54 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     );
   }
   var reDesc=document.getElementById('reDesc');
+  var reHint=document.getElementById('reHint');
+  var reShare=document.getElementById('reShare');
+  var defaultAlias='';
+  var descByAlias={};
+  function checkAlias(alias){
+    document.querySelectorAll('#reImgs input[name=image]').forEach(function(inp){
+      inp.checked = alias!=='' && inp.value===alias;
+    });
+  }
+  function checkedAlias(){
+    var el=document.querySelector('#reImgs input[name=image]:checked');
+    return el?el.value:'';
+  }
+  function showDesc(alias){
+    var dsc=descByAlias[alias]||{};
+    if(reDesc)reDesc.textContent=alias?((LANG==='zh'?dsc.zh:dsc.en)||''):'';
+  }
+  // A share code wins over the image choice, so entering one drops the tile
+  // highlight entirely — "nothing selected" is a real state here: the container
+  // is rebuilt from a checkpoint, not from an image. Clearing the code restores
+  // the default image.
+  function syncShareMode(){
+    if(reShare&&reShare.value.trim()!==''){
+      checkAlias('');
+      showDesc('');
+      if(reHint)reHint.hidden=false;
+      return;
+    }
+    if(reHint)reHint.hidden=true;
+    if(checkedAlias()===''&&defaultAlias)checkAlias(defaultAlias);
+    showDesc(checkedAlias());
+  }
+  // Clicking a tile is an explicit system choice: it wins, so a code still in
+  // the box is dropped rather than silently overriding the selection.
+  function onTileChange(){
+    if(reShare&&reShare.value.trim()!=='')reShare.value='';
+    if(reHint)reHint.hidden=true;
+    showDesc(checkedAlias());
+  }
+  if(reShare)reShare.addEventListener('input',syncShareMode);
   function loadImages(){
     return fetch(P+'/images',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
       var box=document.getElementById('reImgs');
       box.innerHTML='';
+      descByAlias={};
+      defaultAlias=d.default||'';
       (d.images||[]).forEach(function(img){
+        descByAlias[img.alias]={zh:img.desc_zh||'',en:img.desc_en||''};
         var l=document.createElement('label');l.className='imgopt';
         var inp=document.createElement('input');inp.type='radio';inp.name='image';inp.value=img.alias;
         if(img.alias===d.default)inp.checked=true;
@@ -743,12 +828,9 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         var nm=document.createElement('span');nm.className='imgname';nm.textContent=img.label;
         l.appendChild(inp);l.appendChild(ck);l.appendChild(ic);l.appendChild(nm);
         box.appendChild(l);
-        var show=function(){
-          if(reDesc)reDesc.textContent=(LANG==='zh')?(img.desc_zh||''):(img.desc_en||'');
-        };
-        inp.addEventListener('change',show);
-        if(inp.checked)show();
+        inp.addEventListener('change',onTileChange);
       });
+      syncShareMode();
     }).catch(function(){});
   }
   reBtn.addEventListener('click',function(){
@@ -973,37 +1055,48 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
         pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds());
     }
   });
+  function T(zh,en){return LANG==='zh'?zh:en;}
+  // Destructive/time-machine actions confirm in the panel's own dialog (ask),
+  // never with the browser's native popup.
   window.delSnap=function(n){
-    var msg=(LANG==='zh')?('删除检查点 '+n+'？此操作不可恢复。'):('Delete checkpoint '+n+'? This cannot be undone.');
-    if(confirm(msg)) submitSnap('/snapshot-del',{name:n});
+    ask(T('删除检查点','Delete checkpoint'),
+      T('删除检查点 '+n+'？此操作不可恢复。','Delete checkpoint '+n+'? This cannot be undone.'),
+      T('删除','Delete')).then(function(ok){if(ok)submitSnap('/snapshot-del',{name:n});});
   };
   window.restoreSnap=function(n){
-    var msg=(LANG==='zh')?('恢复到检查点 '+n+' 将丢失当前数据以及此后的所有检查点，确认？')
-      :('Restoring to checkpoint '+n+' loses the current data and all later checkpoints. Confirm?');
-    if(confirm(msg)) submitSnap('/snapshot-restore',{name:n});
+    ask(T('恢复检查点','Restore checkpoint'),
+      T('恢复到检查点 '+n+' 将丢失当前数据以及此后的所有检查点，确认？',
+        'Restoring to checkpoint '+n+' loses the current data and all later checkpoints. Confirm?'),
+      T('恢复','Restore')).then(function(ok){if(ok)submitSnap('/snapshot-restore',{name:n});});
   };
-  // Publish a checkpoint. Two confirmations when the publish also DELETES the
-  // older checkpoints (a clone pins its origin, so they can never be restored
-  // to again): the first explains the exposure, the second the irreversibility.
+  // Publish a checkpoint. Publishing also DELETES the older checkpoints (a clone
+  // pins its origin, so they can never be restored to again), so it asks twice
+  // when that is the case: first the exposure, then the deletion.
   window.shareSnap=function(n,ts){
     var older=0;
     document.querySelectorAll('#snapModal .snapts').forEach(function(el){
       var t=el.getAttribute('data-ts');
       if(t&&ts&&t<ts) older++;
     });
-    var m1=(LANG==='zh')?('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。确认继续？')
-      :('Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code. Continue?');
-    if(!confirm(m1))return;
+    var m1=T('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。',
+             'Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code.');
     if(older>0){
-      var m2=(LANG==='zh')?('再次确认：一旦有人据此克隆，更早的 '+older+' 个检查点将永久无法恢复，现在就会被删除。确定要分享并删除它们吗？')
-        :('Confirm again: once someone clones this, the '+older+' older checkpoint(s) can never be restored to and will be DELETED now. Share and delete them?');
-      if(!confirm(m2))return;
+      m1+='\n'+T('一旦有人据此克隆，更早的 '+older+' 个检查点将永久无法再恢复，现在就会被删除。',
+                 'Once someone clones it, the '+older+' older checkpoint(s) can never be restored to and will be DELETED now.');
     }
-    submitSnap('/snapshot-share',{name:n});
+    ask(T('分享检查点','Share checkpoint'),m1,T('继续','Continue')).then(function(ok){
+      if(!ok)return false;
+      if(older<=0)return true;
+      return ask(T('再次确认','Confirm again'),
+        T('这是第二步确认：更早的 '+older+' 个检查点现在会被删除且无法恢复，确定继续分享吗？',
+          'Second confirmation: the '+older+' older checkpoint(s) will be deleted now and cannot be recovered. Share anyway?'),
+        T('确定分享并删除','Share and delete'));
+    }).then(function(ok){if(ok)submitSnap('/snapshot-share',{name:n});});
   };
   window.unshareSnap=function(){
-    var msg=(LANG==='zh')?'撤销分享？已据此安装的容器不受影响。':'Revoke the share? Containers already installed from it are unaffected.';
-    if(confirm(msg)) submitSnap('/snapshot-unshare',{});
+    ask(T('撤销分享','Revoke share'),
+      T('撤销分享？已据此安装的容器不受影响。','Revoke the share? Containers already installed from it are unaffected.'),
+      T('撤销','Revoke')).then(function(ok){if(ok)submitSnap('/snapshot-unshare',{});});
   };
   // Create form and all destructive ops: keep the hash so the modal reopens
   // after the reload that follows the POST.
@@ -1824,14 +1917,17 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(e.key==='Enter')tryUnlock();
   });
   document.getElementById('notesForgotBtn').addEventListener('click',function(){
-    var msg=T('是否重置所有便利贴内容？（重置后无法恢复）','Reset all sticky notes? This cannot be undone.');
-    if(!confirm(msg))return;
-    fetch(P+'/notes/reset',{method:'POST',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
-      if(!d||!d.ok){toast('error',true);return;}
-      key=null;curSalt='';notes=[];localStorage.removeItem(LS_KEY);
-      showEnable();
-      toast(T('便利贴已重置','Notes reset'),false);
-    }).catch(function(){toast('error',true);});
+    ask(T('重置便利贴','Reset sticky notes'),
+      T('是否重置所有便利贴内容？（重置后无法恢复）','Reset all sticky notes? This cannot be undone.'),
+      T('重置','Reset')).then(function(ok){
+      if(!ok)return;
+      fetch(P+'/notes/reset',{method:'POST',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+        if(!d||!d.ok){toast('error',true);return;}
+        key=null;curSalt='';notes=[];localStorage.removeItem(LS_KEY);
+        showEnable();
+        toast(T('便利贴已重置','Notes reset'),false);
+      }).catch(function(){toast('error',true);});
+    });
   });
 
   // ---- boot: load the envelope and pick the state ----

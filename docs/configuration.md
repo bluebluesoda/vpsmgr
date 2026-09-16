@@ -54,12 +54,17 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
 | `snapshots.limit` | operator | restart panel | max checkpoints a user may keep per container (`0` = disable new snapshots). Restoring to an older checkpoint auto-deletes the ones created after it (see below) |
 | `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default** (new installs and upgrades alike) and CLI-only — no panel UI: `vps config set snapshots.share true`. Stored codes are kept while it is off |
-| `cpu_limit.enabled` | operator | **applied immediately** | global dynamic CPU limit (default `false`). With it on, a container that stays over `cpu_limit.percent` of its own quota for `cpu_limit.window_minutes` in a row is capped to `cpu_limit.cores` for the configured duration |
-| `cpu_limit.window_minutes` | operator | **applied immediately** | consecutive minutes over the threshold before the cap applies (`>= 1`) |
-| `cpu_limit.percent` | operator | **applied immediately** | percent of the container's **own** quota that counts as over (`1`-`100`) |
-| `cpu_limit.cores` | operator | **applied immediately** | core count the container is capped to (`0.1`-`1.0`, one-decimal time slice) |
-| `cpu_limit.duration_hours` | operator | **applied immediately** | hours the cap lasts once applied (`>= 0`) |
-| `cpu_limit.duration_minutes` | operator | **applied immediately** | additional minutes the cap lasts (`0`-`59`) |
+
+### Settings that are NOT in this file
+
+The **dynamic CPU limit rule** (cap a container to Z cores for N after it stays
+over Y% of its own quota for X minutes in a row) is edited in the **admin
+panel** (the "Dynamic CPU limit rule" card on the overview) and stored in the
+DB — it is deliberately not a `config.yaml` option and has no `vps config` key,
+because it is tuned repeatedly and must apply immediately. Saving it applies the
+new rule on the spot (any container already over the threshold is capped, and
+turning the rule off restores every capped container), and `vps install` never
+resets it.
 
 ### How "fixed at install" is enforced
 
@@ -133,14 +138,6 @@ snapshots:
   limit: 1                                # 0 disables new snapshots
   share: false                            # allow checkpoint share codes (opt-in:
                                           # install from someone's checkpoint)
-
-cpu_limit:
-  enabled: false                          # global dynamic CPU cap (default off)
-  window_minutes: 10                      # over the threshold this many minutes in a row
-  percent: 60                             # % of the container's OWN quota
-  cores: 0.5                              # cap it to this many cores (0.1..1.0)
-  duration_hours: 2                       # how long the cap lasts
-  duration_minutes: 30
 ```
 
 ## Port scheme

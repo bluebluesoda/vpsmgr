@@ -243,7 +243,12 @@ func TestAdminLogout(t *testing.T) {
 }
 
 func TestSessionStoreExpiry(t *testing.T) {
-	s := newSessionStore(10)
+	d, err := db.Open(t.TempDir() + "/sessions.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := newSessionStore(d, 10)
 	tok, err := s.create(0) // 0 days -> expires immediately
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +266,60 @@ func TestSessionStoreExpiry(t *testing.T) {
 	s.delete(tok2)
 	if s.valid(tok2) {
 		t.Fatal("deleted session should be invalid")
+	}
+
+	// The store is capped (the persistent equivalent of the old in-memory map
+	// bound): with max=3 the oldest sessions are pruned on create, so a
+	// long-lived install cannot accumulate sessions forever.
+	capped := newSessionStore(d, 3)
+	oldest, err := capped.create(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest string
+	for i := 0; i < 5; i++ {
+		newest, err = capped.create(3)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !capped.valid(newest) {
+		t.Fatal("the newest session was pruned")
+	}
+	if capped.valid(oldest) {
+		t.Fatal("the cap did not prune the oldest session")
+	}
+}
+
+// An admin session outlives the panel process: a brand-new server (a restart)
+// built over the same DB still accepts the cookie.
+func TestAdminSessionSurvivesRestart(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "restart-pass-12345")
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, srv.Handler(), prefix, "restart-pass-12345")
+
+	// Same DB and config, fresh Server/sessionStore: the restart case.
+	restarted := New(srv.cfg, d, srv.mgr)
+	rr := doReq(t, restarted.Handler(), http.MethodGet, prefix, nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("after restart, GET %s = %d, want 200 (session kept)", prefix, rr.Code)
+	}
+
+	// An admin password change still logs every other session out.
+	other := adminLogin(t, restarted.Handler(), prefix, "restart-pass-12345")
+	rr = doReq(t, restarted.Handler(), http.MethodPost, prefix+"/admin-pass",
+		url.Values{"new_password": {"Another-Pass-98765"}, "confirm_password": {"Another-Pass-98765"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin-pass = %d, want 302", rr.Code)
+	}
+	rr = doReq(t, restarted.Handler(), http.MethodGet, prefix, nil, other)
+	if rr.Code != http.StatusFound || rr.Header().Get("Location") != prefix+"/login" {
+		t.Fatalf("stale session survived a password change: %d", rr.Code)
+	}
+	rr = doReq(t, restarted.Handler(), http.MethodGet, prefix, nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("the changing session was dropped too: %d", rr.Code)
 	}
 }
 

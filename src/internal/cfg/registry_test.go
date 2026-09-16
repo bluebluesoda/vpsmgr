@@ -162,7 +162,7 @@ func TestAdminPassHashManagedElsewhere(t *testing.T) {
 	}
 }
 
-func TestSnapshotShareAndCPULimitFields(t *testing.T) {
+func TestSnapshotShareField(t *testing.T) {
 	c := Default()
 
 	// Sharing is opt-in: the default is off (new installs and upgrades alike).
@@ -181,39 +181,16 @@ func TestSnapshotShareAndCPULimitFields(t *testing.T) {
 		t.Error("snapshots.share=maybe accepted")
 	}
 
-	// cpu_limit per-field ranges.
-	bad := []struct{ key, val string }{
-		{"cpu_limit.window_minutes", "0"},
-		{"cpu_limit.percent", "101"},
-		{"cpu_limit.percent", "0"},
-		{"cpu_limit.cores", "1.5"},
-		{"cpu_limit.cores", "0.05"},
-		{"cpu_limit.duration_minutes", "60"},
-		{"cpu_limit.duration_hours", "-1"},
-	}
-	for _, tc := range bad {
-		if err := FieldFor(tc.key).Assign(c, tc.val); err == nil {
-			t.Errorf("%s=%q accepted", tc.key, tc.val)
+	// The dynamic CPU limit rule is NOT a config option: it lives in the DB and
+	// is edited in the admin panel, so no cpu_limit.* key may exist (an old
+	// config file that still carries the block is simply ignored on load).
+	for _, key := range []string{
+		"cpu_limit.enabled", "cpu_limit.window_minutes", "cpu_limit.percent",
+		"cpu_limit.cores", "cpu_limit.duration_hours", "cpu_limit.duration_minutes",
+	} {
+		if FieldFor(key) != nil {
+			t.Errorf("%s is still a config field; it must be panel-only", key)
 		}
-	}
-	if err := FieldFor("cpu_limit.cores").Assign(c, "0.5"); err != nil {
-		t.Fatalf("cores=0.5: %v", err)
-	}
-	if c.CPULimit.Cores != 0.5 {
-		t.Errorf("cores = %v, want 0.5", c.CPULimit.Cores)
-	}
-
-	// Cross-field: enabling requires a positive duration; zeroing the duration
-	// while enabled is refused.
-	c2 := Default()
-	if err := FieldFor("cpu_limit.duration_minutes").Assign(c2, "0"); err != nil {
-		t.Fatalf("duration_minutes=0 (disabled): %v", err)
-	}
-	if err := FieldFor("cpu_limit.enabled").Assign(c2, "true"); err != nil {
-		t.Fatalf("enabling with hours=2: %v", err)
-	}
-	if err := FieldFor("cpu_limit.duration_hours").Assign(c2, "0"); err == nil {
-		t.Error("zeroing the duration while enabled accepted")
 	}
 }
 

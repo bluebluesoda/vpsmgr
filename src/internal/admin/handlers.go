@@ -2,8 +2,10 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -52,9 +54,9 @@ type pageData struct {
 	PoolTotal    int
 	// AdminKeys is the operator's own SSH-key store (management panel only).
 	AdminKeys []sshKeyRow
-	// Global dynamic CPU limit rule, shown READ-ONLY (changed via
-	// `vps config set cpu_limit.*`). The Active list is the containers
-	// currently capped by it.
+	// Global dynamic CPU limit rule, edited by the card below (the DB is the
+	// single source of truth — there is no config.yaml / CLI equivalent). The
+	// Active list is the containers currently capped by it.
 	CPULimitEnabled bool
 	CPULimitMinutes int
 	CPULimitPercent int
@@ -731,6 +733,66 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
 }
 
+// handleCPULimit saves the global dynamic CPU limit rule from the admin panel's
+// card. The rule lives in the DB (it is not a config option), which is what the
+// long-running enforcement loop reads, so saving applies it on the spot: the
+// containers that already qualify are capped now, and switching the rule off (or
+// an invalid row) restores every capped container to its normal quota.
+func (s *Server) handleCPULimit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	rule, err := cpuRuleFromForm(r)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	if err := s.mgr.SetCPULimitRule(rule); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	if err := s.mgr.EnforceCPULimits(); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog("000", "cpu_limit.update")
+	s.redirect(w, r, s.p(""), s.t(r, "cpu_limit_saved"))
+}
+
+// cpuRuleFromForm reads the CPU limit card's fields. Ranges are validated by the
+// manager (the same check the enforcement loop applies), so a value the panel
+// accepts can never produce an out-of-range rule in the DB.
+func cpuRuleFromForm(r *http.Request) (mgr.CPULimitRule, error) {
+	var err error
+	rule := mgr.CPULimitRule{Enabled: r.FormValue("enabled") != ""}
+	num := func(field string) int {
+		if err != nil {
+			return 0
+		}
+		n, e := strconv.Atoi(strings.TrimSpace(r.FormValue(field)))
+		if e != nil {
+			err = fmt.Errorf("%s must be a whole number", field)
+		}
+		return n
+	}
+	rule.WindowMinutes = num("window_minutes")
+	rule.Percent = num("percent")
+	hours := num("duration_hours")
+	minutes := num("duration_minutes")
+	rule.DurationSeconds = hours*3600 + minutes*60
+	coresStr := strings.TrimSpace(r.FormValue("cores"))
+	cores, cerr := strconv.ParseFloat(coresStr, 64)
+	if err == nil && cerr != nil {
+		err = fmt.Errorf("cores must be a number")
+	}
+	if err != nil {
+		return rule, err
+	}
+	rule.CoresX10 = int(math.Round(cores * 10))
+	return rule, mgr.ValidateCPULimitRule(rule)
+}
+
 // handleLoginAs ("log in as user" / impersonation) creates a user-panel
 // session for the given username and hands the browser its cookie, dropping the
 // operator straight into that user's panel — regardless of the user's password.
@@ -1000,8 +1062,13 @@ func (s *Server) handleKnowledgeDel(w http.ResponseWriter, r *http.Request) {
 // handleKnowledgePreview renders Markdown to HTML for the editor's live
 // preview. The response is JSON: {"html": "..."}.
 func (s *Server) handleKnowledgePreview(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	// The editor sends its FormData body as multipart/form-data, which plain
+	// ParseForm ignores (it only reads urlencoded bodies) — the preview then
+	// rendered the empty string. ParseMultipartForm parses both, and returns
+	// ErrNotMultipart for a urlencoded body, which is fine.
+	if err := r.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -111,6 +111,7 @@ func tr(l, key string, args ...any) string {
 		"err_invalid_extend":    {"延期时长无效", "invalid extension duration"},
 		"quota_expiry_updated":  {"已更新 %[1]v 的有效期", "validity updated for %[1]v"},
 		"err_account_expired":   {"账户已到期，仅可延期或删除", "account expired — only extend or delete is allowed"},
+		"cpu_limit_saved":       {"CPU 动态限制规则已保存并立即生效", "dynamic CPU limit rule saved and applied now"},
 	}
 	pair, ok := m[key]
 	if !ok {

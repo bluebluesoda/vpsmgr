@@ -320,14 +320,40 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   </div>
 
   <div class="card">
-    <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局，只读）{{else}}Dynamic CPU limit rule (global, read-only){{end}}</h2>
-    {{if .CPULimitEnabled}}
-    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}容器连续 <b>{{.CPULimitMinutes}}</b> 分钟占用其配额超过 <b>{{.CPULimitPercent}}%</b> 时，限制到 <b>{{.CPULimitCores}}</b> 核，持续 <b>{{.CPULimitHours}}</b> 小时 <b>{{.CPULimitDurMin}}</b> 分钟后自动恢复原配额。配额本身不高于该核数的容器会被跳过。{{else}}When a container stays above <b>{{.CPULimitPercent}}%</b> of its quota for <b>{{.CPULimitMinutes}}</b> minutes, it is capped to <b>{{.CPULimitCores}}</b> core(s) for <b>{{.CPULimitHours}}</b>h <b>{{.CPULimitDurMin}}</b>m, then its quota is restored. Containers whose own quota is at or below that are skipped.{{end}}</p>
-    {{else}}
-    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}未启用（默认：不限制）。{{else}}Disabled (default: no limit).{{end}}</p>
-    {{end}}
-    <small style="color:#9aa0a8;display:block">{{if eq .Lang "zh"}}用 <code>vps config set cpu_limit.*</code> 修改（<code>vps config help</code> 查看各项）。面板不提供编辑入口。{{else}}Change it with <code>vps config set cpu_limit.*</code> (see <code>vps config help</code>); there is no editor in this panel.{{end}}</small>
-    <div style="margin-top:10px">
+    <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局）{{else}}Dynamic CPU limit rule (global){{end}}</h2>
+    <form action="{{.Prefix}}/cpu-limit" method="post" id="cpuForm">
+    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}容器连续 <b>X</b> 分钟占用超过自身配额的 <b>Y%</b> 时，限制到 <b>Z</b> 核，持续 <b>N</b> 后自动恢复原配额。配额本身不高于 Z 的容器会被跳过。保存后立即生效。{{else}}When a container stays above <b>Y%</b> of its own quota for <b>X</b> minutes, it is capped to <b>Z</b> core(s) for <b>N</b>, then its quota is restored. Containers whose own quota is at or below Z are skipped. Saving applies it immediately.{{end}}</p>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <input type="checkbox" name="enabled" id="cpuEnabled" {{if .CPULimitEnabled}}checked{{end}} style="width:auto">
+      <span>{{if eq .Lang "zh"}}启用（默认不限制）{{else}}Enabled (default: no limit){{end}}</span>
+    </label>
+    <div class="field-row" style="display:flex;gap:14px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:150px">
+        <label>{{if eq .Lang "zh"}}连续分钟 X{{else}}Minutes in a row X{{end}}</label>
+        <input name="window_minutes" type="number" min="1" step="1" required value="{{.CPULimitMinutes}}">
+      </div>
+      <div class="field" style="flex:1;min-width:150px">
+        <label>{{if eq .Lang "zh"}}占用阈值 Y（%，相对自身配额）{{else}}Threshold Y (% of its own quota){{end}}</label>
+        <input name="percent" type="number" min="1" max="100" step="1" required value="{{.CPULimitPercent}}">
+      </div>
+      <div class="field" style="flex:1;min-width:150px">
+        <label>{{if eq .Lang "zh"}}限制到 Z（核，0.1~1.0）{{else}}Cap to Z (cores, 0.1..1.0){{end}}</label>
+        <input name="cores" type="number" min="0.1" max="1" step="0.1" required value="{{.CPULimitCores}}">
+      </div>
+      <div class="field" style="flex:1;min-width:150px">
+        <label>{{if eq .Lang "zh"}}持续时间 N{{else}}Duration N{{end}}</label>
+        <div class="cpu-row">
+          <input name="duration_hours" type="number" min="0" step="1" required value="{{.CPULimitHours}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}小时{{else}}h{{end}}</span>
+          <input name="duration_minutes" type="number" min="0" max="59" step="1" required value="{{.CPULimitDurMin}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}分钟{{else}}m{{end}}</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存并立即生效{{else}}Save and apply now{{end}}</button>
+      <small style="color:#9aa0a8;margin-left:10px">{{if eq .Lang "zh"}}判定基于每分钟采样的 CPU 使用率，最多延迟 1 分钟生效。{{else}}Judged from the per-minute CPU samples, so it takes up to a minute to trigger.{{end}}</small>
+    </div>
+    </form>
+    <div style="margin-top:14px">
       {{if .CPULimitActive}}
       <div style="font-size:12px;color:#6b7280;margin-bottom:6px">{{if eq .Lang "zh"}}当前被限制容器{{else}}Currently limited containers{{end}}（{{len .CPULimitActive}}）</div>
       <table><thead><tr><th>{{if eq .Lang "zh"}}容器{{else}}Container{{end}}</th><th>{{if eq .Lang "zh"}}限制到{{else}}Limited to{{end}}</th><th>{{if eq .Lang "zh"}}剩余{{else}}Remaining{{end}}</th></tr></thead><tbody>
@@ -337,6 +363,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <small style="color:#9aa0a8">{{if eq .Lang "zh"}}当前没有容器被限制{{else}}No container is currently limited{{end}}</small>
       {{end}}
     </div>
+  </div>
   </div>
 </main>
 

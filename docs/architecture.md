@@ -537,6 +537,16 @@ into the kernel.
   bare, headerless 404 (no fingerprint, no auth cost).
 - Mutating actions are POST-only; sessions are 3-day HttpOnly+Secure+
   SameSite=Lax cookies; a per-IP login rate limiter.
+- Sessions are **persisted in the DB** (only the SHA-256 of the token is stored,
+  so a copy of the database cannot be replayed): user sessions in `sessions`
+  (→ `users`), admin sessions in `admin_sessions` (password-only auth, no user
+  row). A panel restart — upgrade, crash, `systemctl restart vps` — therefore no
+  longer logs either side out. Rotation still invalidates the other sessions: an
+  admin password change drops every admin session but the one that made it.
+- The **dynamic CPU limit rule** is panel-owned: it lives in the DB settings
+  table and is edited on the admin overview, not in `config.yaml` (no
+  `vps config` key either). Saving applies it immediately; `vps install` leaves
+  it alone so an upgrade never resets it.
 - The panel daemon is **unprivileged** (see "Unprivileged panel" above): Incus
   access via group membership, only whitelisted commands via sudo.
 - Containers are Incus-unprivileged with `security.nesting=true`.

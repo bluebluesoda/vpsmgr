@@ -460,12 +460,11 @@ func cmdInstall() error {
 	if err := m2.ApplyV4State(); err != nil {
 		return fmt.Errorf("apply v4 policy: %w", err)
 	}
-	// Mirror the config-owned runtime settings the panel reads live (the DB is
+	// Mirror the config-owned runtime setting the panel reads live (the DB is
 	// the channel between the CLI and the long-running panel), so an upgrade or
-	// a hand-edited config.yaml takes effect without a restart.
-	if err := m2.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
-		return fmt.Errorf("apply cpu limit rule: %w", err)
-	}
+	// a hand-edited config.yaml takes effect without a restart. The CPU limit
+	// rule is deliberately NOT touched here: it is owned by the admin panel and
+	// stored in the DB, so an install/upgrade must never reset it.
 	if err := m2.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
 		return fmt.Errorf("apply snapshot share toggle: %w", err)
 	}
@@ -485,6 +484,9 @@ func cmdInstall() error {
 				return err
 			}
 			if err := d2.SetSetting(db.SettingAdminPassHash, hash); err != nil {
+				return err
+			}
+			if err := d2.ClearAdminSessionsExcept(""); err != nil {
 				return err
 			}
 			fmt.Printf("admin panel initialized: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
@@ -702,14 +704,12 @@ func cmdServe() error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	// The config file is authoritative for the two runtime settings the panel
-	// applies itself; the DB mirrors exist only so a live `vps config set` is
-	// seen without a restart. Re-deriving them at every startup (same as
-	// `vps install` does) means a binary-only upgrade — or a hand-edited
-	// config.yaml — takes effect on restart and the mirrors can never go stale.
-	if err := m.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
-		log.Printf("warn: sync cpu limit rule mirror: %v", err)
-	}
+	// The config file is authoritative for the snapshot-share toggle; the DB
+	// mirror exists only so a live `vps config set` is seen without a restart.
+	// Re-deriving it at every startup (same as `vps install` does) means a
+	// binary-only upgrade — or a hand-edited config.yaml — takes effect on
+	// restart and the mirror can never go stale. The CPU limit rule is
+	// panel-owned (DB) and is deliberately left alone here.
 	if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
 		log.Printf("warn: sync snapshot share mirror: %v", err)
 	}
@@ -1037,21 +1037,14 @@ func configSet(args []string) error {
 	case cfg.ApplyImmediate:
 		// Config-owned runtime settings the panel reads live: write the DB mirror
 		// (the channel to the long-running panel) and apply now. No restart.
-		if strings.HasPrefix(key, "cpu_limit.") || key == "snapshots.share" {
+		if key == "snapshots.share" {
 			d, err := db.Open(c.Panel.DB)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
 			defer d.Close()
 			m := mgr.New(c, d)
-			if strings.HasPrefix(key, "cpu_limit.") {
-				if err := m.SetCPULimitRule(mgr.CPULimitRuleFromConfig(c)); err != nil {
-					return fmt.Errorf("config saved, but applying the CPU limit rule failed: %w", err)
-				}
-				if err := m.EnforceCPULimits(); err != nil {
-					return fmt.Errorf("config saved, but enforcing CPU limits failed: %w", err)
-				}
-			} else if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
+			if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
 				return fmt.Errorf("config saved, but applying the share toggle failed: %w", err)
 			}
 			fmt.Printf("%s updated and applied.\n", key)
@@ -1228,6 +1221,12 @@ func cmdAdminPasswd() error {
 	}
 	defer d.Close()
 	if err := d.SetSetting(db.SettingAdminPassHash, hash); err != nil {
+		return err
+	}
+	// Admin sessions are persisted, so a reset from the CLI must invalidate the
+	// existing ones too (a stolen or long-open session must not outlive the
+	// rotation) — the panel's own change flow does the same.
+	if err := d.ClearAdminSessionsExcept(""); err != nil {
 		return err
 	}
 	fmt.Printf("admin password reset: %s\n", pass)

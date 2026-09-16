@@ -55,7 +55,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 16
+const schemaVersion = 17
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -272,6 +272,17 @@ var migrations = []struct {
 	// an admin extends it.
 	{16, []string{
 		`ALTER TABLE users ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`,
+	}},
+	// v17: admin panel sessions move out of process memory so a panel restart
+	// (upgrade, crash, `systemctl restart vps`) no longer logs the operator out.
+	// Only the SHA-256 of the token is stored, same as user sessions. The rows
+	// carry no user reference — the admin panel authenticates with a password
+	// only — so this is a separate table from `sessions`.
+	{17, []string{
+		`CREATE TABLE IF NOT EXISTS admin_sessions(
+			token TEXT PRIMARY KEY,
+			expires_at INTEGER NOT NULL
+		)`,
 	}},
 }
 
