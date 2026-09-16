@@ -611,7 +611,11 @@ func (s *Server) handleSnapshotShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.share."+name)
-	s.redirect(w, r, s.p(""), s.t(r, "snapshot_shared", len(removed)))
+	msg := "snapshot_shared"
+	if len(removed) > 0 {
+		msg = "snapshot_shared_removed"
+	}
+	s.redirect(w, r, s.p(""), s.t(r, msg, len(removed)))
 }
 
 // handleSnapshotUnshare revokes the user's share code.

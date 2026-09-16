@@ -232,7 +232,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
-      <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}从创建起计算的有效天数，0 = 无限期{{else}}validity in days from creation; 0 = permanent{{end}}"></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}天数，0 = 无限期{{else}}days; 0 = permanent{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
         <select name="ipv6" id="cfIpv6" class="field-select">
@@ -325,13 +325,13 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局）{{else}}Dynamic CPU limit rule (global){{end}}</h2>
     <form action="{{.Prefix}}/cpu-limit" method="post" id="cpuForm">
-    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}启用后：容器连续 <b>X</b> 分钟占用超过自身配额的 <b>Y%</b> 时，限制到 <b>Z</b> 核，持续 <b>N</b> 后自动恢复原配额。配额本身不高于 Z 的容器会被跳过。{{else}}Once enabled: when a container stays above <b>Y%</b> of its own quota for <b>X</b> minutes, it is capped to <b>Z</b> core(s) for <b>N</b>, then its quota is restored. Containers whose own quota is at or below Z are skipped.{{end}}</p>
+    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}启用后：容器连续 <b>X</b> 分钟超过自身配额 <b>Y%</b> 时，限制到 <b>Z</b> 核，持续 <b>N</b> 后恢复原配额。配额不高于 Z 的容器会跳过。{{else}}Once enabled: a container that stays above <b>Y%</b> of its own quota for <b>X</b> minutes is capped to <b>Z</b> core(s) for <b>N</b>, then its quota is restored. Containers whose quota is at or below Z are skipped.{{end}}</p>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <input type="checkbox" name="enabled" id="cpuEnabled" {{if .CPULimitEnabled}}checked{{end}} style="width:auto">
       <span>{{if eq .Lang "zh"}}启用动态限制{{else}}Enable the dynamic limit{{end}}</span>
     </label>
-    <p id="cpuStateOff" class="cpu-state off" {{if .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}当前<b>未启用</b>：所有容器按各自配额运行，不做任何限制。{{else}}Currently <b>disabled</b>: every container runs on its own quota, nothing is capped.{{end}}</p>
-    <p id="cpuStateOn" class="cpu-state on" {{if not .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}当前<b>已启用</b>，保存后立即生效（判定基于每分钟采样的 CPU 使用率，最多延迟 1 分钟触发）。{{else}}Currently <b>enabled</b>; saving applies it at once (judged from the per-minute CPU samples, so it can take up to a minute to trigger).{{end}}</p>
+    <p id="cpuStateOff" class="cpu-state off" {{if .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}未启用：不限制任何容器。{{else}}Disabled: no container is capped.{{end}}</p>
+    <p id="cpuStateOn" class="cpu-state on" {{if not .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}已启用，保存后立即生效，最多延迟 1 分钟触发。{{else}}Enabled: saving applies it at once; it can take a minute to trigger.{{end}}</p>
     <div id="cpuFields" {{if not .CPULimitEnabled}}hidden{{end}}>
     <div class="field-row" style="display:flex;gap:14px;flex-wrap:wrap">
       <div class="field" style="flex:1;min-width:150px">
@@ -357,7 +357,6 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     </div>
     <div style="margin-top:12px">
       <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
-      <small style="color:#9aa0a8;margin-left:10px">{{if eq .Lang "zh"}}保存后的效果取决于上方的勾选状态。{{else}}What saving does depends on the checkbox above.{{end}}</small>
     </div>
     </form>
     <div style="margin-top:14px">
@@ -402,7 +401,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input type="number" id="planMem" min="1" step="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input type="number" id="planDisk" min="1" step="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB /月{{else}}Bandwidth GiB/mo{{end}}</label><input type="number" id="planBw" min="0" step="1" required title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限{{else}}monthly quota (up+down), 0 = unlimited{{end}}"></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input type="number" id="planDays" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}从创建起计算的有效天数，0 = 无限期{{else}}validity in days from creation; 0 = permanent{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input type="number" id="planDays" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}天数，0 = 无限期{{else}}days; 0 = permanent{{end}}"></div>
       <div class="foot" style="justify-content:flex-end">
         <button type="button" onclick="closePlan()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
         <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
@@ -426,7 +425,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>
-    <p id="quotaExpiredNote" style="display:none;color:#b91c1c;font-weight:600;margin:10px 0 0">{{if eq .Lang "zh"}}该账户已到期：仅可延期，其他配额与操作已锁定。{{else}}This account has expired: only extending is allowed; everything else is locked.{{end}}</p>
+    <p id="quotaExpiredNote" style="display:none;color:#b91c1c;font-weight:600;margin:10px 0 0">{{if eq .Lang "zh"}}该账户已到期，仅可延期。{{else}}This account has expired — only extending is allowed.{{end}}</p>
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:14px 0;">
     <form action="{{.Prefix}}/user-expiry" method="post" id="expiryForm" class="form-grid">
       <input type="hidden" name="name" id="quotaExpiryName">
@@ -438,12 +437,12 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <option value="90d">90 {{if eq .Lang "zh"}}天{{else}}days{{end}}</option>
           <option value="180d">180 {{if eq .Lang "zh"}}天{{else}}days{{end}}</option>
           <option value="custom">{{if eq .Lang "zh"}}自定义（天）{{else}}Custom (days){{end}}</option>
-          <option value="forever">{{if eq .Lang "zh"}}永久（清除到期）{{else}}Permanent (clear){{end}}</option>
+          <option value="forever">{{if eq .Lang "zh"}}永久{{else}}Permanent{{end}}</option>
         </select>
       </div>
       <div class="field" id="quotaExtendDaysWrap" style="display:none"><label>{{if eq .Lang "zh"}}自定义天数{{else}}Custom days{{end}}</label><input name="days" id="quotaExtendDays" type="number" min="1" step="1" value="30"></div>
       <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}应用延期{{else}}Apply extension{{end}}</button>
-      <small style="color:#9aa0a8;display:block">{{if eq .Lang "zh"}}新到期时间 = max(现在, 当前到期) + 所选时长{{else}}new deadline = max(now, current) + chosen duration{{end}}</small>
+      
     </form>
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:14px 0;">
     <form action="{{.Prefix}}/user-bandwidth-reset" method="post">

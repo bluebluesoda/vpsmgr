@@ -106,13 +106,13 @@ func tr(l, key string, args ...any) string {
 		"knowledge_deleted":     {"知识库文章已删除", "knowledge-base article deleted"},
 		"err_kb_title":          {"标题不能为空", "the title is required"},
 		"err_kb_content":        {"内容不能为空", "the content is required"},
-		"err_kb_too_large":      {"内容过大（上限 256 KiB）", "the content is too large (256 KiB max)"},
-		"err_invalid_days":      {"有效期天数必须是非负整数（0 = 无限期）", "validity days must be a non-negative integer (0 = permanent)"},
+		"err_kb_too_large":      {"内容超过 256 KiB", "the content exceeds 256 KiB"},
+		"err_invalid_days":      {"有效期天数必须是非负整数", "validity days must be a non-negative integer"},
 		"err_invalid_extend":    {"延期时长无效", "invalid extension duration"},
 		"quota_expiry_updated":  {"已更新 %[1]v 的有效期", "validity updated for %[1]v"},
 		"err_account_expired":   {"账户已到期，仅可延期或删除", "account expired — only extend or delete is allowed"},
-		"cpu_limit_saved":       {"CPU 动态限制规则已保存并立即生效", "dynamic CPU limit rule saved and applied now"},
-		"cpu_limit_saved_off":   {"CPU 动态限制规则已保存：当前未启用，不限制任何容器", "dynamic CPU limit rule saved — it is disabled, so no container is capped"},
+		"cpu_limit_saved":       {"规则已保存并立即生效", "rule saved and applied now"},
+		"cpu_limit_saved_off":   {"规则已保存，当前未启用", "rule saved; it is disabled"},
 	}
 	pair, ok := m[key]
 	if !ok {

@@ -290,7 +290,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="grid">
 <div class="card">
 <h2>{{if eq .Lang "zh"}}机器管理{{else}}Machine{{end}}{{if eq .State "Running"}}<span class="pill up" style="margin-left:.5rem">{{if eq .Lang "zh"}}运行中{{else}}Running{{end}}</span>{{else}}<span class="pill down" style="margin-left:.5rem">{{.State}}</span>{{end}}</h2>
-{{if .Expired}}<div class="expbanner">⚠ {{if eq .Lang "zh"}}账户已到期，机器已强制关机并锁定；除管理员延期或删除外的一切操作均被禁用。{{else}}Account expired: the container is force-stopped and locked. Everything is disabled except an admin extending or deleting it.{{end}}</div>{{else if .ExpiresSoon}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}配额即将到期，请及时延期。{{else}}Quota expiring soon — extend it in time.{{end}}</div>{{end}}
+{{if .Expired}}<div class="expbanner">⚠ {{if eq .Lang "zh"}}账户已到期，机器已关机并锁定。{{else}}Account expired: the container is stopped and locked.{{end}}</div>{{else if .ExpiresSoon}}<div class="groupbanner">⚠ {{if eq .Lang "zh"}}配额即将到期，请及时延期。{{else}}Quota expiring soon — extend it in time.{{end}}</div>{{end}}
 <div class="qgrid">
 <div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}{{if .CPULimited}} <span class="pill down" id="cpuLimitPill" data-until="{{.CPULimitUntil}}" title="{{if eq .Lang "zh"}}受管理员 CPU 动态限制规则限制，到期自动恢复原配额{{else}}capped by the admin's dynamic CPU limit rule; the normal quota returns when the countdown ends{{end}}">{{if eq .Lang "zh"}}限制中{{else}}limited{{end}} <span id="cpuLimitCount"></span></span>{{end}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
@@ -626,10 +626,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <div id="reDesc"></div>
 {{if .ShareEnabled}}
 <div class="field" style="margin-top:.6rem">
-<label class="muted" style="font-size:.82rem">{{if eq .Lang "zh"}}或：从分享的检查点安装（填入分享码；填了则忽略上面的系统选择）{{else}}Or: install from a shared checkpoint (enter a code; the system choice above is then ignored){{end}}</label>
+<label class="muted" style="font-size:.82rem">{{if eq .Lang "zh"}}或从分享的检查点安装{{else}}Or install from a shared checkpoint{{end}}</label>
 <input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
 </div>
-<div class="re-note" id="reHint" hidden>{{if eq .Lang "zh"}}已填入分享码：将从该检查点恢复，不安装上面的系统（上方系统选项已取消选中）。{{else}}Share code entered: the container will be rebuilt from that checkpoint, not from the system above (the system tiles are now unselected).{{end}}</div>
+<div class="re-note" id="reHint" hidden>{{if eq .Lang "zh"}}将从该检查点恢复，不安装系统。{{else}}Rebuilding from that checkpoint; no system is installed.{{end}}</div>
 {{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -1065,8 +1065,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   };
   window.restoreSnap=function(n){
     ask(T('恢复检查点','Restore checkpoint'),
-      T('恢复到检查点 '+n+' 将丢失当前数据以及此后的所有检查点，确认？',
-        'Restoring to checkpoint '+n+' loses the current data and all later checkpoints. Confirm?'),
+      T('恢复到 '+n+' 会丢失当前数据和此后的检查点。',
+        'Restoring to '+n+' loses the current data and every later checkpoint.'),
       T('恢复','Restore')).then(function(ok){if(ok)submitSnap('/snapshot-restore',{name:n});});
   };
   // Publish a checkpoint. Publishing also DELETES the older checkpoints (a clone
@@ -1078,24 +1078,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       var t=el.getAttribute('data-ts');
       if(t&&ts&&t<ts) older++;
     });
-    var m1=T('分享会把该检查点（包含容器内的全部数据与凭据）暴露给持有分享码的人。',
-             'Sharing exposes this checkpoint (including everything inside the container, credentials included) to whoever holds the code.');
+    var m1=T('拿到分享码的人可以读取该检查点内的全部数据，包括容器里的凭据。',
+             'Whoever holds the code can read everything in this checkpoint, including credentials inside the container.');
     if(older>0){
-      m1+='\n'+T('一旦有人据此克隆，更早的 '+older+' 个检查点将永久无法再恢复，现在就会被删除。',
-                 'Once someone clones it, the '+older+' older checkpoint(s) can never be restored to and will be DELETED now.');
+      m1+='\n'+T('分享后会删除更早的 '+older+' 个检查点。',
+                 'Sharing also deletes the '+older+' older checkpoint(s).');
     }
     ask(T('分享检查点','Share checkpoint'),m1,T('继续','Continue')).then(function(ok){
       if(!ok)return false;
       if(older<=0)return true;
-      return ask(T('再次确认','Confirm again'),
-        T('这是第二步确认：更早的 '+older+' 个检查点现在会被删除且无法恢复，确定继续分享吗？',
-          'Second confirmation: the '+older+' older checkpoint(s) will be deleted now and cannot be recovered. Share anyway?'),
-        T('确定分享并删除','Share and delete'));
+      return ask(T('确认删除','Confirm deletion'),
+        T('更早的 '+older+' 个检查点会被删除，无法恢复。',
+          'The '+older+' older checkpoint(s) will be deleted and cannot be recovered.'),
+        T('分享并删除','Share and delete'));
     }).then(function(ok){if(ok)submitSnap('/snapshot-share',{name:n});});
   };
   window.unshareSnap=function(){
     ask(T('撤销分享','Revoke share'),
-      T('撤销分享？已据此安装的容器不受影响。','Revoke the share? Containers already installed from it are unaffected.'),
+      T('已据此安装的容器不受影响。','Containers already installed from it are unaffected.'),
       T('撤销','Revoke')).then(function(ok){if(ok)submitSnap('/snapshot-unshare',{});});
   };
   // Create form and all destructive ops: keep the hash so the modal reopens
@@ -1918,7 +1918,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   });
   document.getElementById('notesForgotBtn').addEventListener('click',function(){
     ask(T('重置便利贴','Reset sticky notes'),
-      T('是否重置所有便利贴内容？（重置后无法恢复）','Reset all sticky notes? This cannot be undone.'),
+      T('所有便利贴内容会被清空。','Every sticky note will be cleared.'),
       T('重置','Reset')).then(function(ok){
       if(!ok)return;
       fetch(P+'/notes/reset',{method:'POST',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
