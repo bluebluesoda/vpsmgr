@@ -21,18 +21,42 @@ import (
 )
 
 const (
-	DefaultDataDir    = "/etc/vpsmgr"
-	DefaultNftDir     = "/etc/vpsmgr/nftables.d"
-	DefaultNftMain    = "/etc/vpsmgr/nftables.conf"
-	DefaultTraefikDir = "/etc/traefik/dynamic"
-	DefaultDB         = "/etc/vpsmgr/vpsmgr.db"
-	DefaultListen     = ":8443"
-	DefaultSubnet     = "10.115.0.0/24"
-	DefaultGateway    = "10.115.0.1"
-	DefaultBridge     = "incusbr0"
-	DefaultPool       = "vpsmgr"
-	DefaultImage      = "vpsmgr/debian-sshd"
-	DefaultImageFB    = "images:debian/13"
+	DefaultDataDir = "/etc/vpsmgr"
+	DefaultNftDir  = "/etc/vpsmgr/nftables.d"
+	DefaultNftMain = "/etc/vpsmgr/nftables.conf"
+	DefaultDB      = "/etc/vpsmgr/vpsmgr.db"
+	// DefaultProxyDir is the HAProxy layout root the panel publishes domain
+	// configs into. Layout (all under here):
+	//   haproxy.cfg          stable entry config (static, installed once)
+	//   maps/                Host/SNI maps of the CURRENT generation
+	//   dynamic/             per-domain backend fragments of the CURRENT generation
+	//   releases/<gen>/      one immutable generation (maps + dynamic + manifest)
+	//   current -> releases/<gen>
+	// VPSMGR_HAPROXY_DIR overrides it (tests only).
+	DefaultProxyDir = "/etc/haproxy"
+
+	// DefaultHaproxyBin is the absolute path of the HAProxy binary used both to
+	// run the proxy and to validate a candidate generation. It is always
+	// absolute: the validation must never pick up an unrelated build from PATH.
+	DefaultHaproxyBin = "/usr/sbin/haproxy"
+
+	// DefaultHaproxyService is the systemd unit the panel starts/stops through
+	// the sudoers whitelist (replaces traefik.service).
+	DefaultHaproxyService = "haproxy.service"
+
+	// HaproxyBranch is the HAProxy release branch the installer pins. It is the
+	// ONLY thing that has to change for a future major upgrade: the apt source
+	// path (…/performance/debian/ha34) and the version assertion are derived
+	// from it. Kept in Go as well as in the install script so the running panel
+	// can report/reject a mismatched binary.
+	HaproxyBranch  = "3.4"
+	DefaultListen  = ":8443"
+	DefaultSubnet  = "10.115.0.0/24"
+	DefaultGateway = "10.115.0.1"
+	DefaultBridge  = "incusbr0"
+	DefaultPool    = "vpsmgr"
+	DefaultImage   = "vpsmgr/debian-sshd"
+	DefaultImageFB = "images:debian/13"
 	// DefaultSocket is the Incus daemon's Unix socket; the REST client
 	// talks to it directly (no `incus` process spawn per call).
 	DefaultSocket = "/var/lib/incus/unix.socket"
@@ -140,16 +164,30 @@ type NetCfg struct {
 	ExtIF   string `yaml:"ext_if"`
 	// V4Forward controls IPv4 inbound forwarding to containers. When false
 	// (only meaningful with IPv6 pass-through enabled) containers become
-	// IPv6-only: no SSH DNAT, no user-port-block DNAT, and traefik (domains)
+	// IPv6-only: no SSH DNAT, no user-port-block DNAT, and the domain proxy
 	// is disabled — containers still reach IPv4 out via the NAT4 masquerade.
 	// Set once at install, changeable at runtime with `vps config set
 	// net.v4_forward true|false`.
 	// Deliberately NOT omitempty: false must round-trip through the config.
 	V4Forward bool `yaml:"v4_forward"`
-	// Traefik controls the optional domain reverse proxy independently of
-	// IPv4 forwarding. When false, Traefik is stopped and not enabled at boot;
-	// existing domain records are retained but new domains cannot be added.
-	Traefik bool `yaml:"traefik"`
+	// Haproxy controls the optional domain reverse proxy (HAProxy, the SNI
+	// passthrough / HTTP host router) independently of IPv4 forwarding. When
+	// false, haproxy.service is stopped and not enabled at boot; existing
+	// domain records are retained but new domains cannot be added.
+	//
+	// Renamed from `traefik` when vpsmgr moved off the Traefik proxy. The
+	// VALUE SEMANTICS ARE UNCHANGED. A config written by a Traefik-era
+	// install carries `traefik:` instead; Load() picks it up (see the
+	// LegacyTraefik field) so an upgrade keeps the previous on/off state.
+	// Save() always writes the new `haproxy:` key, so the old one disappears
+	// on the next write.
+	Haproxy bool `yaml:"haproxy"`
+	// LegacyTraefik receives the pre-rename `traefik:` key from a Traefik-era
+	// config file so Load() can honor it. It MUST stay exported (yaml.v3
+	// cannot fill unexported fields) and carry omitempty, and Load() clears it
+	// to nil so it is never written back — Save() therefore emits only the new
+	// `haproxy:` key. Do not read this field outside Load()/migration tests.
+	LegacyTraefik *bool `yaml:"traefik,omitempty"`
 	// UserPorts is the comma-separated set of inclusive user-port ranges a
 	// NEW container's whole-hundred block may be drawn from (e.g.
 	// "10000-29999", or "10000-20000, 25000-30000" for discontiguous spans).
@@ -252,7 +290,7 @@ type SnapshotsCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, BandwidthResetDay: 1}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Traefik: true, UserPorts: DefaultUserPorts}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Haproxy: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}
 	return c
@@ -269,13 +307,14 @@ func (c *Config) DataDir() string { return DefaultDataDir }
 func (c *Config) NftDir() string  { return DefaultNftDir }
 func (c *Config) NftMain() string { return DefaultNftMain }
 
-// TraefikDir is where per-domain dynamic files are written. VPSMGR_TRAEFIK_DIR
-// overrides it (used by tests to keep writes out of /etc/traefik).
-func (c *Config) TraefikDir() string {
-	if p := os.Getenv("VPSMGR_TRAEFIK_DIR"); p != "" {
+// ProxyDir is the HAProxy layout root where per-domain configs, maps and the
+// published generations live. VPSMGR_HAPROXY_DIR overrides it (used by tests
+// to keep writes out of /etc/haproxy).
+func (c *Config) ProxyDir() string {
+	if p := os.Getenv("VPSMGR_HAPROXY_DIR"); p != "" {
 		return p
 	}
-	return DefaultTraefikDir
+	return DefaultProxyDir
 }
 
 // SubnetIP returns the IP portion of the subnet CIDR.
@@ -469,6 +508,17 @@ func Load() (*Config, error) {
 			c.Net.UserPorts = ports
 		}
 	}
+	// Legacy migration: a Traefik-era config carries `traefik:` instead of
+	// `haproxy:`. The value semantics are identical, so honor it verbatim.
+	// `haproxy:` wins when BOTH keys are present (a partially migrated file, or
+	// a hand edit that added the new key before removing the old one). Clear
+	// the legacy field afterwards so Save() cannot write it back.
+	if c.Net.LegacyTraefik != nil {
+		if !hasYAMLKey(b, "haproxy") {
+			c.Net.Haproxy = *c.Net.LegacyTraefik
+		}
+		c.Net.LegacyTraefik = nil
+	}
 	if err := c.FillAuto(); err != nil {
 		return nil, err
 	}
@@ -559,12 +609,19 @@ func (c *Config) FillAuto() error {
 	if v := os.Getenv("VPSMGR_V4_FORWARD"); v != "" {
 		c.Net.V4Forward = v == "1" || strings.EqualFold(v, "true")
 	}
-	// VPSMGR_TRAEFIK (1/0/true/false) forces the Traefik domain-proxy toggle at
+	// VPSMGR_HAPROXY (1/0/true/false) forces the domain-proxy toggle at
 	// install: 00-check.sh sets it to 0 when 80/443 is already taken so the
-	// install continues with Traefik installed but DISABLED (net.traefik
+	// install continues with the proxy installed but DISABLED (net.haproxy
 	// false) instead of failing or fighting the occupant.
-	if v := os.Getenv("VPSMGR_TRAEFIK"); v != "" {
-		c.Net.Traefik = v == "1" || strings.EqualFold(v, "true")
+	// VPSMGR_TRAEFIK is the LEGACY spelling of the same knob, set by
+	// pre-rename installer versions. It is honored only as a fallback so an
+	// operator upgrading from a Traefik-era checkout with the old env var
+	// exported still gets the intended state. New code must set
+	// VPSMGR_HAPROXY; nothing in this tree exports VPSMGR_TRAEFIK anymore.
+	if v := os.Getenv("VPSMGR_HAPROXY"); v != "" {
+		c.Net.Haproxy = v == "1" || strings.EqualFold(v, "true")
+	} else if v := os.Getenv("VPSMGR_TRAEFIK"); v != "" {
+		c.Net.Haproxy = v == "1" || strings.EqualFold(v, "true")
 	}
 	// Legacy migration happens in Load (see hasYAMLKey), NOT here: Default() has
 	// already pre-filled user_ports with the full range by the time FillAuto

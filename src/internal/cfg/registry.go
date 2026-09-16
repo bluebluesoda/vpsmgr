@@ -24,7 +24,7 @@ const (
 	// takes effect (panel restart, `vps install`, next add, ...).
 	KindOperator
 	// KindRuntime is a live toggle applied immediately (net.v4_forward,
-	// net.traefik).
+	// net.haproxy).
 	KindRuntime
 	// KindAuto is written by the panel/installer only; never user-set.
 	KindAuto
@@ -261,7 +261,7 @@ var Fields = []Field{
 			return fmt.Errorf("net.gateway is fixed at install (derived from net.subnet)")
 		}},
 	{"net.v4_forward", KindRuntime, ApplyImmediate,
-		"IPv4 inbound policy: true = SSH/port-block DNAT + traefik, false = IPv6-only containers",
+		"IPv4 inbound policy: true = SSH/port-block DNAT + the domain proxy, false = IPv6-only containers",
 		"true or false",
 		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.V4Forward) }),
 		func(c *Config, v string) error {
@@ -288,16 +288,16 @@ var Fields = []Field{
 			c.Net.UserPorts = strings.Join(parts, ", ")
 			return nil
 		}},
-	{"net.traefik", KindRuntime, ApplyImmediate,
-		"Traefik domain proxy: true = running and enabled at boot, false = stopped and disabled at boot",
+	{"net.haproxy", KindRuntime, ApplyImmediate,
+		"HAProxy domain proxy: true = running and enabled at boot, false = stopped and disabled at boot (renamed from net.traefik; same values)",
 		"true or false",
-		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.Traefik) }),
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.Haproxy) }),
 		func(c *Config, v string) error {
 			b, ok := parseBool(v)
 			if !ok {
-				return fmt.Errorf("net.traefik must be true/false or 1/0")
+				return fmt.Errorf("net.haproxy must be true/false or 1/0")
 			}
-			c.Net.Traefik = b
+			c.Net.Haproxy = b
 			return nil
 		}},
 	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",

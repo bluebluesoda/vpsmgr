@@ -1,0 +1,7 @@
+# Managed by vpsmgr — generated file, do not edit by hand.
+# Changes are overwritten on the next write; use the panel / `vps` CLI instead.
+#
+# BOOTSTRAP COPY ONLY: the first generation has no domains yet, so this map is
+# empty and every request falls through to the reject backend in
+# /etc/haproxy/haproxy.cfg. The panel's publisher (internal/hpx) writes the real
+# file, containing one "<domain> <backend>" line per published domain.

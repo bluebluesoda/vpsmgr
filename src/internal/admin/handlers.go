@@ -1085,7 +1085,7 @@ func (s *Server) handleKnowledgePreview(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleDomainDel deletes a domain (admin path). It finds the owning user and
-// removes the domain + its traefik file atomically.
+// removes the domain and its published route atomically.
 func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), 400)

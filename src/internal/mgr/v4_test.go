@@ -9,7 +9,7 @@ import (
 )
 
 // TestAddDomainRejectedWhenV4Off: with v4_forward=false the domain proxy is not
-// offered, so adding a domain must be rejected before any traefik write.
+// offered, so adding a domain must be rejected before anything is published.
 func TestAddDomainRejectedWhenV4Off(t *testing.T) {
 	c := cfg.Default()
 	c.Net.V4Forward = false
@@ -27,9 +27,9 @@ func TestAddDomainRejectedWhenV4Off(t *testing.T) {
 	}
 }
 
-func TestAddDomainRejectedWhenTraefikOff(t *testing.T) {
+func TestAddDomainRejectedWhenProxyOff(t *testing.T) {
 	c := cfg.Default()
-	c.Net.Traefik = false
+	c.Net.Haproxy = false
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -40,11 +40,11 @@ func TestAddDomainRejectedWhenTraefikOff(t *testing.T) {
 	}
 	m := New(c, d)
 	if err := m.AddDomain("alice", "example.com", false); err == nil {
-		t.Fatal("AddDomain should be rejected when Traefik is disabled")
+		t.Fatal("AddDomain should be rejected when the domain proxy is disabled")
 	}
 }
 
-func TestTraefikLive(t *testing.T) {
+func TestHaproxyLive(t *testing.T) {
 	c := cfg.Default()
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -52,14 +52,14 @@ func TestTraefikLive(t *testing.T) {
 	}
 	defer d.Close()
 	m := New(c, d)
-	if !m.TraefikLive() {
-		t.Fatal("TraefikLive should fall back to the config default")
+	if !m.HaproxyLive() {
+		t.Fatal("HaproxyLive should fall back to the config default")
 	}
-	if err := d.SetSetting(db.SettingTraefik, "false"); err != nil {
+	if err := d.SetSetting(db.SettingHaproxy, "false"); err != nil {
 		t.Fatal(err)
 	}
-	if m.TraefikLive() {
-		t.Fatal("TraefikLive should read false from the DB setting")
+	if m.HaproxyLive() {
+		t.Fatal("HaproxyLive should read false from the DB setting")
 	}
 }
 

@@ -82,15 +82,16 @@ log "storage backend: $STORAGE"
 #     that is actually running. Ubuntu ships the ZFS module PREBUILT inside
 #     the kernel (linux-modules), so it needs none of the DKMS toolchain — no
 #     compile time at all.
-#   - ca-certificates: without it every curl HTTPS call (Zabbly key, traefik
-#     download, image pulls) fails with a certificate error
+#   - ca-certificates: without it every curl HTTPS call (Zabbly key, the
+#     HAProxy repository, image pulls) fails with a certificate error
 #   - python3: used by 00-ip-ask.sh (prefix/subnet validation) and the
 #     check-ipv6-support.sh probe
-#   - tar/xz-utils: traefik tarball extraction; curl: downloads; gpg: Zabbly
-#     key verification; nftables/zstd: firewall + Incus image compression
+#   - tar/xz-utils: archive extraction; curl: downloads; gpg: Zabbly key and
+#     HAProxy repository key verification; nftables/zstd: firewall + Incus image
+#     compression
 #   - sudo: hard requirement — the panel runs unprivileged and escalates ONLY
 #     the sudoers whitelist commands via `sudo -n`. Without it every
-#     privileged operation (nft reload, traefik/systemctl, IPv6 wiring, ndppd)
+#     privileged operation (nft reload, haproxy/systemctl, IPv6 wiring, ndppd)
 #     fails at runtime. visudo ships with the sudo package.
 KERNEL_REL=$(uname -r)
 BASE_DEPS="sudo ca-certificates python3 tar xz-utils nftables zstd curl gpg"
@@ -228,15 +229,16 @@ fi
 
 # --- port occupancy ---
 # Ports reserved for vpsmgr must be free on a fresh install. On adoption the
-# panel and traefik are already running and owned by vpsmgr — those listeners
+# panel and the domain proxy are already running and owned by vpsmgr — those
+# listeners
 # are excluded by process name. Checks TCP and UDP (the user port block is
 # DNAT-ed for both).
 #
 # 80/443 are handled specially: if either is already taken, the install does
-# NOT fail — it proceeds with Traefik installed but DISABLED (net.traefik
+# NOT fail — it proceeds with HAProxy installed but DISABLED (net.haproxy
 # false, not started/autostarted), so a host that already serves 80/443 is
 # still usable; the operator can re-enable later via `vps config set
-# net.traefik true`. The user-port ranges (from net.user_ports, exported by
+# net.haproxy true`. The user-port ranges (from net.user_ports, exported by
 # 00-ip-ask.sh as VPSMGR_USER_PORTS; default 10000-29999) stay hard failures.
 #
 # SSH ports (30000-31999) are deliberately NOT checked here: they are allocated
@@ -248,7 +250,11 @@ fi
 #
 # 00-check runs as a separate bash process, so its env cannot reach the rest of
 # the installer. The decision therefore goes through a root-only marker file
-# that install.sh turns into an env var for 30-traefik.sh and the panel.
+# that install.sh turns into an env var for 30-haproxy.sh and the panel.
+#
+# The marker keeps its historical name (.install-traefik-off) even though the
+# proxy is HAProxy now: an operator may run an older installer checkout that
+# reads and writes exactly this path, and the new script honors it as well.
 # Clear any stale marker from a previous run so a reinstall re-detects.
 rm -f /etc/vpsmgr/.install-traefik-off 2>/dev/null || true
 if [[ "${VPSMGR_DISABLE_V4FORWARD:-0}" == "1" ]]; then
@@ -293,11 +299,15 @@ while IFS= read -r line; do
   [[ "$PORT" =~ ^[0-9]+$ ]] || continue
   PROC=$(sed -n 's/.*users:(("\([^"]*\)".*/\1/p' <<<"$line")
   case "${PROC##*/}" in
-    vpsmgr|traefik) continue ;;
+    # A listener we own is never a conflict: on adoption/upgrade the domain
+    # proxy is already running. 'haproxy' is the current proxy, 'traefik' the
+    # pre-HAProxy one (a host that has not been upgraded yet), 'vpsmgr' the
+    # panel itself.
+    vpsmgr|traefik|haproxy) continue ;;
   esac
   if [[ "$PORT" == "80" || "$PORT" == "443" ]]; then
-    # 80/443 occupied by a non-vpsmgr process: not a hard failure — force
-    # Traefik OFF instead (still installed, kept stopped).
+    # 80/443 occupied by a non-vpsmgr process: not a hard failure — force the
+    # domain proxy OFF instead (still installed, kept stopped).
     PORT_80_443_TAKEN=1
     PORT_80_443_PROC="${PROC:-unknown process}"
     continue
@@ -313,19 +323,23 @@ $CONFLICTS
 Free these ports (or remove the programs above) and re-run install."
 fi
 if [[ "$PORT_80_443_TAKEN" == "1" ]]; then
-  # Belt-and-suspenders for update/adoption: the scan already skips traefik's
+  # Belt-and-suspenders for update/adoption: the scan already skips our proxy's
   # own listeners by process name, but if `ss` could not attribute the listener
-  # (PROC empty) while OUR traefik is already active, that active traefik is
-  # what holds 80/443 — do not misread it as a third-party conflict and turn
-  # our own proxy off.
-  if systemctl is-active --quiet traefik.service 2>/dev/null; then
-    log "80/443 held by the running vpsmgr traefik — keeping traefik enabled (no force-off)"
+  # (PROC empty) while OUR proxy is already active, that active proxy is what
+  # holds 80/443 — do not misread it as a third-party conflict and turn our own
+  # domain proxy off. Both service names are checked: 'haproxy' now, 'traefik'
+  # on a host that has not run the upgraded installer yet.
+  if systemctl is-active --quiet haproxy.service 2>/dev/null \
+     || systemctl is-active --quiet traefik.service 2>/dev/null; then
+    log "80/443 held by the running vpsmgr domain proxy — keeping it enabled (no force-off)"
   else
     mkdir -p /etc/vpsmgr
+    # The marker keeps its historical name: an older installer checkout still
+    # writes and reads this exact path, and the new one honors it too.
     touch /etc/vpsmgr/.install-traefik-off
     log "port 80 and/or 443 is in use (${PORT_80_443_PROC}) — will NOT fail;"
-    log "traefik will be installed but DISABLED (net.traefik false, not started/autostarted)."
-    log "re-enable later with: vps config set net.traefik true"
+    log "the domain proxy will be installed but DISABLED (net.haproxy false, not started/autostarted)."
+    log "re-enable later with: vps config set net.haproxy true"
   fi
 else
   log "reserved ports are free"

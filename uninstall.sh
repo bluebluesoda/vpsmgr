@@ -9,7 +9,10 @@ if [[ "${1:-}" == "--purge" ]]; then PURGE=1; fi
 log(){ echo "[un] $*"; }
 
 log "stopping services..."
-for svc in vps vps-nft vps-ipv6 traefik; do
+# 'traefik' is listed for historical installs: a host that never ran the
+# HAProxy-era installer still has that unit, and uninstall must converge from
+# any version.
+for svc in vps vps-nft vps-ipv6 haproxy traefik; do
   systemctl disable --now "$svc.service" >/dev/null 2>&1 || true
 done
 systemctl daemon-reload >/dev/null 2>&1 || true
@@ -63,16 +66,24 @@ if [[ -n "$V6SUBNET" ]]; then
 fi
 
 log "removing files..."
+# Both proxy binaries are removed: /usr/local/bin/traefik for a host that never
+# ran the HAProxy-era installer, and the HAProxy package itself is purged in
+# the --purge branch below (see the apt handling there).
 rm -f /usr/local/bin/vps /usr/local/bin/traefik
-rm -f /etc/systemd/system/vps.service /etc/systemd/system/vps-nft.service /etc/systemd/system/vps-ipv6.service /etc/systemd/system/traefik.service
+rm -f /etc/systemd/system/vps.service /etc/systemd/system/vps-nft.service /etc/systemd/system/vps-ipv6.service
+rm -f /etc/systemd/system/haproxy.service /etc/systemd/system/traefik.service
 # Restore the host-wide io_uring clamp to the kernel default before dropping
 # 99-vpsmgr.conf (which sets it to 1 at install time).
 sysctl -w kernel.io_uring_disabled=0 >/dev/null 2>&1 || true
 rm -f /etc/sysctl.d/99-vpsmgr.conf
 nft delete table inet vpsmgr 2>/dev/null || true
-# /etc/vpsmgr (config/db/certs) and /etc/traefik are deliberately KEPT here:
-# without --purge, a reinstall should adopt the existing users/domains/settings.
-log "  kept /etc/vpsmgr and /etc/traefik (reinstall will adopt them)"
+# /etc/vpsmgr (config/db/certs), /etc/haproxy (the published proxy generations
+# and the static entry config) and /etc/traefik (a pre-HAProxy install's config)
+# are deliberately KEPT here: without --purge a reinstall should adopt the
+# existing users/domains/settings without republishing everything by hand.
+# The HAProxy PACKAGE is kept too on a plain uninstall, so a reinstall needs no
+# network round trip; --purge removes it below.
+log "  kept /etc/vpsmgr, /etc/haproxy and /etc/traefik (reinstall will adopt them)"
 
 # Remove the panel's privilege surface even on a plain uninstall (review
 # P2-10): a leftover /etc/sudoers.d/vps grants the vps user root-level nft /
@@ -98,8 +109,15 @@ if getent group traefik >/dev/null 2>&1; then
 fi
 
 if [[ $PURGE -eq 1 ]]; then
-  log "purging vpsmgr config/db/certs and traefik config..."
-  rm -rf /etc/vpsmgr /etc/traefik
+  log "purging vpsmgr config/db/certs, the HAProxy layout and any traefik config..."
+  rm -rf /etc/vpsmgr /etc/haproxy /etc/traefik
+  # The HAProxy package is removed here (not on a plain uninstall): purging the
+  # apt source and key as well leaves no vendor repository behind.
+  if dpkg -s haproxy-awslc >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq haproxy-awslc >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/apt/sources.list.d/haproxy.list /usr/share/keyrings/HAPROXY-key-community.asc
+  apt-get update -qq >/dev/null 2>&1 || true
   if command -v incus >/dev/null 2>&1; then
     log "purging Incus instances..."
     for c in $(incus list --format=csv -c n 2>/dev/null); do

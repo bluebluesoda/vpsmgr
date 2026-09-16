@@ -10,7 +10,7 @@ ports, bridges, UFW, and firewall rules have been checked. For a host that must
 keep other public services and only needs IPv6 inbound access, install with
 `./install.sh --disable-v4forward`; this requires an explicit confirmation,
 skips vpsmgr's reserved-port check, writes `net.v4_forward=false`, and leaves
-Traefik installed but stopped.
+HAProxy installed but stopped.
 
 **Editing config.yaml by hand is discouraged.** The sanctioned interface is
 `vps config list` / `vps config set` / `vps config help`, which validate every
@@ -40,8 +40,8 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
 | `net.user_ports` | operator | next `vps add` / reinstall | user-port ranges a **new** container's 100-port block is drawn from; comma-separated inclusive ranges (e.g. `10000-29999` = 200 containers, or `10000-20000, 25000-30000`); auto-aligned to whole hundreds; affects **new containers only** — existing ones keep their ports |
-| `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
-| `net.traefik` | runtime toggle | **applied immediately** | false = stop and disable Traefik; existing domains are retained, but new domains cannot be added |
+| `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, domain proxy disabled, NAT4 outbound kept) |
+| `net.haproxy` | runtime toggle | **applied immediately** | false = stop and disable HAProxy; existing domains are retained, but new domains cannot be added. **Renamed from `net.traefik`** — same values; an old key is read and rewritten under the new name |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
@@ -82,11 +82,12 @@ edit by hand` banner and are **overwritten on the next write**:
 |---|---|
 | `/etc/vpsmgr/nftables.conf` | `vps install` |
 | `/etc/vpsmgr/nftables.d/user-<name>.nft` | `vps add` / quota / firewall updates |
-| `/etc/traefik/traefik.yaml` | install (from `configs/traefik.yaml`); only written when absent — existing installs keep theirs |
-| `/etc/traefik/dynamic/<domain>.yaml` | domain add/update/delete |
+| `/etc/haproxy/haproxy.cfg` | install (from `configs/haproxy/haproxy.cfg`); static entry config, never rewritten by the panel |
+| `/etc/haproxy/releases/<gen>/{domains.cfg,maps/*.map,manifest}` | domain add/update/delete (a new immutable generation) |
+| `/etc/haproxy/current` | domain add/update/delete (symlink to the generation in service) |
 | `/etc/ndppd.conf` | IPv6 pass-through updates |
 | `/etc/sysctl.d/99-vpsmgr.conf` | `vps install` |
-| systemd units (`vps`/`vps-nft`/`vps-ipv6`, `traefik`) | `vps install` |
+| systemd units (`vps`/`vps-nft`/`vps-ipv6`, `haproxy`) | `vps install` |
 
 ## Example
 
@@ -108,7 +109,8 @@ net:
   subnet: "10.115.0.0/24"      # container subnet 10.<n>.0.0/24 — only the second octet is settable, at install
   gateway: "10.115.0.1"
   v4_forward: true             # IPv4 inbound policy (false = IPv6-only containers)
-  traefik: true                # domain reverse proxy (false = stopped and not enabled at boot)
+  haproxy: true                # domain reverse proxy (false = stopped and not enabled at boot);
+                               # renamed from `traefik` — a pre-rename key is adopted as-is
   ext_if: AUTO                 # external NIC, auto-detected from the default route
   ipv6_mode: ""                # IPv6 allocation mode: none / prefix / pool (fixed at install)
   ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
@@ -196,34 +198,72 @@ Always enabled by default — the installer does not ask (with IPv6 off, IPv4
 forwarding is mandatory, as containers would otherwise be unreachable).
 
 - `true` (default): containers get the random SSH port + user port block (DNAT),
-  and the domain proxy (traefik) is available.
+  and the domain proxy (HAProxy) is available.
 - `false`: containers are **IPv6-only**. No SSH DNAT, no port-block DNAT, and
-  traefik is stopped (domains are kept but not served; adding a domain is
+  HAProxy is stopped (domains are kept but not served; adding a domain is
   rejected until re-enabled). Containers still reach IPv4 outbound via the NAT4
   masquerade.
 
 Toggle at runtime with `vps config set net.v4_forward true|false` — the rules
-are refreshed and traefik started/stopped immediately (its boot autostart is
+are refreshed and HAProxy started/stopped immediately (its boot autostart is
 disabled along with it, so it cannot come back on reboot). The SSH/user ports
 stay recorded in the DB, so turning it back on restores everything. The user
 panel hides IPv4 inbound info and shows "v4 SSH unavailable" while off, and
 **domain-add is blocked while off** — the add form is hidden and the handler
 rejects it (the panel reads the toggle live from the DB, no restart needed).
 
-## Traefik (`net.traefik`)
+## Domain proxy (`net.haproxy`)
 
-`net.traefik` independently controls the Traefik domain reverse proxy. It is
-enabled by default. Set it with `vps config set net.traefik false` to stop
-Traefik and disable its boot autostart. Existing domain records and files are
-kept, but users cannot add new domains while it is disabled. Re-enabling the
-setting starts Traefik, restores autostart, and synchronizes the domain files.
+`net.haproxy` independently controls the HAProxy domain reverse proxy. It is
+enabled by default. Set it with `vps config set net.haproxy false` to stop
+HAProxy and disable its boot autostart. Existing domain records and the
+published configuration are kept, but users cannot add new domains while it is
+disabled. Re-enabling the setting starts HAProxy, restores autostart, and
+republishes the configuration from the database.
+
+> **Upgrading from a Traefik-era install.** This key used to be called
+> `net.traefik`. The **values are identical** (`true` = running and enabled at
+> boot, `false` = stopped and disabled), and the rename is handled
+> automatically:
+>
+> - a `config.yaml` carrying `traefik:` is read as `net.haproxy` (the new key
+>   wins if both are somehow present), and the next save rewrites only the new
+>   key;
+> - the DB runtime mirror (`settings.traefik`) is moved to `settings.haproxy`
+>   by schema migration v18, keeping the stored value;
+> - the installer still honors `VPSMGR_TRAEFIK` as a fallback for
+>   `VPSMGR_HAPROXY` (an older checkout exports the old name);
+> - `install.sh` removes the Traefik program, unit and service account and
+>   republishes the domains onto HAProxy, keeping only
+>   `/etc/traefik/traefik.yaml` (inert).
+>
+> There is no rollback to Traefik: HAProxy is the only proxy the panel knows.
 
 **Install-time auto-off:** if port `80` or `443` is already bound by a
 non-vpsmgr process during `install.sh`, the installer does **not** fail. Instead
-it proceeds with Traefik installed but `net.traefik: false` (not started, no
+it proceeds with HAProxy installed but `net.haproxy: false` (not started, no
 boot autostart), so a host that already serves 80/443 stays usable. The
-`00-check.sh` port-occupancy scan reports it and installs Traefik disabled;
-re-enable later with `vps config set net.traefik true`.
+`00-check.sh` port-occupancy scan reports it and installs the proxy disabled;
+re-enable later with `vps config set net.haproxy true`.
+
+### HAProxy layout and version
+
+The proxy itself is HAProxy **3.4 LTS**, installed from the official HAProxy
+performance packages (`haproxy-awslc`) for the host's distribution. The panel
+pins the **branch** (3.4), not the patch: `install.sh` and
+`upgrade-haproxy.sh` keep the newest patch of that branch, and
+`install.sh --update` moves the panel and the proxy together. A branch change
+is a deliberate migration — update `HAPROXY_BRANCH` / `HAPROXY_REPO_SLUG` /
+`HAPROXY_BRANCH_RE` in `scripts/30-haproxy.sh` and `upgrade-haproxy.sh`, plus
+`cfg.HaproxyBranch`, then re-run `install.sh`.
+
+| Path | Written by |
+|---|---|
+| `/etc/haproxy/haproxy.cfg` | install (static entry config; the unit loads it first and `current/domains.cfg` second) |
+| `/etc/haproxy/current` | panel — symlink to the generation in service |
+| `/etc/haproxy/releases/<gen>/` | panel — one immutable generation (three kept) |
+| `/etc/haproxy/generation` | panel — counter of the last published generation |
+| `/etc/systemd/system/haproxy.service` | install (overrides the distribution's unit) |
 
 ## Port 25 (SMTP) is always blocked
 
