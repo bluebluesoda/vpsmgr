@@ -1,8 +1,11 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -37,6 +40,33 @@ func TestKnowledgeAdminCRUD(t *testing.T) {
 	}
 	if !strings.Contains(pv.HTML, "<h1>Hi</h1>") || !strings.Contains(pv.HTML, "<code>x</code>") {
 		t.Fatalf("preview html = %q", pv.HTML)
+	}
+
+	// The browser posts the editor body as multipart/form-data (a fetch with a
+	// FormData body). ParseForm alone ignores multipart bodies, which silently
+	// rendered the preview empty — assert the multipart path works.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("content", "# Multi\n\n`y`"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, prefix+"/knowledge-preview", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.AddCookie(cookie)
+	mrr := httptest.NewRecorder()
+	h.ServeHTTP(mrr, req)
+	if mrr.Code != http.StatusOK {
+		t.Fatalf("multipart preview = %d (%s)", mrr.Code, mrr.Body.String())
+	}
+	pv.HTML = ""
+	if err := json.Unmarshal(mrr.Body.Bytes(), &pv); err != nil {
+		t.Fatalf("multipart preview JSON: %v", err)
+	}
+	if !strings.Contains(pv.HTML, "<h1>Multi</h1>") || !strings.Contains(pv.HTML, "<code>y</code>") {
+		t.Fatalf("multipart preview html = %q", pv.HTML)
 	}
 
 	// An empty title is refused.

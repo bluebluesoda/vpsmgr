@@ -36,44 +36,38 @@ func TestValidateCPULimitRule(t *testing.T) {
 	}
 }
 
-func TestCPULimitRuleFromConfig(t *testing.T) {
-	c := cfg.Default()
-	c.CPULimit = cfg.CPULimitCfg{
-		Enabled: true, WindowMinutes: 3, Percent: 25,
-		Cores: 0.2, DurationHours: 1, DurationMinutes: 5,
-	}
+func TestCPULimitRuleDefaultAndStore(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "rule.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	m := New(c, d)
+	m := New(cfg.Default(), d)
 
-	want := CPULimitRule{Enabled: true, WindowMinutes: 3, Percent: 25, CoresX10: 2, DurationSeconds: 3600 + 300}
-	if got := m.CPULimitRule(); got != want {
-		t.Fatalf("CPULimitRule() = %+v, want %+v", got, want)
+	// A fresh DB has the disabled prefill the panel shows (10/60%/0.5/2h30m).
+	got := m.CPULimitRule()
+	if got != DefaultCPULimitRule() {
+		t.Fatalf("default rule = %+v, want %+v", got, DefaultCPULimitRule())
 	}
-	if err := ValidateCPULimitRule(m.CPULimitRule()); err != nil {
-		t.Fatalf("config-derived rule should validate: %v", err)
-	}
-	// The mirror (written by `vps config set`) takes precedence over the file.
-	mirror := CPULimitRule{Enabled: true, WindowMinutes: 1, Percent: 90, CoresX10: 1, DurationSeconds: 60}
-	if err := m.SetCPULimitRule(mirror); err != nil {
-		t.Fatal(err)
-	}
-	if got := m.CPULimitRule(); got != mirror {
-		t.Fatalf("mirrored rule not used: %+v", got)
-	}
-	// The default config is the disabled 10/60/0.5/2h30m rule (fresh DB).
-	d2, err := db.Open(filepath.Join(t.TempDir(), "rule2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d2.Close()
-	m2 := New(cfg.Default(), d2)
-	got := m2.CPULimitRule()
 	if got.Enabled || got.WindowMinutes != 10 || got.Percent != 60 || got.CoresX10 != 5 || got.DurationSeconds != 9000 {
 		t.Fatalf("default rule = %+v", got)
+	}
+
+	// The admin panel saves the rule (the DB is the single source of truth); a
+	// second manager over the same DB sees it, so a panel restart keeps it.
+	saved := CPULimitRule{Enabled: true, WindowMinutes: 3, Percent: 25, CoresX10: 2, DurationSeconds: 3600 + 300}
+	if err := m.SetCPULimitRule(saved); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.CPULimitRule(); got != saved {
+		t.Fatalf("stored rule not used: %+v", got)
+	}
+	if got := New(cfg.Default(), d).CPULimitRule(); got != saved {
+		t.Fatalf("rule did not survive a new manager: %+v", got)
+	}
+	// Out-of-range values are refused before they reach the DB.
+	if err := m.SetCPULimitRule(CPULimitRule{WindowMinutes: 1, Percent: 101, CoresX10: 5}); err == nil {
+		t.Error("out-of-range rule accepted")
 	}
 }
 

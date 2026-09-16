@@ -39,10 +39,10 @@ const (
 	// subdomains are refused by AddDomain (admin-managed via the web UI).
 	SettingBlockedDomains = "blocked_domains"
 
-	// SettingCPULimitRule mirrors the `cpu_limit.*` config values so the
-	// long-running panel applies a `vps config set cpu_limit.…` immediately
-	// (its in-memory config is only loaded at startup). The config file stays
-	// authoritative; this is the live channel, refreshed on set and on install.
+	// SettingCPULimitRule is the global dynamic CPU limit rule (JSON), set in
+	// the admin panel. This row IS the source of truth — the rule is not a
+	// config.yaml option — so the enforcement loop reads it every tick and a
+	// save in the panel applies immediately. `vps install` leaves it alone.
 	SettingCPULimitRule = "cpu_limit_rule"
 
 	// SettingCPULimitActive is the JSON map of containers currently under a
@@ -51,7 +51,8 @@ const (
 	SettingCPULimitActive = "cpu_limit_active"
 
 	// SettingSnapshotShareEnabled mirrors `snapshots.share` so the panel sees a
-	// `vps config set snapshots.share` without a restart. Absent = enabled.
+	// `vps config set snapshots.share` without a restart. Absent = disabled
+	// (sharing is opt-in).
 	SettingSnapshotShareEnabled = "snapshot_share_enabled"
 )
 

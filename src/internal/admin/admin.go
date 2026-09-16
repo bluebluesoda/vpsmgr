@@ -30,13 +30,14 @@ type Server struct {
 	flash    *flashStore
 }
 
-// New builds the admin server. maxSessions bounds the in-memory session map.
+// New builds the admin server. maxSessions caps how many persisted admin
+// sessions may exist at once.
 func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
 	return &Server{
 		cfg:      c,
 		db:       d,
 		mgr:      m,
-		sessions: newSessionStore(2048),
+		sessions: newSessionStore(d, 2048),
 		limiter:  newLoginLimiter(),
 		flash:    newFlashStore(),
 	}
@@ -84,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	// its container is locked); the user can also change it themselves.
 	mux.HandleFunc("/reset-panel-pass", s.requireAuth(s.requirePost(s.handleResetPanelPass)))
 	mux.HandleFunc("/admin-pass", s.requireAuth(s.requirePost(s.handleAdminPass)))
+	mux.HandleFunc("/cpu-limit", s.requireAuth(s.requirePost(s.handleCPULimit)))
 	mux.HandleFunc("/keys", s.requireAuth(s.requirePost(s.handleAdminKeys)))
 	mux.HandleFunc("/login-as", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleLoginAs))))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))

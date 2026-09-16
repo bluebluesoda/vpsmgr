@@ -4,19 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
-	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 )
 
-// CPULimitRule is the global dynamic CPU limit rule, configured under
-// `cpu_limit.*` in config.yaml (`vps config set cpu_limit.…`). It applies to
-// every container: when a container keeps its CPU usage above Percent of its
-// own quota for WindowMinutes in a row, it is capped to CoresX10 tenths of a
-// core (the same time-slice semantics as a fractional quota) for
-// DurationSeconds, then its normal quota is restored.
+// CPULimitRule is the global dynamic CPU limit rule, set in the admin panel
+// (stored in the DB settings table, which is the single source of truth — it is
+// not a config.yaml option). It applies to every container: when a container
+// keeps its CPU usage above Percent of its own quota for WindowMinutes in a
+// row, it is capped to CoresX10 tenths of a core (the same time-slice semantics
+// as a fractional quota) for DurationSeconds, then its normal quota is
+// restored.
 type CPULimitRule struct {
 	Enabled         bool
 	WindowMinutes   int // consecutive minutes over the threshold
@@ -32,8 +31,8 @@ type CPULimitState struct {
 }
 
 // ValidateCPULimitRule rejects out-of-range rule parameters, so the enforcement
-// loop only ever acts on a sane rule (the config registry guarantees it on set;
-// this is the belt-and-braces check for a hand-edited config file).
+// loop only ever acts on a sane rule (the admin panel validates on save; this is
+// the belt-and-braces check for a row written by something else).
 func ValidateCPULimitRule(r CPULimitRule) error {
 	if r.WindowMinutes < 1 {
 		return errors.New("window must be at least 1 minute")
@@ -53,32 +52,31 @@ func ValidateCPULimitRule(r CPULimitRule) error {
 	return nil
 }
 
-// CPULimitRuleFromConfig derives the rule from the config file (`cpu_limit.*`).
-func CPULimitRuleFromConfig(c *cfg.Config) CPULimitRule {
-	cl := c.CPULimit
+// DefaultCPULimitRule is the rule a host starts with: disabled, with the
+// parameters prefilled the way the panel shows them (10 minutes over 60% of the
+// quota → 0.5 core for 2h30m).
+func DefaultCPULimitRule() CPULimitRule {
 	return CPULimitRule{
-		Enabled:         cl.Enabled,
-		WindowMinutes:   cl.WindowMinutes,
-		Percent:         cl.Percent,
-		CoresX10:        int(math.Round(cl.Cores * 10)),
-		DurationSeconds: cl.DurationHours*3600 + cl.DurationMinutes*60,
+		Enabled:         false,
+		WindowMinutes:   10,
+		Percent:         60,
+		CoresX10:        5,
+		DurationSeconds: 2*3600 + 30*60,
 	}
 }
 
-// CPULimitRule returns the live rule: the DB mirror written by `vps config set`
-// (and `vps install`), falling back to the config file when the mirror is
-// unset. The config file stays authoritative; the mirror is what lets the
-// long-running panel see a change without a restart (same pattern as
-// net.v4_forward).
+// CPULimitRule returns the live rule. The DB is authoritative: the admin panel
+// writes it (SetCPULimitRule) and the enforcement loop reads it here, so a save
+// takes effect on the next tick without a restart.
 func (m *Manager) CPULimitRule() CPULimitRule {
 	if r, ok, err := m.mirroredCPULimitRule(); err == nil && ok {
 		return r
 	}
-	return CPULimitRuleFromConfig(m.cfg)
+	return DefaultCPULimitRule()
 }
 
-// SetCPULimitRule writes the mirror so the running panel applies the rule
-// immediately. Called by `vps config set cpu_limit.*` and by `vps install`.
+// SetCPULimitRule persists the rule. Called by the admin panel's CPU limit card
+// (and by `vps install`, which leaves an existing rule alone).
 func (m *Manager) SetCPULimitRule(r CPULimitRule) error {
 	if err := ValidateCPULimitRule(r); err != nil {
 		return err
@@ -152,7 +150,7 @@ func (m *Manager) EnforceCPULimits() error {
 	defer m.cpuLimitMu.Unlock()
 
 	rule := m.CPULimitRule()
-	// A hand-edited config can carry an out-of-range rule: treat it as disabled
+	// A malformed row can carry an out-of-range rule: treat it as disabled
 	// (never trigger; restore anything active) instead of acting on it.
 	if err := ValidateCPULimitRule(rule); err != nil {
 		rule.Enabled = false
