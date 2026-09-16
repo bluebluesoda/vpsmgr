@@ -35,7 +35,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
 | `panel.show_footer` | operator | restart panel | user panel footer with project link and installed/build version; `false` hides the entire footer |
-| `panel.bandwidth_reset_day` | operator | restart panel | day of month the monthly bandwidth quota resets, `1`-`28` (28 keeps February safe); default `1` |
+| `panel.bandwidth_reset_day` | operator | restart panel — **discards stored state** | day of month the monthly bandwidth quota resets, `1`-`28` (28 keeps February safe); default `1`. **Changing it wipes every user's accumulated traffic totals** — see below |
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
@@ -100,7 +100,9 @@ panel:
   public_ip: AUTO              # NIC IPv4 used by the firewall / routing; on NAT-ing clouds (AWS/Alibaba) this is a private address
   display_ip: AUTO             # address shown to users (panel URL, SSH hints); any string without spaces (IP or domain); auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3              # login session lifetime (days)
-  bandwidth_reset_day: 1       # day of month the monthly bandwidth quota resets (1-28)
+  bandwidth_reset_day: 1       # day of month the monthly bandwidth quota resets (1-28).
+                               # CHANGING IT WIPES every user's accumulated traffic totals.
+                               # `vps config set` asks for confirmation.
   url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
   admin_url_path: AUTO         # random secret path of the admin panel; do not change after first install
   admin_pass_hash: AUTO        # bcrypt hash of the admin password — stored in the DB, not in this file
@@ -264,6 +266,28 @@ is a deliberate migration — update `HAPROXY_BRANCH` / `HAPROXY_REPO_SLUG` /
 | `/etc/haproxy/releases/<gen>/` | panel — one immutable generation (three kept) |
 | `/etc/haproxy/generation` | panel — counter of the last published generation |
 | `/etc/systemd/system/haproxy.service` | install (overrides the distribution's unit) |
+
+## Monthly bandwidth reset day (`panel.bandwidth_reset_day`)
+
+The quota period runs from the configured day of one month to that day of the
+next (default `1` = calendar months). The user panel shows which reset applies
+to the period in force, including which month it falls in — with the reset day
+set to the 22nd and today the 16th, the period ends on the **22nd of this
+month**, because it started on the 22nd of the previous one.
+
+> **Changing this setting discards every user's accumulated bandwidth totals.**
+> The accumulated counters are keyed by an accounting period derived from this
+> day, so moving the day moves the period key, and the next sampler pass sees
+> "a new period" and starts from zero. Any over-quota throttle is lifted as a
+> side effect, and past totals are not recoverable — setting the day back does
+> not bring them back.
+>
+> This is why the key is classified as destructive: `vps config set
+> panel.bandwidth_reset_day <n>` asks for an explicit confirmation describing
+> the loss (and repeats it when the change is saved with `--no-apply`, since
+> then it lands at the next panel restart instead). To reset ONE user's traffic
+> on purpose, use the admin panel's "重置流量统计" button instead — that is
+> the supported, per-user operation.
 
 ## Port 25 (SMTP) is always blocked
 
