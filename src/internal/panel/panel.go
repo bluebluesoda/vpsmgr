@@ -167,30 +167,35 @@ type pageData struct {
 	BandwidthUsedGB   string // used this month (GB, 1 decimal) — only set when limited
 	BandwidthPct      int    // used/quota * 100, clamped to 100
 	BandwidthResetDay int    // day of month the bandwidth period resets (1-28)
-	Throttled         bool   // over quota: NIC limited to 1Mbps
-	ExpiresAt         string // quota validity deadline (RFC3339 UTC), "" = permanent
-	Expired           bool   // deadline passed: account locked to read-only
-	ExpiresSoon       bool   // within 72h of the deadline
-	CPULimited        bool   // under the admin's dynamic CPU limit
-	CPULimitUntil     int64  // unix seconds the dynamic CPU limit expires
-	Domains           []domainRow
-	QuotaCPU          string
-	QuotaMem          string
-	QuotaDisk         string
-	CPUUse            string // 5-minute CPU average ("12%" or "-")
-	MemUse            string // latest sampled memory usage ("345 MiB" or "-")
-	DiskUsed          string // latest sampled disk usage ("184 MiB" or "-")
-	Msg               string
-	Err               string
-	PublicIP          string
-	Prefix            string
-	Lang              string
-	UpGB              string
-	DownGB            string
-	IPv6              string // primary global address (the one to connect to)
-	IPv6Block         string // the /112 block the container owns (informational)
-	Snapshots         []snapshotRow
-	SnapshotLimit     int // configured per-container snapshot cap (for display)
+	// BandwidthResetThisMonth reports whether the NEXT reset falls in the
+	// calendar month we are in. The label has to say which month: right after
+	// the reset day has passed it is still this month (reset day 22 on the 16th
+	// ends the period on the 22nd of THIS month).
+	BandwidthResetThisMonth bool
+	Throttled               bool   // over quota: NIC limited to 1Mbps
+	ExpiresAt               string // quota validity deadline (RFC3339 UTC), "" = permanent
+	Expired                 bool   // deadline passed: account locked to read-only
+	ExpiresSoon             bool   // within 72h of the deadline
+	CPULimited              bool   // under the admin's dynamic CPU limit
+	CPULimitUntil           int64  // unix seconds the dynamic CPU limit expires
+	Domains                 []domainRow
+	QuotaCPU                string
+	QuotaMem                string
+	QuotaDisk               string
+	CPUUse                  string // 5-minute CPU average ("12%" or "-")
+	MemUse                  string // latest sampled memory usage ("345 MiB" or "-")
+	DiskUsed                string // latest sampled disk usage ("184 MiB" or "-")
+	Msg                     string
+	Err                     string
+	PublicIP                string
+	Prefix                  string
+	Lang                    string
+	UpGB                    string
+	DownGB                  string
+	IPv6                    string // primary global address (the one to connect to)
+	IPv6Block               string // the /112 block the container owns (informational)
+	Snapshots               []snapshotRow
+	SnapshotLimit           int // configured per-container snapshot cap (for display)
 	// Snapshot share: the code others can use to install from a checkpoint, and
 	// the checkpoint it points at ("" when the user has no active share).
 	ShareCode      string
@@ -401,6 +406,14 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		ExpiresAt:         u.ExpiresAt,
 		Msg:               msg,
 		Err:               errMsg,
+	}
+	// The quota label has to name the month the next reset lands in: it is
+	// derived from the configured day, not hardcoded to "next month" — with
+	// resetDay=22 on the 16th the period ends on the 22nd of THIS month.
+	{
+		now := time.Now().UTC()
+		next := mgr.BandwidthNextReset(now, s.cfg.Panel.BandwidthResetDay)
+		d.BandwidthResetThisMonth = next.Month() == now.Month() && next.Year() == now.Year()
 	}
 	// Quota validity: the client renders the live countdown from ExpiresAt; the
 	// server flags the expired/locked state (authoritative for enforcement).
