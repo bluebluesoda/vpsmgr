@@ -24,6 +24,14 @@ type CPULimitRule struct {
 	DurationSeconds int // how long the limit lasts once applied
 }
 
+// cpuLimitApplier is what the dynamic CPU limit needs from the container
+// runtime: applying a quota, in tenths of a core. Production passes the Incus
+// client; the rollback path below is tested with a fake, so no Incus daemon is
+// needed to prove that an unpersisted cap is lifted again.
+type cpuLimitApplier interface {
+	SetCPU(name string, cpuTenths int) error
+}
+
 // CPULimitState is the persisted state of one container's active dynamic limit.
 type CPULimitState struct {
 	Until    int64 `json:"until"`     // unix seconds the limit expires
@@ -172,9 +180,13 @@ func (m *Manager) EnforceCPULimits() error {
 	step := int64(ResourceSampleInterval / time.Second)
 	var firstErr error
 	changed := false
+	// Caps applied by THIS pass. They count as active only once the new state
+	// reaches the DB (see rollbackCaps).
+	var applied []*db.User
 
 	// Restore/forget limits that expired, belong to a deleted user, or are
-	// orphaned by the rule being switched off.
+	// orphaned by the rule being switched off. A failed write here is harmless:
+	// the row still records the limit, so the next pass repeats the restore.
 	for name, st := range active {
 		u := byName[name]
 		if u == nil {
@@ -183,7 +195,7 @@ func (m *Manager) EnforceCPULimits() error {
 			continue
 		}
 		if !rule.Enabled || now >= st.Until {
-			if err := m.lx.SetCPU(name, u.CPU); err != nil {
+			if err := m.cpuLimit.SetCPU(name, u.CPU); err != nil {
 				if firstErr == nil {
 					firstErr = fmt.Errorf("restore cpu quota for %s: %w", name, err)
 				}
@@ -220,24 +232,47 @@ func (m *Manager) EnforceCPULimits() error {
 				if !cpuOverStreak(grouped[u.ID], now, rule.WindowMinutes, threshold) {
 					continue
 				}
-				if err := m.lx.SetCPU(u.Name, rule.CoresX10); err != nil {
+				if err := m.cpuLimit.SetCPU(u.Name, rule.CoresX10); err != nil {
 					if firstErr == nil {
 						firstErr = fmt.Errorf("apply cpu limit to %s: %w", u.Name, err)
 					}
 					continue
 				}
 				active[u.Name] = CPULimitState{Until: now + int64(rule.DurationSeconds), CoresX10: rule.CoresX10}
+				applied = append(applied, u)
 				changed = true
 			}
 		}
 	}
 
 	if changed {
-		if err := m.saveCPULimits(active); err != nil && firstErr == nil {
-			firstErr = err
+		if err := m.saveCPULimits(active); err != nil {
+			err = fmt.Errorf("save cpu limit state: %w", err)
+			err = m.rollbackCaps(applied, err)
+			if firstErr == nil {
+				firstErr = err
+			} else {
+				firstErr = errors.Join(firstErr, err)
+			}
 		}
 	}
 	return firstErr
+}
+
+// rollbackCaps lifts the caps a pass applied but could not record, and returns
+// the cause joined with anything that could not be lifted. The DB row is what
+// tells the enforcement loop a container is capped: a cap without one is never
+// expired, and switching the rule off would not lift it either, so a container
+// would keep the reduced quota indefinitely. Restoring is best-effort — a
+// failure here leaves that container capped (reported to the caller, and the
+// next pass re-evaluates it against the rule).
+func (m *Manager) rollbackCaps(applied []*db.User, cause error) error {
+	for _, u := range applied {
+		if err := m.cpuLimit.SetCPU(u.Name, u.CPU); err != nil {
+			cause = errors.Join(cause, fmt.Errorf("restore %s after an unsaved cpu limit: %w", u.Name, err))
+		}
+	}
+	return cause
 }
 
 // cpuOverStreak reports whether the user's newest `need` samples form a
