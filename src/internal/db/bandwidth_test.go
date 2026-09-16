@@ -177,6 +177,54 @@ func TestApplyBandwidthResetNewPid(t *testing.T) {
 	wantBandwidth(t, tr, "2026-08", 100, 300, 300, 100, 555)
 }
 
+// TestApplyBandwidthPeriodChangeDiscardsTotals pins the behaviour that
+// `panel.bandwidth_reset_day` has to warn about: the monthly totals are reset
+// whenever the PERIOD KEY changes, and moving the configured reset day moves
+// the key. Changing it from 1 to 22 on the 16th therefore looks like a
+// rollover to the sampler, which zeroes every user's accumulated traffic on
+// its next pass — not because anything resets it explicitly, but because the
+// period the totals belonged to no longer exists.
+//
+// Fixing the label (mgr.BandwidthNextReset) does NOT change this: it is why
+// the config key is marked destructive and confirmed at `vps config set`.
+func TestApplyBandwidthPeriodChangeDiscardsTotals(t *testing.T) {
+	d := openTestDB(t)
+	u := mkUser(t, d, "erin", 5)
+
+	// Accumulate under the day-1 period key, as a default install does.
+	if err := d.ApplyBandwidth(u.ID, "2026-09", 1000, 500, 777); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ApplyBandwidth(u.ID, "2026-09", 4000, 2500, 777); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := d.GetBandwidth(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBandwidth(t, tr, "2026-09", 2000, 3000, 4000, 2500, 777)
+
+	// The operator moves the reset day to the 22nd on the 16th, so the key
+	// becomes the previous month's.
+	if err := d.ApplyBandwidth(u.ID, "2026-08", 4000, 2500, 777); err != nil {
+		t.Fatal(err)
+	}
+	tr, err = d.GetBandwidth(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Totals discarded; the counter baselines are preserved (unchanged
+	// counters add nothing), so counting restarts from here.
+	wantBandwidth(t, tr, "2026-08", 0, 0, 4000, 2500, 777)
+
+	// Traffic after the change is counted again normally.
+	if err := d.ApplyBandwidth(u.ID, "2026-08", 4500, 3000, 777); err != nil {
+		t.Fatal(err)
+	}
+	tr, _ = d.GetBandwidth(u.ID)
+	wantBandwidth(t, tr, "2026-08", 500, 500, 4500, 3000, 777)
+}
+
 func TestBandwidthCascadeDelete(t *testing.T) {
 	d := openTestDB(t)
 	u := mkUser(t, d, "bob", 2)

@@ -1973,16 +1973,67 @@ func TestOverviewImpersonationBanner(t *testing.T) {
 	}
 }
 
-// TestOverviewBandwidthResetDayLabel verifies the quota label shows the
-// configured monthly reset day ("至次月 N 号").
+// TestOverviewBandwidthResetDayLabel verifies the quota label names the right
+// MONTH for the next reset. The label used to hardcode "次月", which is wrong
+// whenever the reset day is still ahead of today: the period in force started
+// on that day of the previous month, so it ends on that day of THIS one.
 func TestOverviewBandwidthResetDayLabel(t *testing.T) {
 	srv, _ := newTestServer(t)
-	html := srv.renderToString(t, "overview.html", pageData{
-		User: &db.User{Name: "alice"}, Prefix: "/" + testSecret, Lang: langZh,
-		BandwidthQuotaGB: 100, BandwidthUsedGB: "1.0", BandwidthResetDay: 5,
-	})
-	if !strings.Contains(html, "流量配额（至次月5号）") {
-		t.Error("overview missing the bandwidth reset-day label")
+	cases := []struct {
+		name      string
+		day       int
+		thisMonth bool
+		wantZh    string
+		wantEn    string
+	}{
+		{"reset still ahead -> this month", 22, true, "流量配额（至本月22号）", "Bandwidth quota (until day 22 this month)"},
+		{"reset day passed -> next month", 5, false, "流量配额（至次月5号）", "Bandwidth quota (until day 5 next month)"},
+	}
+	for _, c := range cases {
+		zh := srv.renderToString(t, "overview.html", pageData{
+			User: &db.User{Name: "alice"}, Prefix: "/" + testSecret, Lang: langZh,
+			BandwidthQuotaGB: 100, BandwidthUsedGB: "1.0",
+			BandwidthResetDay: c.day, BandwidthResetThisMonth: c.thisMonth,
+		})
+		if !strings.Contains(zh, c.wantZh) {
+			t.Errorf("%s: zh label missing %q", c.name, c.wantZh)
+		}
+		en := srv.renderToString(t, "overview.html", pageData{
+			User: &db.User{Name: "alice"}, Prefix: "/" + testSecret, Lang: "en",
+			BandwidthQuotaGB: 100, BandwidthUsedGB: "1.0",
+			BandwidthResetDay: c.day, BandwidthResetThisMonth: c.thisMonth,
+		})
+		if !strings.Contains(en, c.wantEn) {
+			t.Errorf("%s: en label missing %q", c.name, c.wantEn)
+		}
+	}
+}
+
+// TestOverviewBandwidthResetMonthIsDerived checks the page data itself: the
+// month flag must come from the reset day and today, not be assumed. The
+// assertion is expressed against the same helper the page uses, so it holds
+// whenever the suite runs (the reset day is pinned relative to today).
+func TestOverviewBandwidthResetMonthIsDerived(t *testing.T) {
+	now := time.Now().UTC()
+	// A day that is always still ahead of today within the same month: today's
+	// day + 1 capped at 28, falling back to "reset day 1" mid-month on the 28th.
+	ahead := now.Day() + 1
+	if ahead > 28 {
+		t.Skip("today is late in the month; the same-month case needs a reset day still ahead")
+	}
+	next := mgr.BandwidthNextReset(now, ahead)
+	if next.Month() != now.Month() {
+		t.Fatalf("reset day %d on the %dth should fall in this month, got %s", ahead, now.Day(), next.Format("2006-01-02"))
+	}
+	// A day just passed (today's day, capped) belongs to next month unless it
+	// is exactly today.
+	past := now.Day() - 1
+	if past < 1 {
+		t.Skip("today is the 1st; no earlier day to test")
+	}
+	next = mgr.BandwidthNextReset(now, past)
+	if next.Month() == now.Month() {
+		t.Fatalf("reset day %d on the %dth should fall next month, got %s", past, now.Day(), next.Format("2006-01-02"))
 	}
 }
 
