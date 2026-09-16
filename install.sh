@@ -115,7 +115,7 @@ fi
 if [[ "$DISABLE_V4FORWARD" == "1" ]]; then
   echo
   echo "!! --disable-v4forward: install with IPv4 inbound forwarding disabled !!"
-  echo "   Containers will have no IPv4 SSH/port DNAT; Traefik will be installed but stopped."
+  echo "   Containers will have no IPv4 SSH/port DNAT; HAProxy will be installed but stopped."
   echo "   Reserved vpsmgr port checks will be skipped. You can re-enable later with:"
   echo "   vps config set net.v4_forward true"
   if [[ ! -t 0 ]]; then
@@ -291,7 +291,7 @@ export VPSMGR_IPV4_SUBNET="${VPSMGR_IPV4_SUBNET:-}"
 export VPSMGR_IPV6_MODE="${VPSMGR_IPV6_MODE:-}"
 export VPSMGR_IPV6_POOL="${VPSMGR_IPV6_POOL:-}"
 
-for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
+for step in 00-check 10-incus 20-network 30-haproxy 40-panel 50-image; do
   # Advanced setup: incus.image is a custom (non-default) alias — no Debian 13
   # sshd image build. Skipped the same way on install and upgrade.
   if [[ "$step" == "50-image" && "${VPSMGR_SKIP_IMAGE:-0}" == "1" ]]; then
@@ -301,15 +301,28 @@ for step in 00-check 10-incus 20-network 30-traefik 40-panel 50-image; do
   echo
   echo "===== $step ====="
   bash "$ROOT/scripts/$step.sh"
-  # 80/443 already in use (detected by 00-check): force net.traefik false for
-  # the rest of the install — 30-traefik keeps the binary installed but stops
-  # it, and `vps install` writes net.traefik: false. The marker is cleared at
-  # the start of the next 00-check run.
+  # 80/443 already in use (detected by 00-check): force the domain proxy false
+  # for the rest of the install — 30-haproxy keeps the binary installed but
+  # stops it, and `vps install` writes net.haproxy: false. The marker name is
+  # the PRE-RENAME one on purpose: an operator may still be running an older
+  # checkout of this installer, and both spellings must agree. The marker is
+  # cleared at the start of the next 00-check run and deleted by 30-haproxy
+  # once the decision has been recorded in the config.
   if [[ -f /etc/vpsmgr/.install-traefik-off ]]; then
-    export VPSMGR_TRAEFIK=0
+    export VPSMGR_HAPROXY=0
   fi
 done
-export VPSMGR_TRAEFIK="${VPSMGR_TRAEFIK:-}"
+export VPSMGR_HAPROXY="${VPSMGR_HAPROXY:-}"
+
+# --update follows the pinned HAProxy branch to its newest patch as well, so a
+# single command keeps the panel AND the domain proxy current. 30-haproxy.sh
+# already installed/refreshed the package; this adds the validation + graceful
+# reload so an upgrade in place never drops established connections.
+if [[ "$BUILD_MODE" == "update" && -x "$ROOT/upgrade-haproxy.sh" ]]; then
+  echo
+  echo "===== upgrade-haproxy ====="
+  bash "$ROOT/upgrade-haproxy.sh" || echo "[install] warn: HAProxy patch upgrade failed — the installed version is unchanged"
+fi
 
 echo
 echo "===== cleaning apt cache ====="

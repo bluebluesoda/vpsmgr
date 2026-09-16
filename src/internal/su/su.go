@@ -3,7 +3,7 @@
 // The panel daemon (vps serve) runs as the unprivileged 'vps' user. A small
 // sudoers whitelist (installed to /etc/sudoers.d/vps at install time) allows
 // that user to run ONLY the exact commands vpsmgr needs as root — nftables
-// reloads, traefik service control, IPv6 route/neighbor/addr changes, sysctl
+// reloads, haproxy service control, IPv6 route/neighbor/addr changes, sysctl
 // and the ndppd NDP proxy. Everything else is denied.
 //
 // Run always passes -n (non-interactive): if sudo would prompt for a password

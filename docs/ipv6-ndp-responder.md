@@ -152,6 +152,31 @@ route. So the new code **relies on** the isolation layer's behaviour and
 coexists with it — one closes the neighbour-spoofing hole, the other makes
 strict upstreams able to reach the block through the existing design.
 
+## Upgrading a host that still runs the distro ndppd
+
+An operator can sit on an old (pre-responder) release for a long time, so
+`install.sh` has to converge such a host in one run. Everything below is
+idempotent and needs no manual step beyond re-running the installer:
+
+| Left behind by the old release | What the upgrade does |
+|---|---|
+| `ndppd.service` enabled and running | `vps install` disables and stops it (`systemctl disable --now ndppd.service`), and `npd6.service` with it — either would emit competing link-local-source NAs |
+| `vps-ipv6.service` = the old oneshot unit | stopped, then rewritten as the responder unit (`ExecStart=/usr/local/bin/vps ipv6-proxy`, `ExecStartPre=… ipv6-reapply`) and re-enabled |
+| `/etc/vpsmgr/ndppd.conf` in the old `rule <cidr> { iface <bridge> }` form | read as-is. The filename and format were deliberately kept; `loadRules` takes the CIDR from the `rule` line and ignores the nested block, so no regeneration is needed (`TestLoadRulesAcceptsPreResponderFile`) |
+| `/etc/ndppd.conf` symlink → `/etc/vpsmgr/ndppd.conf` | harmless and left alone: the responder opens the real `/etc/vpsmgr/ndppd.conf` directly |
+| Per-address kernel `proxy_ndp` entries and `/128` routes from the older scheme | swept on `ipv6-reapply` by `cleanLegacyKernelProxy` (limited to addresses inside the configured prefix) |
+| Old sudoers grants (`service ndppd restart`, `pkill -x ndppd`, `ln -sf /etc/ndppd.conf`, …) | the whitelist is rewritten from scratch, so those grants disappear. The old panel never needs them again — the binary is replaced in the same run, and an old binary that somehow ran would simply fail on them |
+| The distro `ndppd` package (installed by the old `install.sh`) | left installed but inactive — it is harmless while disabled, and leaving it keeps the upgrade offline-friendly. `uninstall.sh` stops and disables its service and removes its config files, but does not purge the package |
+
+The rule file being read rather than regenerated is the one place where this
+upgrade is load-bearing: if the format ever diverged, every existing container
+would lose inbound IPv6 the moment the responder took over. Keep the parser
+tolerant of the legacy layout.
+
+Note that this is unlike the Traefik → HAProxy migration, where the old
+per-domain files ARE discarded: those are a derived artifact of the database,
+while `ndppd.conf` is the live input of a running process.
+
 ## Notes on a few deliberate decisions
 
 - **File name kept as `ndppd.conf`.** The format (bare `rule <cidr> {}`) is

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +21,28 @@ import (
 
 const testSecret = "Ab1_cdE-9x"
 
+// useTempProxyLayout points the HAProxy publisher at a temp directory and at a
+// stub binary that always reports the configuration as valid. Domain tests
+// must not touch /etc/haproxy, and the real /usr/sbin/haproxy is not installed
+// on a test box.
+func useTempProxyLayout(t *testing.T) {
+	t.Helper()
+	t.Setenv("VPSMGR_HAPROXY_DIR", t.TempDir())
+	bin := filepath.Join(t.TempDir(), "haproxy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VPSMGR_HAPROXY_BIN", bin)
+}
+
 func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
 	c := cfg.Default()
 	c.Panel.URLPath = testSecret
 	c.Panel.PublicIP = "127.0.0.1"
 	c.Panel.SessionDays = 3
-	// Keep per-domain traefik writes out of /etc/traefik.
-	t.Setenv("VPSMGR_TRAEFIK_DIR", t.TempDir())
+	// Keep per-domain proxy writes out of /etc/haproxy.
+	useTempProxyLayout(t)
 	d, err := db.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)

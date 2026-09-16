@@ -161,7 +161,7 @@ type pageData struct {
 	PortsPrefix       string // whole-hundred block number, e.g. 107 → "10700-10799"
 	SSH               string
 	V4Forward         bool   // false = IPv6-only box: v4 ssh/ports not offered
-	TraefikEnabled    bool   // false = domain proxy disabled; domains cannot be added
+	ProxyEnabled      bool   // false = domain proxy (HAProxy) disabled; domains cannot be added
 	InitScript        string // custom init script, run after a reinstall
 	BandwidthQuotaGB  int    // monthly bandwidth quota GiB, 0 = unlimited
 	BandwidthUsedGB   string // used this month (GB, 1 decimal) — only set when limited
@@ -389,7 +389,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		PortsPrefix:       itoa(u.StartPort / 100),
 		SSH:               "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
 		V4Forward:         s.mgr.V4ForwardLive(),
-		TraefikEnabled:    s.mgr.TraefikLive(),
+		ProxyEnabled:      s.mgr.HaproxyLive(),
 		ShowFooter:        s.cfg.Panel.ShowFooter,
 		Version:           ver.Version,
 		InitScript:        u.InitScript,

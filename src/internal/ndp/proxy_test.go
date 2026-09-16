@@ -58,6 +58,50 @@ func TestFilterRules(t *testing.T) {
 	}
 }
 
+// TestLoadRulesAcceptsPreResponderFile pins the UPGRADE path from a pre-1.6
+// (Traefik-era, distro-ndppd) install: that panel rendered each rule with the
+// bridge as a nested `iface` argument and three-space indentation —
+//
+//	rule 2001:db8:1::/112 {
+//	   iface incusbr0
+//	}
+//
+// The distro daemon is gone now, but the FILE is not regenerated during an
+// upgrade, so the in-tree responder has to read exactly this on the first boot
+// after `install.sh`. If the rule indentation or the nested block ever became
+// significant, every existing container would lose inbound IPv6 the moment the
+// new responder took over.
+func TestLoadRulesAcceptsPreResponderFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ndppd.conf")
+	legacy := "proxy eth0 {\n" +
+		"   rule 2001:db8:1::/112 {\n" +
+		"      iface incusbr0\n" +
+		"   }\n" +
+		"   rule 2001:db8:2::/112 {\n" +
+		"      iface incusbr0\n" +
+		"   }\n" +
+		"}\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := loadRules(path)
+	if err != nil {
+		t.Fatalf("legacy ndppd file rejected: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("got %d rules, want 2", len(rules))
+	}
+	for _, addr := range []string{"2001:db8:1::1", "2001:db8:1::9999", "2001:db8:2::5"} {
+		if !matches(net.ParseIP(addr), rules) {
+			t.Errorf("%s did not match any legacy rule", addr)
+		}
+	}
+	if matches(net.ParseIP("2001:db8:3::1"), rules) {
+		t.Error("address outside every legacy rule matched")
+	}
+}
+
 func mustCIDR(t *testing.T, s string) *net.IPNet {
 	t.Helper()
 	_, n, err := net.ParseCIDR(s)
