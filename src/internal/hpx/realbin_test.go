@@ -30,6 +30,13 @@ func TestGeneratedConfigIsAcceptedByRealHAProxy(t *testing.T) {
 		t.Fatalf("VPSMGR_TEST_HAPROXY_BIN=%s: %v", bin, err)
 	}
 
+	// The rendered entry config binds the admin socket at its production path
+	// (/run/haproxy/admin.sock), which the systemd unit creates via
+	// RuntimeDirectory. Off systemd nothing creates it, and HAProxy refuses to
+	// start when a stats socket cannot be bound — so create it here.
+	if err := os.MkdirAll("/run/haproxy", 0o750); err != nil {
+		t.Skipf("cannot create /run/haproxy (%v); run these tests as root", err)
+	}
 	dir := t.TempDir()
 	t.Setenv("VPSMGR_HAPROXY_DIR", dir)
 	t.Setenv("VPSMGR_HAPROXY_BIN", bin)
