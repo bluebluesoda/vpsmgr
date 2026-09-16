@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -91,6 +92,43 @@ func TestMigrateUpgradesLegacyDatabase(t *testing.T) {
 	if !applied[schemaVersion] {
 		t.Errorf("schema version %d not recorded; applied=%v", schemaVersion, applied)
 	}
+}
+
+// TestMigrateRefusesGapInVersions: applied versions must form an unbroken run.
+// A missing row means the schema silently skipped a step, which would surface
+// much later as an obscure "no such column"; Open must refuse instead.
+func TestMigrateRefusesGapInVersions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gap.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sql.Exec(`DELETE FROM schema_migrations WHERE version = 3`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil ||
+		!strings.Contains(err.Error(), "missing migration v3") {
+		t.Fatalf("gap not detected: %v", err)
+	}
+
+	// Restoring the row makes the database openable again.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(
+		`INSERT INTO schema_migrations(version, applied_at) VALUES(3, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	d3, err := Open(path)
+	if err != nil {
+		t.Fatalf("open after the row was restored: %v", err)
+	}
+	d3.Close()
 }
 
 // TestMigrationIdempotent opens the same DB twice — the second Open must not

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -318,6 +319,16 @@ func (d *DB) migrate() error {
 	if cur > schemaVersion {
 		return fmt.Errorf("database schema version %d is newer than this binary (%d) — upgrade the panel before opening this database", cur, schemaVersion)
 	}
+	// Applied versions must form the run 2..cur (v1 is the baseline, created
+	// unconditionally above and never recorded). A gap means rows went missing
+	// from schema_migrations — the schema is then missing a step, and running
+	// the later migrations anyway buries the problem in obscure "no such
+	// column" failures much later. Refuse instead.
+	for v := 2; v <= cur; v++ {
+		if !applied[v] {
+			return fmt.Errorf("database schema is missing migration v%d (recorded: %v) — schema_migrations is incomplete; restore a backup or rebuild the database", v, sortedVersions(applied))
+		}
+	}
 	for _, m := range migrations {
 		if m.version <= cur {
 			continue
@@ -342,6 +353,17 @@ func (d *DB) migrate() error {
 		}
 	}
 	return nil
+}
+
+// sortedVersions formats a set of applied migration versions for an error
+// message, oldest first.
+func sortedVersions(applied map[int]bool) []int {
+	out := make([]int, 0, len(applied))
+	for v := range applied {
+		out = append(out, v)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // appliedMigrations returns the set of recorded migration versions.

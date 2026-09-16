@@ -69,7 +69,9 @@ src/      Go source (single binary: CLI + panel)
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
 - **SQLite** — users, domains, sessions, bandwidth counters and seven-day
   minute resource history. Located at
-  `/etc/vpsmgr/vpsmgr.db`.
+  `/etc/vpsmgr/vpsmgr.db`. Migrations run in order on open; the recorded
+  versions must form an unbroken run, and a gap (or a database newer than the
+  binary) refuses to start rather than limping on with a half-migrated schema.
 
 ## Unprivileged panel
 
@@ -531,7 +533,9 @@ into the kernel.
   password change still drops every other admin session.
 - The dynamic CPU limit rule is panel-owned: a DB settings row edited on the
   admin overview, with no `config.yaml` key. Saving applies it at once, and
-  `vps install` never resets it.
+  `vps install` never resets it. A cap is only kept once its state row is
+  written; if that write fails the pass lifts the cap again, because a cap the
+  panel has no record of could never expire or be switched off.
 - The panel daemon is **unprivileged** (see "Unprivileged panel" above): Incus
   access via group membership, only whitelisted commands via sudo.
 - Containers are Incus-unprivileged with `security.nesting=true`.

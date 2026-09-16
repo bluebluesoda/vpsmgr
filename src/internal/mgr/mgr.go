@@ -72,6 +72,11 @@ type Manager struct {
 	// opMu, and holding both would risk lock-order deadlock with AddDomain.
 	domainMu sync.Mutex
 
+	// cpuLimit is the container-quota writer the dynamic CPU limit uses. It is
+	// the Incus client in production; a test substitutes a fake so the rollback
+	// path (a cap whose state could not be persisted) is covered.
+	cpuLimit cpuLimitApplier
+
 	// cpuLimitMu serializes the dynamic CPU limit enforcement. It is held by
 	// the 60s sampler and by the admin handler when a rule change is applied
 	// immediately, so a rule toggle cannot race with the periodic pass. The
@@ -82,6 +87,7 @@ type Manager struct {
 
 func New(c *cfg.Config, d *db.DB) *Manager {
 	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket, c.Incus.SwapRatio), fw: fw.New(c), tfx: tfx.New(c)}
+	m.cpuLimit = m.lx
 	m.RefreshHostStats()
 	return m
 }
