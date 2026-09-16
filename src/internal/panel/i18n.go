@@ -81,18 +81,19 @@ func (s *Server) t(r *http.Request, key string, args ...any) string {
 // zh and one en variant toggled by {{if eq .Lang "zh"}}.
 func tr(l, key string, args ...any) string {
 	m := map[string][2]string{ // key -> [zh, en]
-		"err_bad_login":       {"用户名或密码错误", "invalid credentials"},
-		"err_too_many":        {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
-		"err_pass_mismatch":   {"两次输入的密码不一致", "The two passwords do not match"},
-		"err_pass_short":      {"密码长度不得低于 10 位", "password must be at least 10 characters"},
-		"err_pass_weak":       {"密码需同时包含大写字母、小写字母和数字", "password must contain uppercase letters, lowercase letters and digits"},
-		"new_root_password":   {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
-		"reinstall_done":      {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
-		"snapshot_shared":     {"分享码已生成（已移除 %[1]v 个更早的检查点）", "share code created (%[1]v older checkpoint(s) removed)"},
-		"snapshot_unshared":   {"分享已撤销", "share revoked"},
-		"snapshot_restored":   {"已从该检查点恢复", "restored from that checkpoint"},
-		"err_account_expired": {"账户已到期，机器已锁定，请联系管理员延期。", "Account expired — the machine is locked. Contact the administrator to extend it."},
-		"ssh_keys_apply_warn": {"机器当前不可达，密钥已保存，将在下次重装后写入。", "Machine unreachable — keys saved and will be applied on the next reinstall."},
+		"err_bad_login":           {"用户名或密码错误", "invalid credentials"},
+		"err_too_many":            {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
+		"err_pass_mismatch":       {"两次输入的密码不一致", "The two passwords do not match"},
+		"err_pass_short":          {"密码长度不得低于 10 位", "password must be at least 10 characters"},
+		"err_pass_weak":           {"密码需同时包含大写字母、小写字母和数字", "password must contain uppercase letters, lowercase letters and digits"},
+		"new_root_password":       {"新的 root 密码：\n%[1]v", "New root password:\n%[1]v"},
+		"reinstall_done":          {"重装完成，新的 root 密码：\n%[1]v", "Reinstall complete. Root password:\n%[1]v"},
+		"snapshot_shared":         {"分享码已生成", "share code created"},
+		"snapshot_shared_removed": {"分享码已生成，已删除 %[1]v 个更早的检查点", "share code created — %[1]v older checkpoint(s) deleted"},
+		"snapshot_unshared":       {"分享已撤销", "share revoked"},
+		"snapshot_restored":       {"已从该检查点恢复", "restored from that checkpoint"},
+		"err_account_expired":     {"账户已到期，机器已锁定，请联系管理员延期。", "Account expired — the machine is locked. Contact the administrator to extend it."},
+		"ssh_keys_apply_warn":     {"机器当前不可达，密钥已保存，将在下次重装后写入。", "Machine unreachable — keys saved and will be applied on the next reinstall."},
 	}
 	pair, ok := m[key]
 	if !ok {

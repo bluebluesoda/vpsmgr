@@ -53,18 +53,14 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
 | `snapshots.limit` | operator | restart panel | max checkpoints a user may keep per container (`0` = disable new snapshots). Restoring to an older checkpoint auto-deletes the ones created after it (see below) |
-| `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default** (new installs and upgrades alike) and CLI-only — no panel UI: `vps config set snapshots.share true`. Stored codes are kept while it is off |
+| `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default**; CLI-only: `vps config set snapshots.share true`. Stored codes survive while it is off |
 
 ### Settings that are NOT in this file
 
-The **dynamic CPU limit rule** (cap a container to Z cores for N after it stays
-over Y% of its own quota for X minutes in a row) is edited in the **admin
-panel** (the "Dynamic CPU limit rule" card on the overview) and stored in the
-DB — it is deliberately not a `config.yaml` option and has no `vps config` key,
-because it is tuned repeatedly and must apply immediately. Saving it applies the
-new rule on the spot (any container already over the threshold is capped, and
-turning the rule off restores every capped container), and `vps install` never
-resets it.
+The **dynamic CPU limit rule** is edited on the admin overview and stored in the
+DB: it has no `config.yaml` key and no `vps config` key, because it is tuned
+repeatedly and must apply immediately. Saving applies it on the spot (turning it
+off restores every capped container), and `vps install` never resets it.
 
 ### How "fixed at install" is enforced
 

@@ -110,7 +110,7 @@ label { display: block; font-size: 12px; color: #6b7280; margin: 10px 0 4px; }
       <input type="hidden" name="id" value="{{if .Editing}}{{.Editing.ID}}{{end}}">
       <label for="kbTitle">{{if eq .Lang "zh"}}标题{{else}}Title{{end}}</label>
       <input id="kbTitle" name="title" maxlength="200" required value="{{if .Editing}}{{.Editing.Title}}{{end}}">
-      <label for="kbContent">{{if eq .Lang "zh"}}内容（Markdown：标题、列表、代码块、粗体/斜体、链接、引用）{{else}}Content (Markdown: headings, lists, code blocks, bold/italic, links, quotes){{end}}</label>
+      <label for="kbContent">{{if eq .Lang "zh"}}Markdown：标题、列表、代码块、粗体/斜体、链接、引用{{else}}Markdown: headings, lists, code blocks, bold/italic, links, quotes{{end}}</label>
       <textarea id="kbContent" name="content" spellcheck="false" required>{{.Content}}</textarea>
       <div class="growbar">
         <button type="button" class="btn" id="kbPreviewBtn">{{if eq .Lang "zh"}}预览{{else}}Preview{{end}}</button>
@@ -120,7 +120,7 @@ label { display: block; font-size: 12px; color: #6b7280; margin: 10px 0 4px; }
     </form>
     <div class="growbar">
       <div class="muted" style="font-size:12px;margin-bottom:6px">{{if eq .Lang "zh"}}预览{{else}}Preview{{end}}</div>
-      <div class="md" id="kbPreview">{{if eq .Lang "zh"}}点击“预览”查看渲染结果。{{else}}Click “Preview” to render.{{end}}</div>
+      <div class="md" id="kbPreview">{{if eq .Lang "zh"}}—{{else}}—{{end}}</div>
     </div>
   </div>
 </main>

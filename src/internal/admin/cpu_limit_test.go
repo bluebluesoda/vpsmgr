@@ -97,10 +97,13 @@ func TestCPULimitCardSave(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("disable save = %d, want 302", rr.Code)
 	}
-	// The message must not claim the rule is in effect when it is off.
-	if msg := flashMsg(t, h, prefix, cookie); !strings.Contains(msg, "未启用") &&
-		!strings.Contains(msg, "no container is capped") {
-		t.Errorf("disabled save flash = %q, want it to say the rule is off", msg)
+	// The message must match what happened: off means nothing was applied.
+	offMsg := flashMsg(t, h, prefix, cookie)
+	if !strings.Contains(offMsg, "未启用") && !strings.Contains(offMsg, "disabled") {
+		t.Errorf("disabled save flash = %q, want it to say the rule is off", offMsg)
+	}
+	if strings.Contains(offMsg, "立即生效") || strings.Contains(offMsg, "applied now") {
+		t.Errorf("disabled save claims the rule is in effect: %q", offMsg)
 	}
 	off := want
 	off.Enabled = false

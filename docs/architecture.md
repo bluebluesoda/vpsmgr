@@ -128,17 +128,13 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   can only grow, never shrink.
 - **Quota validity (expiry)**: each user can carry an optional absolute deadline
   (`users.expires_at`, RFC3339 UTC, `''` = permanent). When it passes, the 60s
-  loop force-stops the container (`stop` with `force:true`) and disables
-  `boot.autostart`, and the account is locked to read-only for both the user and
-  the admin — the only operations left are the admin extending the deadline
-  (extend = `max(now, current) + duration`), deleting the account, and either
-  side changing the **panel login password** (the user via the panel, the admin
-  via reset-password), which stays available so the account never becomes
-  unreachable. Extending past the deadline lifts the lock; a manual start is
-  then required (autostart stays off). The user panel shows a countdown under
-  the bandwidth bar; the admin users table dims expired rows and tags the name
-  `(-Nd)`. The container and its snapshots are never deleted, so a checkpoint
-  shared before expiry stays installable by others.
+  loop force-stops the container and disables `boot.autostart`, and the account
+  goes read-only for both sides. The admin can still extend it
+  (`max(now, current) + duration`), delete the account, and reset its panel
+  password; the user can still change their own panel password. Extending lifts
+  the lock but leaves autostart off, so the container needs a manual start. The
+  container and its snapshots are never deleted, so a checkpoint shared before
+  expiry stays installable by others.
 - **Container swap**: Incus 7 on cgroup v2 writes `memory.swap.max=0` for every
   container unless `limits.memory.swap` carries an explicit byte amount
   (`true`/`false` both end up as 0), so without an explicit value containers
@@ -265,26 +261,20 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   carries the checkpoint's state).
 
   Cloning from a checkpoint **pins** it: ZFS cannot roll the source back past a
-  snapshot that a clone depends on. Publishing therefore deletes the older
-  checkpoints (the panel warns with the exact count first — they could never be
-  restored to again once a clone exists) and keeps only the published one. On
-  deleting the snapshot, reinstalling or deleting the container, the share is
-  revoked with it (`ReinstallFromShare` reports a clear error rather than
-  building a half-container). A code that points at the **same** container being
-  reinstalled is treated as a plain restore, since cloning-then-deleting would
-  destroy the snapshot first.
+  snapshot a clone depends on. Publishing therefore deletes the older
+  checkpoints, keeping only the published one; the panel warns with the exact
+  count first. Deleting the checkpoint, reinstalling or deleting the container
+  revokes the share with it. A code pointing at the **same** container being
+  reinstalled is a plain restore (cloning first would destroy the snapshot).
 
-  The whole feature is **opt-in and off by default** (new installs and upgrades
-  alike): enable it with `vps config set snapshots.share true`. It is a CLI-only
-  setting — there is no admin-panel UI for it. While off, the user-side
-  share/import entry points are hidden and the manager refuses new shares and
-  installs, but the stored codes are kept and every container and checkpoint is
-  left alone, so switching it back on restores the codes for as long as their
-  checkpoint still exists. The code→checkpoint mapping is only ever removed when
-  the checkpoint itself is deleted (from the panel) or the container goes away,
-  and a code whose checkpoint has vanished is reported as invalid instead of
-  half-building a container. Installs are audited as `reinstall.share.<owner>`,
-  sharing as `snapshot.share.<checkpoint>`.
+  The feature is **off by default** and has no panel UI: enable it with `vps
+  config set snapshots.share true`. While off, the user-side entry points are
+  hidden and new shares and installs are refused; stored codes and every
+  container and checkpoint are left alone, so re-enabling restores the codes as
+  long as their checkpoint exists. A code is dropped only when its checkpoint is
+  deleted or its container goes away, and a code whose checkpoint has vanished
+  fails with an error instead of half-building a container. Installs are audited
+  as `reinstall.share.<owner>`, shares as `snapshot.share.<checkpoint>`.
 
 ### User groups (multi-container users)
 
@@ -364,14 +354,12 @@ no driver branch in the panel code, and the single driver-aware helper
   format, or modify secondary disks. The loop file only allocates blocks as the
   pool actually fills. On very small hosts, cap the ZFS ARC (`zfs.arc_max`) so
   container memory keeps priority over the pool's cache. New containers get a
-  **hard** disk limit: the pool carries `volume.zfs.use_refquota=true` (set by
-  `10-incus.sh` on creation and re-asserted on every run, plus an
-  `EnsurePoolRefQuota` pass in `vps install`), so a volume's disk usage counts
-  every block it references — including blocks inherited from the image or a
-  shared checkpoint through CoW clones. Without it, ZFS's default `quota`
-  charges a clone only for its own delta, so a limit would not match what the
-  user sees inside the container. Existing volumes are untouched: pool defaults
-  apply to new volumes only.
+  **hard** disk limit: the pool sets `volume.zfs.use_refquota=true`
+  (`10-incus.sh` plus an `EnsurePoolRefQuota` pass in `vps install`), so a
+  volume's usage counts every block it references, including blocks shared
+  through CoW clones. ZFS's default `quota` charges a clone only for its own
+  delta, which would stop matching what the user sees inside the container.
+  Existing volumes are untouched — pool defaults apply to new ones only.
 - **btrfs (beta)**. Selecting `VPSMGR_STORAGE=btrfs` is flagged as beta and
   `install.sh` asks for an explicit confirmation up front (default yes — on a
   btrfs root there is no ZFS fallback). When `/` is itself a btrfs filesystem,
@@ -537,16 +525,13 @@ into the kernel.
   bare, headerless 404 (no fingerprint, no auth cost).
 - Mutating actions are POST-only; sessions are 3-day HttpOnly+Secure+
   SameSite=Lax cookies; a per-IP login rate limiter.
-- Sessions are **persisted in the DB** (only the SHA-256 of the token is stored,
-  so a copy of the database cannot be replayed): user sessions in `sessions`
-  (→ `users`), admin sessions in `admin_sessions` (password-only auth, no user
-  row). A panel restart — upgrade, crash, `systemctl restart vps` — therefore no
-  longer logs either side out. Rotation still invalidates the other sessions: an
-  admin password change drops every admin session but the one that made it.
-- The **dynamic CPU limit rule** is panel-owned: it lives in the DB settings
-  table and is edited on the admin overview, not in `config.yaml` (no
-  `vps config` key either). Saving applies it immediately; `vps install` leaves
-  it alone so an upgrade never resets it.
+- Sessions are persisted in the DB (hashed tokens, so a copy of the database
+  cannot be replayed): user sessions in `sessions`, admin sessions in
+  `admin_sessions`. A panel restart does not log either side out. An admin
+  password change still drops every other admin session.
+- The dynamic CPU limit rule is panel-owned: a DB settings row edited on the
+  admin overview, with no `config.yaml` key. Saving applies it at once, and
+  `vps install` never resets it.
 - The panel daemon is **unprivileged** (see "Unprivileged panel" above): Incus
   access via group membership, only whitelisted commands via sudo.
 - Containers are Incus-unprivileged with `security.nesting=true`.
@@ -556,12 +541,11 @@ into the kernel.
 The operator can author Markdown articles in the admin panel (`/knowledge`);
 users open them read-only from a **知识库 / Knowledge base** button on the
 machine card, which opens a large overlay (nearly fullscreen on phones). Content
-is stored verbatim in the `knowledge` table and rendered **server-side** by
-`internal/markdown` — a hand-written, dependency-free renderer for a basic
-subset (headings, fenced code, inline code, bold/italic, links, lists,
-blockquotes, rules). It escapes HTML first and only allows http/https/mailto/#/
-links, so article content can never inject markup. The rendered HTML is embedded
-in the panel page; a small script adds a copy button to each code block.
+lives in the `knowledge` table and is rendered **server-side** by
+`internal/markdown`, a dependency-free renderer for a basic subset (headings,
+fenced code, inline code, bold/italic, links, lists, quotes, rules). It escapes
+HTML first and allows only http/https/mailto/#/ links, so articles cannot inject
+markup. A small script adds a copy button to each code block.
 
 ## Bandwidth accounting
 
