@@ -407,25 +407,135 @@ net:
 	}
 }
 
-func TestFillAutoTraefikEnv(t *testing.T) {
+func TestFillAutoHaproxyEnv(t *testing.T) {
 	c := Default()
 	c.Net.ExtIF = "eth0"
 	c.Panel.PublicIP = "203.0.113.10"
-	// Install-time force-off (80/443 conflict) must write net.traefik false.
+	// Install-time force-off (80/443 conflict) must write net.haproxy false.
+	t.Setenv("VPSMGR_HAPROXY", "0")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if c.Net.Haproxy {
+		t.Error("net.haproxy should be false when VPSMGR_HAPROXY=0")
+	}
+	// VPSMGR_HAPROXY=1 forces it on.
+	c.Net.Haproxy = false
+	t.Setenv("VPSMGR_HAPROXY", "true")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if !c.Net.Haproxy {
+		t.Error("net.haproxy should be true when VPSMGR_HAPROXY=true")
+	}
+}
+
+// TestFillAutoLegacyTraefikEnv covers the upgrade path from an old installer:
+// a pre-rename checkout exported VPSMGR_TRAEFIK for the very same knob. It is
+// honored only as a fallback, so an operator running an old script against the
+// new binary still gets the state they asked for.
+func TestFillAutoLegacyTraefikEnv(t *testing.T) {
+	c := Default()
+	c.Net.ExtIF = "eth0"
+	c.Panel.PublicIP = "203.0.113.10"
 	t.Setenv("VPSMGR_TRAEFIK", "0")
 	if err := c.FillAuto(); err != nil {
 		t.Fatalf("FillAuto: %v", err)
 	}
-	if c.Net.Traefik {
-		t.Error("net.traefik should be false when VPSMGR_TRAEFIK=0")
+	if c.Net.Haproxy {
+		t.Error("legacy VPSMGR_TRAEFIK=0 should still disable the domain proxy")
 	}
-	// VPSMGR_TRAEFIK=1 forces it on.
-	c.Net.Traefik = false
-	t.Setenv("VPSMGR_TRAEFIK", "true")
+
+	// The new spelling wins when both are present.
+	c.Net.Haproxy = false
+	t.Setenv("VPSMGR_HAPROXY", "1")
 	if err := c.FillAuto(); err != nil {
 		t.Fatalf("FillAuto: %v", err)
 	}
-	if !c.Net.Traefik {
-		t.Error("net.traefik should be true when VPSMGR_TRAEFIK=true")
+	if !c.Net.Haproxy {
+		t.Error("VPSMGR_HAPROXY must take precedence over the legacy VPSMGR_TRAEFIK")
+	}
+}
+
+// TestLoadLegacyTraefikKey covers a config file written by a Traefik-era
+// install: it carries `traefik:` where the new tree writes `haproxy:`. The
+// value semantics are identical, so the old value must be honored verbatim and
+// then dropped from the file on the next save.
+func TestLoadLegacyTraefikKey(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		p := t.TempDir() + "/config.yaml"
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("VPSMGR_CONFIG", p)
+		t.Setenv("VPSMGR_V4_FORWARD", "1")
+		return p
+	}
+
+	// 1. Only the legacy key: its value is used, and a save rewrites the file
+	//    with the new key only.
+	p := write(t, `panel:
+  listen: ":8443"
+net:
+  subnet: "10.115.0.0/24"
+  v4_forward: true
+  traefik: false
+`)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Net.Haproxy {
+		t.Error("legacy traefik: false must be honored as net.haproxy=false")
+	}
+	if c.Net.LegacyTraefik != nil {
+		t.Error("legacy key must be cleared after Load so it cannot be written back")
+	}
+	if err := Save(c); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "traefik:") {
+		t.Errorf("saved config still carries the legacy key:\n%s", b)
+	}
+	if !strings.Contains(string(b), "haproxy: false") {
+		t.Errorf("saved config missing the new key:\n%s", b)
+	}
+
+	// 2. Only the new key: honored as-is.
+	write(t, `panel:
+  listen: ":8443"
+net:
+  subnet: "10.115.0.0/24"
+  v4_forward: true
+  haproxy: false
+`)
+	c, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Net.Haproxy {
+		t.Error("haproxy: false must be honored")
+	}
+
+	// 3. Both keys (a half-migrated file, or a hand edit): the NEW key wins.
+	write(t, `panel:
+  listen: ":8443"
+net:
+  subnet: "10.115.0.0/24"
+  v4_forward: true
+  haproxy: true
+  traefik: false
+`)
+	c, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.Net.Haproxy {
+		t.Error("haproxy: true must win over a stale traefik: false")
 	}
 }

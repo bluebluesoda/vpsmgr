@@ -1,0 +1,41 @@
+# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+#
+# Installed to /etc/systemd/system/haproxy.service, which takes precedence over
+# the unit the distribution's haproxy package ships in /lib/systemd/system.
+# Exactly one unit may own 80/443.
+[Unit]
+Description=HAProxy domain proxy (vpsmgr)
+Documentation=https://docs.haproxy.org/3.4/management.html
+Wants=network-online.target
+After=network-online.target
+# The panel publishes generations under /etc/haproxy and reloads the service
+# after a successful validation, so start after it if both are enabled.
+After=vps.service
+
+[Service]
+# -Ws = master-worker mode speaking the systemd notify protocol:
+#   * the master process stays alive and owns the workers,
+#   * a reload (SIGUSR2 to the master) starts a new worker with the re-read
+#     configuration and lets the old one DRAIN established connections, which
+#     is why a published generation never drops a live HTTP or TLS connection,
+#   * `systemctl reload` therefore never has to restart the process.
+# The configuration is the stable entry file, which includes
+# /etc/haproxy/current/proxy.cfg — the generation the panel last published.
+Type=notify
+ExecStart=/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -p /run/haproxy/haproxy.pid
+ExecReload=/bin/kill -USR2 $MAINPID
+# Send SIGUSR1 (graceful stop) to the master on `systemctl stop`: established
+# connections are allowed to finish; hard-stop-after (see haproxy.cfg) is the
+# upper bound. KillMode=mixed keeps systemd from SIGKILLing the workers while
+# they drain.
+KillSignal=SIGUSR1
+KillMode=mixed
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=haproxy
+RuntimeDirectoryMode=0750
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

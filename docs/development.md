@@ -81,8 +81,37 @@ auto-generated "Full changelog" compare link below the notes.
 
 ```
 install.sh / uninstall.sh / build.sh   # lifecycle + local build
-scripts/   00-check 10-incus 20-network 30-traefik 40-panel 50-image 60-rhel 70-opensuse 80-debian-dev 90-arch
-configs/   reference configs (traefik / systemd / sudoers)
+upgrade-haproxy.sh                    # follow the pinned HAProxy branch (patches)
+scripts/   00-check 10-incus 20-network 30-haproxy 40-panel 50-image 60-rhel 70-opensuse 80-debian-dev 90-arch
+configs/   reference configs (haproxy / systemd / sudoers)
 docs/      this documentation
 src/       Go source (single binary: CLI + panel)
 ```
+
+## Domain proxy (HAProxy) — pinned branch
+
+The proxy is HAProxy **3.4 LTS** from the vendors' performance packages
+(`haproxy-awslc`). The project pins the BRANCH and follows its newest patch.
+
+The branch appears in exactly three places — change all of them together:
+
+| Where | Constant |
+|---|---|
+| `scripts/30-haproxy.sh` | `HAPROXY_BRANCH` / `HAPROXY_BRANCH_RE` / `HAPROXY_REPO_SLUG` |
+| `upgrade-haproxy.sh` | the same three |
+| `src/internal/cfg/cfg.go` | `HaproxyBranch` |
+
+`install.sh --update` upgrades the panel binary and then runs
+`upgrade-haproxy.sh`, which validates the candidate configuration with
+`haproxy -c` before reloading (`systemctl reload`, never `restart`, so
+established connections drain instead of dropping).
+
+Runtime configuration is published as immutable **generations**
+(`internal/hpx`): render the whole set from the DB, validate, then atomically
+repoint `/etc/haproxy/current`. Never edit a generation in place, and never
+write domain-specific settings into `/etc/haproxy/haproxy.cfg` (the static
+entry config a reload cannot change).
+
+The panel's `internal/hpx` renderer and `configs/haproxy/proxy.cfg` (the
+bootstrap generation used before the first sync) are two copies of the same
+template — keep them in step.

@@ -56,7 +56,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 17
+const schemaVersion = 18
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -284,6 +284,28 @@ var migrations = []struct {
 			token TEXT PRIMARY KEY,
 			expires_at INTEGER NOT NULL
 		)`,
+	}},
+	// v18: the domain-proxy runtime mirror moves from the legacy "traefik" key
+	// to "haproxy" (the config field net.traefik was renamed to net.haproxy
+	// when vpsmgr replaced Traefik with HAProxy). The stored value is a plain
+	// "true"/"false" string in both spellings, so it is carried over verbatim.
+	//
+	// Both statements are unconditional and idempotent, which is what makes
+	// this safe for every upgrade path:
+	//   - installing over a Traefik-era DB: only "traefik" exists, the INSERT
+	//     copies it to "haproxy", the DELETE drops the old row.
+	//   - a DB that already carries "haproxy" (fresh install, or a re-run
+	//     after a failure): the INSERT hits ON CONFLICT and keeps the NEW
+	//     value, the DELETE still cleans up a stale "traefik" row if present.
+	//   - a DB with neither row: both statements are no-ops.
+	// Migration v18 runs exactly once (recorded in schema_migrations), which
+	// is why the "keep the new value" rule is expressed in SQL rather than in
+	// Go — there is no second chance to get it wrong.
+	{18, []string{
+		`INSERT INTO settings(key, value)
+			SELECT 'haproxy', value FROM settings WHERE key = 'traefik'
+			ON CONFLICT(key) DO NOTHING`,
+		`DELETE FROM settings WHERE key = 'traefik'`,
 	}},
 }
 

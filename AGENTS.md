@@ -71,7 +71,10 @@ Keep the top-level READMEs concise; technical detail belongs in `docs/`
 ## Key invariants — do not break
 
 - `uninstall.sh` **without** `--purge` must keep `/etc/vpsmgr` (config/db)
-  and `/etc/traefik` so reinstall adopts them; only `--purge` deletes them.
+  and `/etc/haproxy` so reinstall adopts them; only `--purge` deletes them.
+  A pre-HAProxy install's `/etc/traefik` is kept by the same rule (its config
+  file is inert; the installer removes Traefik's binary/unit/account and the
+  per-domain dynamic directory).
 - IPv6 bridge prefix is clamped to ≥ /64 (`bridgePrefixLen`): Incus's dnsmasq
   only serves /64 networks. Container addresses always live in the first /64
   of the configured prefix.

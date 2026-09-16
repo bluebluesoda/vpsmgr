@@ -15,10 +15,10 @@ import (
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/fw"
+	"vpsmgr/internal/hpx"
 	"vpsmgr/internal/lx"
 	"vpsmgr/internal/pw"
 	"vpsmgr/internal/su"
-	"vpsmgr/internal/tfx"
 )
 
 // nameRe is the strict rule for NEW usernames: lowercase letters, digits and
@@ -38,7 +38,9 @@ type Manager struct {
 	db  *db.DB
 	lx  *lx.Client
 	fw  *fw.Firewall
-	tfx *tfx.Traefik
+	// proxy renders and publishes the HAProxy configuration that fronts every
+	// user domain (HTTP host routing on :80, TLS SNI passthrough on :443).
+	proxy *hpx.Proxy
 
 	// opMu serializes Add/Del/Reinstall within this process (the panels share
 	// one Manager), so two simultaneous creates cannot race for the same
@@ -67,9 +69,9 @@ type Manager struct {
 
 	// domainMu serializes domain mutations (AddDomain/DelDomain/
 	// SetDomainProtocol + SyncAllDomains) so two panel requests cannot race on
-	// the same domain's DB row and YAML file (review P2-12). SyncAllDomains is
-	// deliberately NOT held while Del removes domain files — Del already holds
-	// opMu, and holding both would risk lock-order deadlock with AddDomain.
+	// the same domain's DB row and published generation (review P2-12).
+	// Callers that already hold domainMu must use syncAllDomainsLocked: the
+	// mutex is not reentrant.
 	domainMu sync.Mutex
 
 	// cpuLimit is the container-quota writer the dynamic CPU limit uses. It is
@@ -86,7 +88,7 @@ type Manager struct {
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
-	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket, c.Incus.SwapRatio), fw: fw.New(c), tfx: tfx.New(c)}
+	m := &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket, c.Incus.SwapRatio), fw: fw.New(c), proxy: hpx.New(c)}
 	m.cpuLimit = m.lx
 	m.RefreshHostStats()
 	return m
@@ -678,15 +680,22 @@ func (m *Manager) Del(name string) error {
 	if err != nil {
 		return err
 	}
-	// Domain configs are removed FIRST, before the container and DB row. A
-	// leftover traefik YAML keeps proxying to the (about to be deleted) IP;
-	// if that IP is later reused by a new user, the old domain would silently
-	// point at the new tenant (cross-tenant hijack, review P1-7). So a failed
-	// domain-file removal aborts the whole delete; the retry re-runs it.
+	// The user's domain ROUTING is withdrawn FIRST, before the container and
+	// the DB row. A leftover route would keep proxying to the (about to be
+	// deleted) IP; if that IP is later reused by a new user, the old domain
+	// would silently point at the new tenant (cross-tenant hijack, review
+	// P1-7). So a failed republish aborts the whole delete; the retry re-runs
+	// it. Deleting the DB rows first is what actually removes the routes: the
+	// published generation is derived from the domains table.
 	domains, _ := m.db.ListDomains(u.ID)
-	for _, d := range domains {
-		if err := m.tfx.RemoveDomain(d.Domain); err != nil {
-			return fmt.Errorf("remove traefik config for %s: %w (retry after fixing)", d.Domain, err)
+	if len(domains) > 0 {
+		for _, d := range domains {
+			if err := m.db.DeleteDomain(u.ID, d.Domain); err != nil {
+				return fmt.Errorf("withdraw domain %s: %w (retry after fixing)", d.Domain, err)
+			}
+		}
+		if err := m.syncAllDomainsLocked(); err != nil {
+			return fmt.Errorf("withdraw domain routing: %w (retry after fixing)", err)
 		}
 	}
 	// If the container cannot actually be removed, keep the DB record and let
@@ -727,7 +736,7 @@ func (m *Manager) Del(name string) error {
 
 // ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
 // or removes (when off) every user's DNAT rules, reloads the ruleset, and
-// applies the related Traefik state. Called by
+// applies the related HAProxy state. Called by
 // `vps config set net.v4_forward` and at the end of `vps install`. It also
 // records the effective policy in the DB settings so the long-running panel
 // process reflects the toggle without a restart.
@@ -753,7 +762,7 @@ func (m *Manager) ApplyV4State() error {
 	if err := m.db.SetSetting(db.SettingV4Forward, strconv.FormatBool(m.cfg.Net.V4Forward)); err != nil {
 		return fmt.Errorf("record v4_forward: %w", err)
 	}
-	return m.ApplyTraefikState()
+	return m.ApplyHaproxyState()
 }
 
 // V4ForwardLive reports whether IPv4 inbound is currently enabled, preferring
@@ -768,41 +777,71 @@ func (m *Manager) V4ForwardLive() bool {
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
-// TraefikLive reports the effective domain-proxy toggle, including changes
+// HaproxyLive reports the effective domain-proxy toggle, including changes
 // made by `vps config set` while this panel process remains running.
-func (m *Manager) TraefikLive() bool {
-	v, ok, err := m.db.GetSetting(db.SettingTraefik)
+func (m *Manager) HaproxyLive() bool {
+	v, ok, err := m.db.GetSetting(db.SettingHaproxy)
 	if err != nil || !ok {
-		return m.cfg.Net.Traefik
+		return m.cfg.Net.Haproxy
 	}
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
-// ApplyTraefikState starts/stops the traefik service to match v4_forward and
-// net.traefik: with either disabled, the domain proxy is not offered, so
-// traefik is stopped and
-// its BOOT AUTOSTART is disabled (systemctl disable --now) — it must not come
-// back on the next reboot. Domain config files are KEPT, so re-enabling
-// restores them; a full re-sync runs when enabling. systemctl errors are
-// surfaced, not swallowed.
-func (m *Manager) ApplyTraefikState() error {
-	if err := m.db.SetSetting(db.SettingTraefik, strconv.FormatBool(m.cfg.Net.Traefik)); err != nil {
-		return fmt.Errorf("record traefik: %w", err)
+// ApplyHaproxyState starts/stops haproxy.service to match v4_forward and
+// net.haproxy: with either disabled, the domain proxy is not offered, so the
+// service is stopped and its BOOT AUTOSTART is disabled (systemctl disable
+// --now) — it must not come back on the next reboot. Published domain
+// configurations are KEPT, so re-enabling restores them; a full re-sync runs
+// when enabling. systemctl errors are surfaced, not swallowed.
+func (m *Manager) ApplyHaproxyState() error {
+	if err := m.db.SetSetting(db.SettingHaproxy, strconv.FormatBool(m.cfg.Net.Haproxy)); err != nil {
+		return fmt.Errorf("record haproxy: %w", err)
 	}
-	if m.cfg.Net.V4Forward && m.cfg.Net.Traefik {
-		if err := systemctl("enable", "--now", "traefik.service"); err != nil {
-			return fmt.Errorf("start traefik: %w", err)
+	if m.cfg.Net.V4Forward && m.cfg.Net.Haproxy {
+		if err := systemctl("enable", "--now", cfg.DefaultHaproxyService); err != nil {
+			return fmt.Errorf("start %s: %w", cfg.DefaultHaproxyService, err)
 		}
 		return m.SyncAllDomains()
 	}
-	if err := systemctl("disable", "--now", "traefik.service"); err != nil {
-		return fmt.Errorf("stop/disable traefik: %w", err)
+	if err := systemctl("disable", "--now", cfg.DefaultHaproxyService); err != nil {
+		return fmt.Errorf("stop/disable %s: %w", cfg.DefaultHaproxyService, err)
 	}
 	return nil
 }
 
+// reloadProxy asks HAProxy to load the generation just published.
+//
+// A reload (SIGUSR2 to the master, which is what the unit's ExecReload sends)
+// starts a new worker on the new files and lets the old one drain its
+// established connections — the whole point of publishing to a new generation
+// instead of editing files in place. Without this call a change would only
+// take effect at the next service restart.
+//
+// A reload is a no-op for correctness when the service is not running (the
+// next start loads the same files), so a "not active" failure is not fatal.
+func (m *Manager) reloadProxy() error {
+	if err := systemctl("reload", cfg.DefaultHaproxyService); err != nil {
+		// `systemctl reload` fails when the unit is inactive. The published
+		// generation is on disk either way, so only report it if the proxy is
+		// supposed to be up.
+		if active, aerr := m.proxyActive(); aerr == nil && !active {
+			return nil
+		}
+		return fmt.Errorf("reload %s: %w", cfg.DefaultHaproxyService, err)
+	}
+	return nil
+}
+
+// proxyActive reports whether haproxy.service is currently running.
+func (m *Manager) proxyActive() (bool, error) {
+	if _, err := su.Run("/usr/bin/systemctl", "is-active", "--quiet", cfg.DefaultHaproxyService); err != nil {
+		return false, nil // is-active exits non-zero when inactive
+	}
+	return true, nil
+}
+
 // systemctl runs systemctl and returns its stderr on failure. The panel
-// daemon is unprivileged, so traefik (and self) control goes through the
+// daemon is unprivileged, so haproxy (and self) control goes through the
 // sudoers whitelist.
 func systemctl(args ...string) error {
 	if _, err := su.Run(append([]string{"/usr/bin/systemctl"}, args...)...); err != nil {
@@ -811,38 +850,53 @@ func systemctl(args ...string) error {
 	return nil
 }
 
-// SyncAllDomains reconciles the traefik dynamic directory against the DB (the
-// single source of truth): it regenerates every domain's YAML and removes any
-// leftover file that no longer matches a domain. This is the safety net that
-// fixes any drift left by a crash between a DB write and a file write.
+// SyncAllDomains republishes the HAProxy configuration from the DB (the single
+// source of truth): every domain in the database becomes a backend plus a
+// routing rule in a fresh, validated generation, and anything the database no
+// longer knows about is simply absent from that generation.
+//
+// Unlike the old per-domain file layout there is no orphan sweep to perform:
+// each generation is built from scratch, so a leftover file can never be read
+// by the running proxy. This is the safety net that repairs drift left by a
+// crash between a DB write and a publish.
 func (m *Manager) SyncAllDomains() error {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
+	return m.syncAllDomainsLocked()
+}
+
+// syncAllDomainsLocked is SyncAllDomains for callers that ALREADY hold
+// domainMu (AddDomain/DelDomain/SetDomainProtocol). domainMu is not
+// reentrant, so those must not call the exported wrapper.
+//
+// Publishing is not enough on its own: HAProxy reads maps and backends at load
+// time, so the new generation only takes effect after a reload. That reload
+// happens here, once per mutation, and is what makes a domain add/remove
+// visible without dropping established connections.
+func (m *Manager) syncAllDomainsLocked() error {
 	domains, err := m.db.ListAllDomains()
 	if err != nil {
 		return err
 	}
-	known := make(map[string]bool, len(domains))
-	var firstErr error
-	for _, d := range domains {
-		known[d.Domain] = true
-		if err := m.tfx.WriteDomain(d.Domain, d.IP, d.ProxyProtocol); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	files, err := m.tfx.ListFiles()
-	if err != nil {
+	if err := m.proxy.PublishAll(toProxyDomains(domains)); err != nil {
 		return err
 	}
-	for _, f := range files {
-		if !known[f] {
-			if err := m.tfx.RemoveDomain(f); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
-	return firstErr
+	return m.reloadProxy()
 }
+
+// toProxyDomains adapts the DB view rows to the publisher's input type.
+func toProxyDomains(rows []*db.DomainView) []hpx.Domain {
+	out := make([]hpx.Domain, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, hpx.Domain{Domain: d.Domain, IP: d.IP, ProxyProtocol: d.ProxyProtocol})
+	}
+	return out
+}
+
+// SetProxy replaces the HAProxy publisher. Tests use it to inject a stub
+// validation step: the real one shells out to /usr/sbin/haproxy, which is not
+// installed on a test box.
+func (m *Manager) SetProxy(p *hpx.Proxy) { m.proxy = p }
 
 func (m *Manager) List() ([]*Result, error) {
 	users, err := m.db.ListUsers()
@@ -1440,17 +1494,18 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	return pass, nil
 }
 
-// AddDomain binds a domain to a user. DB and traefik YAML are kept in sync
-// atomically: insert the DB row, write the domain's YAML file, and if the file
-// write fails roll the DB row back so the two never disagree.
+// AddDomain binds a domain to a user. The DB row is the source of truth and
+// the proxy configuration is derived from it: insert the row, republish the
+// generation, and if publishing fails roll the DB row back so the two never
+// disagree.
 func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
 	if !m.V4ForwardLive() {
 		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
 	}
-	if !m.TraefikLive() {
-		return errors.New("Traefik is disabled (net.traefik: false) — domains are not available; re-enable with `vps config set net.traefik true`")
+	if !m.HaproxyLive() {
+		return errors.New("HAProxy is disabled (net.haproxy: false) — domains are not available; re-enable with `vps config set net.haproxy true`")
 	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -1476,15 +1531,15 @@ func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	if _, err := m.db.AddDomain(u.ID, domain, proxyProtocol); err != nil {
 		return err
 	}
-	if err := m.tfx.WriteDomain(domain, u.IP, proxyProtocol); err != nil {
+	if err := m.syncAllDomainsLocked(); err != nil {
 		_ = m.db.DeleteDomain(u.ID, domain) // roll back the DB row
-		return fmt.Errorf("write traefik config: %w", err)
+		return fmt.Errorf("publish haproxy config: %w", err)
 	}
 	return nil
 }
 
-// DelDomain unbinds a domain, atomically: delete the DB row, remove the YAML
-// file, and if the file removal fails re-insert the row.
+// DelDomain unbinds a domain, atomically: delete the DB row, republish the
+// generation, and if publishing fails re-insert the row.
 func (m *Manager) DelDomain(name, domain string) error {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
@@ -1503,9 +1558,9 @@ func (m *Manager) DelDomain(name, domain string) error {
 	if err := m.db.DeleteDomain(u.ID, domain); err != nil {
 		return err
 	}
-	if err := m.tfx.RemoveDomain(domain); err != nil {
+	if err := m.syncAllDomainsLocked(); err != nil {
 		if _, rerr := m.db.AddDomain(u.ID, domain, dmn.ProxyProtocol); rerr == nil {
-			return fmt.Errorf("remove traefik config: %w", err)
+			return fmt.Errorf("publish haproxy config: %w", err)
 		}
 		return err
 	}
@@ -1513,7 +1568,7 @@ func (m *Manager) DelDomain(name, domain string) error {
 }
 
 // SetDomainProtocol toggles a user's domain PROXY protocol flag, atomically:
-// update the DB, rewrite the YAML, and on failure restore the old flag.
+// update the DB, republish the generation, and on failure restore the old flag.
 func (m *Manager) SetDomainProtocol(name, domain string, on bool) error {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
@@ -1535,9 +1590,9 @@ func (m *Manager) SetDomainProtocol(name, domain string, on bool) error {
 	if err := m.db.SetDomainProtocol(dmn.ID, on); err != nil {
 		return err
 	}
-	if err := m.tfx.WriteDomain(domain, u.IP, on); err != nil {
+	if err := m.syncAllDomainsLocked(); err != nil {
 		_ = m.db.SetDomainProtocol(dmn.ID, dmn.ProxyProtocol) // restore old flag
-		return fmt.Errorf("write traefik config: %w", err)
+		return fmt.Errorf("publish haproxy config: %w", err)
 	}
 	return nil
 }
@@ -1673,8 +1728,8 @@ func (m *Manager) EnsureBlockRoutes() error {
 	return firstErr
 }
 
-// normalizeDomain validates and normalizes a domain for use in Traefik
-// dynamic YAML. Rules:
+// normalizeDomain validates and normalizes a domain before it is stored and
+// rendered into the proxy configuration. Rules:
 //  1. lowercase, strip surrounding whitespace and ALL trailing dots
 //  2. keep only [a-z0-9.-] — any other character is a hard error (never
 //     silently stripped), so pasting "https://example.com" or a path is

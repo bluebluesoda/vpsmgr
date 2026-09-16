@@ -2,7 +2,7 @@
 
 vpsmgr is a lightweight LXC hosting panel: one Debian 13 container per user
 account, managed from a web panel and a CLI. Everything ships as a single Go
-binary (`vps` = CLI + embedded web panel); Incus, nftables and Traefik provide
+binary (`vps` = CLI + embedded web panel); Incus, nftables and HAProxy provide
 the plumbing.
 
 ## Design goals
@@ -11,7 +11,7 @@ vpsmgr is a toy for small machines (≤ 4 GB RAM, small VPS). Storage and memory
 are treated as scarce, which drives every choice in this document:
 
 - the panel is a single static Go binary — the only new service vpsmgr adds
-  besides Incus and Traefik;
+  besides Incus and HAProxy;
 - the storage pool is sparse (a loop file that only grows as it fills) and the
   published image is slimmed and the base image deleted, so disk is only
   consumed by what containers actually use, and clones share the image's
@@ -22,15 +22,15 @@ are treated as scarce, which drives every choice in this document:
   containers.
 
 "Lightweight" refers to the panel and this storage/memory discipline, not to a
-zero-overhead platform: Incus, nftables and Traefik are the minimal plumbing
+zero-overhead platform: Incus, nftables and HAProxy are the minimal plumbing
 that makes the panel possible.
 
 ## Components
 
 ```
 install.sh / uninstall.sh / build.sh   # lifecycle + local build
-scripts/  00-check 10-incus 20-network 30-traefik 40-panel 50-image
-configs/  reference configs (traefik / systemd / sudoers)
+scripts/  00-check 10-incus 20-network 30-haproxy 40-panel 50-image
+configs/  reference configs (haproxy / systemd / sudoers)
 src/      Go source (single binary: CLI + panel)
 ```
 
@@ -65,8 +65,11 @@ src/      Go source (single binary: CLI + panel)
   ufw allow in on incusbr0 to any port 53             # DNS
   ufw route allow in on incusbr0 from 10.<n>.0.0/24    # container forwarding
   ```
-- **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
-  proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
+- **HAProxy** — the domain front, pinned to the 3.4 LTS branch (official
+  performance packages). Port 80 reverse-proxies per `Host`; 443 routes by SNI
+  with **TLS passthrough** (the certificate lives in the container, HAProxy
+  never terminates TLS). Runtime configuration is published as immutable
+  *generations* under `/etc/haproxy`; see “Domain proxy” below.
 - **SQLite** — users, domains, sessions, bandwidth counters and seven-day
   minute resource history. Located at
   `/etc/vpsmgr/vpsmgr.db`. Migrations run in order on open; the recorded
@@ -83,7 +86,7 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   full management API is therefore available without any privilege elevation.
 - **The only root commands** the panel may run are pinned in a sudoers
   whitelist (`/etc/sudoers.d/vps`, validated with `visudo -c` before
-  install): `nft` reloads, `systemctl` control of traefik / the panel itself,
+  install): `nft` reloads, `systemctl` control of haproxy / the panel itself,
   IPv6 route/neighbor/addr changes, the IPv6-forwarding sysctl and ndppd
   control. `internal/su` runs them via `sudo -n`; anything else fails instead
   of prompting.
@@ -108,7 +111,7 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   cross-process backstop).
 - **IPv4 inbound policy (`v4_forward`)**: the SSH/port-block DNAT above only
   exists while `net.v4_forward` is true. When false (IPv6-only box), no DNAT
-  rules are written and traefik is stopped (domains kept but not served); the
+  rules are written and HAProxy is stopped (domains kept but not served); the
   NAT4 masquerade stays so containers still reach IPv4 outbound. Toggle:
   `vps config set net.v4_forward true|false` (applied immediately). The SSH/port
   values stay recorded in the DB.
@@ -158,21 +161,53 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   (htb qdisc on the host veth) — no container restart — and the manager keeps
   an in-memory throttle state so Incus is only touched on state changes.
 - **Domains**: the `domains` table (owner via `user_id`, PROXY flag, UTC
-  created/updated timestamps) is the single source of truth; the traefik
-  dynamic directory holds **one self-contained YAML per domain**
-  (`/etc/traefik/dynamic/<domain>.yaml`), so toggling PROXY protocol or
-  deleting a domain only rewrites/removes that one file. PROXY protocol v2 is a
-  **TCP-service** feature: a flagged domain's TLS-passthrough service carries
-  `proxyProtocol.version: 2` (HTTP/80 cannot — traefik injects
-  `X-Forwarded-For` there). Router/service names are `sanitizeDomain(domain)`
-  (dots → underscores), which is collision-free across the `[a-z0-9.-]` domain
-  charset and globally unique. **DB and YAML are updated sequentially, not
-  atomically**: every domain mutation writes the DB first, then the file, and
-  rolls the DB back if the file write fails; a crash or full disk between the
-  two can leave them out of sync. `SyncAllDomains` (run on `vps install` and
-  `vps config set net.v4_forward true`) regenerates every file from the DB and
-  deletes orphans, repairing any drift. All timestamps are stored as UTC; the admin
-  domain page renders them in the browser's timezone.
+  created/updated timestamps) is the single source of truth. The published
+  HAProxy configuration is a **derived artifact** and is never edited in place:
+
+  ```
+  /etc/haproxy/
+    haproxy.cfg                 # static entry config (frontends + reject backends)
+    current -> releases/<gen>/  # the generation in service
+    releases/<gen>/
+      maps/http.map             # Host -> backend   (port 80)
+      maps/sni.map              # SNI  -> backend   (port 443)
+      domains.cfg               # one backend per domain
+      manifest                  # generation, domain count, timestamp
+    generation                  # counter of the last published generation
+  ```
+
+  Every mutation builds a **complete new generation** from the DB
+  (`internal/hpx.PublishAll`), validates it with `haproxy -c`, and only then
+  atomically repoints the `current` symlink. Because a generation is rendered
+  from scratch, a stale domain can never survive into it, and a rejected
+  candidate leaves the running proxy untouched — the previous generation keeps
+  serving. The three most recent generations are retained for rollback and
+  debugging.
+  Routing lives in the generation's two MAP files (`Host -> backend` for port
+  80, `SNI -> backend` for 443). Maps rather than frontend ACLs because HAProxy
+  refuses duplicate proxy-section names since 3.3 and attaches bare directives
+  to the section opened last — per-domain rules emitted from a second file
+  would either clash or land in the wrong section. A map miss yields an empty
+  backend name, which HAProxy treats as "no rule matched" and falls through to
+  the frontend's reject backend, so an unregistered host or SNI is never
+  forwarded anywhere.
+  PROXY protocol v2 is a **TCP-only** feature: a flagged domain's 443 backend
+  carries `send-proxy-v2` (the container's TLS listener must support it), while
+  port 80 never does — there the client address travels in
+  `X-Forwarded-For`, which HAProxy adds via `option forwardfor`.
+  Backend names are `sanitizeDomain(domain)` (dots → underscores), which is
+  collision-free across the `[a-z0-9.-]` domain charset.
+  **DB and configuration are updated sequentially, not atomically**: a domain
+  mutation writes the DB first, then republishes AND reloads (`systemctl reload
+  haproxy.service`), and rolls the DB back if either fails; a crash or full
+  disk between the steps can leave them out of sync. `SyncAllDomains` (run on `vps install`, on `vps config set
+  net.v4_forward true`, on `vps config set net.haproxy true` and at every panel
+  start) rebuilds the generation from the DB, repairing any drift.
+  A reload (SIGUSR2 to the master) starts a new worker on the new generation
+  and lets the old one **drain** its established connections, so publishing a
+  domain never drops a live HTTP or TLS connection; `hard-stop-after` bounds
+  how long a draining worker may linger. All timestamps are stored as UTC; the
+  admin domain page renders them in the browser's timezone.
 - **Blocked domains**: the admin domain panel keeps a blocked-domains list (a
   `settings` key, `blocked_domains`, one domain per line, managed via a
   textarea). `mgr.AddDomain` — the single add path for the user panel — refuses
@@ -583,13 +618,20 @@ returns an error when any container could not be repaired.
 ## Install / uninstall lifecycle
 
 - `uninstall.sh` without `--purge` removes the software but **keeps**
-  `/etc/vpsmgr` (config/db/certs) and `/etc/traefik`, so a reinstall adopts
-  the previous users/domains/settings. `--purge` removes those plus
-  containers, the storage pool and the Incus package.
+  `/etc/vpsmgr` (config/db/certs) and `/etc/haproxy` (the static entry config
+  plus every published generation), so a reinstall adopts the previous
+  users/domains/settings. `--purge` removes those plus containers, the storage
+  pool, the HAProxy package and the Incus package.
 - `install.sh` detects an existing `/etc/vpsmgr/config.yaml` and adopts it
   (users/domains survive). `00-ip-ask.sh` reuses a previously configured
   `ipv6_subnet` / `subnet` / `user_ports` instead of re-asking; a legacy
   `slot_range` is converted to `user_ports` once and the new key persisted.
+- A **pre-HAProxy install is migrated in place** by the same `install.sh` run:
+  `30-haproxy.sh` installs and validates HAProxy, stops and removes the Traefik
+  unit/binary/service account (keeping only its config file), republishes the
+  domains from the database and removes the old per-domain YAML directory.
+  `net.traefik` in an adopted config is read as `net.haproxy` and rewritten
+  under the new name (see `docs/configuration.md`).
 - `install.sh --local-build` prints the current git branch and waits 10 s
   (Ctrl-C to abort) before starting, and always rebuilds rather than reusing
   an installed stable binary. `install.sh --update` explicitly re-downloads
