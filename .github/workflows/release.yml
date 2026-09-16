@@ -68,11 +68,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      # Needed to read the tag object below; fetch-depth 0 also pulls the tags.
+      # The release notes come from the tag OBJECT, so its annotation has to be
+      # local: `fetch-tags` brings it, and the notes step fetches the tag ref
+      # explicitly as well (a checkout that only fetched the commit leaves no
+      # tag behind, which is how a tag message silently becomes the fallback).
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -96,6 +100,10 @@ jobs:
       - name: Build release notes
         run: |
           TAG="${GITHUB_REF_NAME}"
+          # The tag's annotation IS the release body, so make sure the tag object
+          # (not just the commit) is local; without this the notes silently fall
+          # back to "fix some bugs".
+          git fetch --force --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG" || true
           notes=""
           if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = "tag" ]; then
             notes="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"
