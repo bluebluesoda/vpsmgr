@@ -20,10 +20,21 @@ After=vps.service
 #     configuration and lets the old one DRAIN established connections, which
 #     is why a published generation never drops a live HTTP or TLS connection,
 #   * `systemctl reload` therefore never has to restart the process.
-# The configuration is the stable entry file, which includes
-# /etc/haproxy/current/proxy.cfg — the generation the panel last published.
+#
+# BOTH -f ARGUMENTS ARE REQUIRED. The static entry config only declares the
+# frontends, the reject backends and the timeouts; the per-domain backends live
+# in the generation the panel publishes, and the routing maps whose paths the
+# entry config resolves point at THAT generation. Loading the entry config
+# alone starts a perfectly healthy-looking HAProxy that answers 404 on :80 and
+# closes every :443 connection, because no domain backend exists. Any later
+# change to this command line has to keep both files, and
+# TestUnitLoadsBothConfigFiles fails if it does not.
+#
+# The generation is loaded through "current" so a reload picks up whatever the
+# panel published last; scripts/30-haproxy.sh creates the bootstrap generation
+# before the unit is ever started.
 Type=notify
-ExecStart=/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -p /run/haproxy/haproxy.pid
+ExecStart=/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/current/domains.cfg -p /run/haproxy/haproxy.pid
 ExecReload=/bin/kill -USR2 $MAINPID
 # Send SIGUSR1 (graceful stop) to the master on `systemctl stop`: established
 # connections are allowed to finish; hard-stop-after (see haproxy.cfg) is the
