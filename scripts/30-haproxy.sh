@@ -178,7 +178,9 @@ chmod 0644 "$ENTRY_CFG"
 # refuses to start when a map cannot be opened. The panel republishes this from
 # the DB at startup; this is only the bootstrap (empty maps = every request
 # falls through to the reject backends).
-if [[ ! -f "$CURRENT_LINK/maps/http.map" ]]; then
+# The unit loads BOTH the entry config and this file, so "the generation exists"
+# means domains.cfg plus both maps.
+if [[ ! -f "$CURRENT_LINK/domains.cfg" ]] || [[ ! -f "$CURRENT_LINK/maps/http.map" ]]; then
   log "bootstrapping an empty HAProxy generation"
   gen="$HAPROXY_DIR/releases/000001"
   mkdir -p "$gen/maps"
@@ -334,9 +336,16 @@ fi
 
 # The candidate configuration must be valid BEFORE we touch the running proxy:
 # a broken config would otherwise take the domain service down with it.
-/usr/sbin/haproxy -c -q -f "$ENTRY_CFG" 2>/dev/null \
-  || { /usr/sbin/haproxy -c -f "$ENTRY_CFG"; die "the generated HAProxy configuration is invalid"; }
-log "configuration check passed"
+# Validate EXACTLY the command line the unit is about to run (see
+# configs/systemd/haproxy.service): the entry config alone is not the
+# configuration, it only declares the frontends, the reject backends and the
+# timeouts. The per-domain backends and the routing maps live in the
+# generation, so checking one file would happily pass a setup that answers 404
+# on :80 and closes every :443 connection.
+/usr/sbin/haproxy -c -q -f "$ENTRY_CFG" -f "$CURRENT_LINK/domains.cfg" 2>/dev/null \
+  || { /usr/sbin/haproxy -c -f "$ENTRY_CFG" -f "$CURRENT_LINK/domains.cfg";
+       die "the generated HAProxy configuration is invalid"; }
+log "configuration check passed (entry config + generation)"
 
 if [[ "$want_start" -eq 1 ]]; then
   systemctl enable --now haproxy.service >/dev/null 2>&1 || true
