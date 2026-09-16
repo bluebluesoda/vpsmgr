@@ -112,6 +112,7 @@ func tr(l, key string, args ...any) string {
 		"quota_expiry_updated":  {"已更新 %[1]v 的有效期", "validity updated for %[1]v"},
 		"err_account_expired":   {"账户已到期，仅可延期或删除", "account expired — only extend or delete is allowed"},
 		"cpu_limit_saved":       {"CPU 动态限制规则已保存并立即生效", "dynamic CPU limit rule saved and applied now"},
+		"cpu_limit_saved_off":   {"CPU 动态限制规则已保存：当前未启用，不限制任何容器", "dynamic CPU limit rule saved — it is disabled, so no container is capped"},
 	}
 	pair, ok := m[key]
 	if !ok {

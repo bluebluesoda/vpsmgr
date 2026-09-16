@@ -114,6 +114,9 @@ form.inline[hidden] { display: none; }
 .cpu-row .step { display: flex; flex-direction: column; }
 .cpu-row .step button { flex: 1; padding: 0 8px; font-size: 10px; line-height: 1; border-radius: 6px; }
 .cpu-row .step button + button { margin-top: 2px; }
+.cpu-state { margin: 0 0 10px; font-size: 13px; }
+.cpu-state.on { color: #15803d; }
+.cpu-state.off { color: #b45309; }
 .empty { color: #9ca3af; text-align: center; padding: 20px; }
 .msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
 @media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
@@ -322,35 +325,39 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}CPU 动态限制规则（全局）{{else}}Dynamic CPU limit rule (global){{end}}</h2>
     <form action="{{.Prefix}}/cpu-limit" method="post" id="cpuForm">
-    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}容器连续 <b>X</b> 分钟占用超过自身配额的 <b>Y%</b> 时，限制到 <b>Z</b> 核，持续 <b>N</b> 后自动恢复原配额。配额本身不高于 Z 的容器会被跳过。保存后立即生效。{{else}}When a container stays above <b>Y%</b> of its own quota for <b>X</b> minutes, it is capped to <b>Z</b> core(s) for <b>N</b>, then its quota is restored. Containers whose own quota is at or below Z are skipped. Saving applies it immediately.{{end}}</p>
+    <p style="margin:0 0 10px">{{if eq .Lang "zh"}}启用后：容器连续 <b>X</b> 分钟占用超过自身配额的 <b>Y%</b> 时，限制到 <b>Z</b> 核，持续 <b>N</b> 后自动恢复原配额。配额本身不高于 Z 的容器会被跳过。{{else}}Once enabled: when a container stays above <b>Y%</b> of its own quota for <b>X</b> minutes, it is capped to <b>Z</b> core(s) for <b>N</b>, then its quota is restored. Containers whose own quota is at or below Z are skipped.{{end}}</p>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <input type="checkbox" name="enabled" id="cpuEnabled" {{if .CPULimitEnabled}}checked{{end}} style="width:auto">
-      <span>{{if eq .Lang "zh"}}启用（默认不限制）{{else}}Enabled (default: no limit){{end}}</span>
+      <span>{{if eq .Lang "zh"}}启用动态限制{{else}}Enable the dynamic limit{{end}}</span>
     </label>
+    <p id="cpuStateOff" class="cpu-state off" {{if .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}当前<b>未启用</b>：所有容器按各自配额运行，不做任何限制。{{else}}Currently <b>disabled</b>: every container runs on its own quota, nothing is capped.{{end}}</p>
+    <p id="cpuStateOn" class="cpu-state on" {{if not .CPULimitEnabled}}hidden{{end}}>{{if eq .Lang "zh"}}当前<b>已启用</b>，保存后立即生效（判定基于每分钟采样的 CPU 使用率，最多延迟 1 分钟触发）。{{else}}Currently <b>enabled</b>; saving applies it at once (judged from the per-minute CPU samples, so it can take up to a minute to trigger).{{end}}</p>
+    <div id="cpuFields" {{if not .CPULimitEnabled}}hidden{{end}}>
     <div class="field-row" style="display:flex;gap:14px;flex-wrap:wrap">
       <div class="field" style="flex:1;min-width:150px">
         <label>{{if eq .Lang "zh"}}连续分钟 X{{else}}Minutes in a row X{{end}}</label>
-        <input name="window_minutes" type="number" min="1" step="1" required value="{{.CPULimitMinutes}}">
+        <input name="window_minutes" type="number" min="1" step="1" value="{{.CPULimitMinutes}}">
       </div>
       <div class="field" style="flex:1;min-width:150px">
         <label>{{if eq .Lang "zh"}}占用阈值 Y（%，相对自身配额）{{else}}Threshold Y (% of its own quota){{end}}</label>
-        <input name="percent" type="number" min="1" max="100" step="1" required value="{{.CPULimitPercent}}">
+        <input name="percent" type="number" min="1" max="100" step="1" value="{{.CPULimitPercent}}">
       </div>
       <div class="field" style="flex:1;min-width:150px">
         <label>{{if eq .Lang "zh"}}限制到 Z（核，0.1~1.0）{{else}}Cap to Z (cores, 0.1..1.0){{end}}</label>
-        <input name="cores" type="number" min="0.1" max="1" step="0.1" required value="{{.CPULimitCores}}">
+        <input name="cores" type="number" min="0.1" max="1" step="0.1" value="{{.CPULimitCores}}">
       </div>
       <div class="field" style="flex:1;min-width:150px">
         <label>{{if eq .Lang "zh"}}持续时间 N{{else}}Duration N{{end}}</label>
         <div class="cpu-row">
-          <input name="duration_hours" type="number" min="0" step="1" required value="{{.CPULimitHours}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}小时{{else}}h{{end}}</span>
-          <input name="duration_minutes" type="number" min="0" max="59" step="1" required value="{{.CPULimitDurMin}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}分钟{{else}}m{{end}}</span>
+          <input name="duration_hours" type="number" min="0" step="1" value="{{.CPULimitHours}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}小时{{else}}h{{end}}</span>
+          <input name="duration_minutes" type="number" min="0" max="59" step="1" value="{{.CPULimitDurMin}}"><span class="muted" style="align-self:center;padding:0 4px">{{if eq .Lang "zh"}}分钟{{else}}m{{end}}</span>
         </div>
       </div>
     </div>
+    </div>
     <div style="margin-top:12px">
-      <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存并立即生效{{else}}Save and apply now{{end}}</button>
-      <small style="color:#9aa0a8;margin-left:10px">{{if eq .Lang "zh"}}判定基于每分钟采样的 CPU 使用率，最多延迟 1 分钟生效。{{else}}Judged from the per-minute CPU samples, so it takes up to a minute to trigger.{{end}}</small>
+      <button type="submit" class="primary neutral">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+      <small style="color:#9aa0a8;margin-left:10px">{{if eq .Lang "zh"}}保存后的效果取决于上方的勾选状态。{{else}}What saving does depends on the checkbox above.{{end}}</small>
     </div>
     </form>
     <div style="margin-top:14px">
@@ -500,6 +507,24 @@ var COPY_OK = {{if eq .Lang "zh"}}"已复制 ✓"{{else}}"Copied ✓"{{end}};
 var COPY_LBL = {{if eq .Lang "zh"}}"复制"{{else}}"Copy"{{end}};
 var CREATE_ING = {{if eq .Lang "zh"}}"创建中…"{{else}}"Creating…"{{end}};
 {{if eq .Lang "zh"}}var PLAN_LBL = {name:'名称', cpu:'CPU', mem:'内存', disk:'磁盘', bw:'流量', days:'有效期', apply:'套用', edit:'编辑', save:'保存', cancel:'取消', editTitle:'编辑套餐预设'};{{else}}var PLAN_LBL = {name:'Name', cpu:'CPU', mem:'Memory', disk:'Disk', bw:'Bandwidth', days:'Days', apply:'Apply', edit:'Edit', save:'Save', cancel:'Cancel', editTitle:'Edit plan preset'};{{end}}
+// The CPU rule's parameters and state line follow the enable checkbox: with the
+// rule off there is nothing to configure, so the values are not shown at all
+// (and the message after saving says so instead of claiming it is in effect).
+(function(){
+  var cb = document.getElementById('cpuEnabled');
+  var fields = document.getElementById('cpuFields');
+  var on = document.getElementById('cpuStateOn');
+  var off = document.getElementById('cpuStateOff');
+  if(!cb || !fields) return;
+  function sync(){
+    var enabled = cb.checked;
+    fields.hidden = !enabled;
+    if(on) on.hidden = !enabled;
+    if(off) off.hidden = enabled;
+  }
+  cb.addEventListener('change', sync);
+  sync();
+})();
 function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); hideLoginAs(); }
 // The "log in as this user" button appears only in the post-create modal.

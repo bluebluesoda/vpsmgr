@@ -757,7 +757,14 @@ func (s *Server) handleCPULimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.AddAuditLog("000", "cpu_limit.update")
-	s.redirect(w, r, s.p(""), s.t(r, "cpu_limit_saved"))
+	// Say what actually happened: with the rule switched off nothing is applied
+	// (and anything previously capped was just restored), so claiming it is in
+	// effect would be misleading.
+	msg := "cpu_limit_saved_off"
+	if rule.Enabled {
+		msg = "cpu_limit_saved"
+	}
+	s.redirect(w, r, s.p(""), s.t(r, msg))
 }
 
 // cpuRuleFromForm reads the CPU limit card's fields. Ranges are validated by the
