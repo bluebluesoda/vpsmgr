@@ -8,7 +8,9 @@
 #   bash <(curl -fsSL https://raw.githubusercontent.com/bluebluesoda/vpsmgr/refs/heads/main/oneclick.sh) --update
 #
 # Supported args (passed straight through to install.sh):
-#   --update        re-download the latest prebuilt release binary over an existing one
+#   --update        re-download the latest prebuilt release binary over an
+#                   existing one, and follow the pinned HAProxy branch to its
+#                   newest patch (the panel and the domain proxy move together)
 #   --local-build   force local Go compilation of the panel binary
 #   --disable-v4forward  install with IPv4 inbound forwarding disabled
 # Env:

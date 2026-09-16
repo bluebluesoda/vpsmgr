@@ -30,9 +30,10 @@ const (
 	// be added.
 	SettingV4Forward = "v4_forward"
 
-	// SettingTraefik mirrors net.traefik so the long-running panel sees a
-	// runtime toggle without a panel restart.
-	SettingTraefik = "traefik"
+	// SettingHaproxy mirrors net.haproxy so the long-running panel sees a
+	// runtime toggle without a panel restart. Migration v18 renames the
+	// pre-HAProxy "traefik" row into this one (same "true"/"false" values).
+	SettingHaproxy = "haproxy"
 
 	// SettingBlockedDomains is the admin blocked-domains list, stored as
 	// newline-separated normalized domains. A blocked domain and all its

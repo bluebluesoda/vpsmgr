@@ -33,8 +33,15 @@ net:
   user_ports: "10000-29999"
   v4_forward: true            # IPv4 inbound policy. false (only meaningful with
                               # ipv6_subnet set) = containers are IPv6-only: no
-                              # SSH/port-block DNAT and traefik/domains disabled
+                              # SSH/port-block DNAT and haproxy/domains disabled
                               # (NAT4 outbound kept). Toggle at runtime: vps config set net.v4_forward true|false
+  haproxy: true               # domain proxy (HAProxy). true = running and enabled
+                              # at boot; false = stopped and disabled at boot, with
+                              # existing domain records kept but no new domains
+                              # accepted. Renamed from `traefik` — same values; a
+                              # Traefik-era config carrying `traefik:` is read as-is
+                              # and rewritten under the new name. Toggle at runtime:
+                              # vps config set net.haproxy true|false
   ext_if: AUTO             # detected from default route
   ipv6_mode: none          # fixed at install: none, prefix, or pool
   ipv6_subnet: ""          # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64".

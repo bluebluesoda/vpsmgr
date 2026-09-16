@@ -437,7 +437,7 @@ PY
 # --- IPv4 inbound forwarding policy ------------------------------------------
 # Always ON by default, never asked. A VPSMGR_V4_FORWARD env var (e.g. for a
 # scripted IPv6-only box) is honored; on adoption the recorded config value is
-# re-exported so 30-traefik.sh keeps the existing policy. A fresh install
+# re-exported so 30-haproxy.sh keeps the existing policy. A fresh install
 # leaves it unset → the config default (enabled) applies everywhere.
 if [[ -n "${VPSMGR_V4_FORWARD:-}" ]]; then
   case "$VPSMGR_V4_FORWARD" in

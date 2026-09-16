@@ -67,7 +67,7 @@ func (d *DB) GetDomainByDomain(domain string) (*Domain, error) {
 
 // SetDomainProtocol updates a domain's PROXY protocol flag and bumps
 // updated_at. Used both for the real change and the rollback on a failed
-// traefik write.
+// proxy publish.
 func (d *DB) SetDomainProtocol(id int64, on bool) error {
 	_, err := d.sql.Exec(`UPDATE domains SET proxy_protocol=?, updated_at=? WHERE id=?`, b2i(on), now(), id)
 	return err
@@ -94,7 +94,7 @@ func (d *DB) ListDomains(userID int64) ([]*Domain, error) {
 
 // ListAllDomains returns every domain with its owner's username and container
 // IP, newest modification first. Used by the admin domain panel and the
-// reconciliation that regenerates the traefik dynamic files from the DB.
+// reconciliation that republishes the HAProxy configuration from the DB.
 func (d *DB) ListAllDomains() ([]*DomainView, error) {
 	rows, err := d.sql.Query(
 		`SELECT d.id, d.user_id, u.name, u.ip, d.domain, d.proxy_protocol, d.created_at, d.updated_at

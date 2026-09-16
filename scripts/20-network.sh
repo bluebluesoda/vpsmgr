@@ -9,7 +9,7 @@ log(){ echo "[20] $*"; }
 # host's own root services) create io_uring; container tenants — even container
 # root, which only has userns-scoped caps — get EPERM, closing the biggest
 # kernel LPE attack surface for tenants. Value 1, not 2: the host stack (Incus,
-# ZFS, Go panel/traefik) is untouched. Matches RHEL 9.3+'s shipped default.
+# ZFS, Go panel/HAProxy) is untouched. Matches RHEL 9.3+'s shipped default.
 cat > /etc/sysctl.d/99-vpsmgr.conf <<EOF
 # Managed by vpsmgr — generated file, do not edit by hand.
 # Changes are overwritten on the next install.

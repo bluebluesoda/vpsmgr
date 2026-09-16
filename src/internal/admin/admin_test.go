@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +31,14 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
 	cfgPath := t.TempDir() + "/config.yaml"
 	t.Setenv("VPSMGR_CONFIG", cfgPath)
-	t.Setenv("VPSMGR_TRAEFIK_DIR", t.TempDir())
+	// Keep domain publishing out of /etc/haproxy and stub the config check
+	// (the real /usr/sbin/haproxy is not installed on a test box).
+	t.Setenv("VPSMGR_HAPROXY_DIR", t.TempDir())
+	bin := filepath.Join(t.TempDir(), "haproxy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VPSMGR_HAPROXY_BIN", bin)
 	c := cfg.Default()
 	c.Panel.URLPath = "UserSecRet99"
 	c.Panel.AdminPath = testAdminSecret

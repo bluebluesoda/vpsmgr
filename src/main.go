@@ -47,9 +47,10 @@ Group=vps
 ExecStart=/usr/local/bin/vps serve
 Restart=always
 RestartSec=3
-# The panel writes /etc/vpsmgr (config/db/certs) and /etc/traefik/dynamic.
-# /etc/vpsmgr is chowned to vps at install; ProtectSystem is off so those
-# writes work while the rest of the host stays untouched by policy.
+# The panel writes /etc/vpsmgr (config/db/certs) and /etc/haproxy (the
+# published proxy generations). Both are chowned to vps at install;
+# ProtectSystem is off so those writes work while the rest of the host stays
+# untouched by policy.
 NoNewPrivileges=false
 [Install]
 WantedBy=multi-user.target
@@ -374,7 +375,7 @@ func cmdInstall() error {
 	}
 	d.Close()
 	// Unprivileged panel: create the 'vps' service user (if missing), hand it
-	// the writable dirs (/etc/vpsmgr, /etc/traefik/dynamic) and the sudoers
+	// the writable dirs (/etc/vpsmgr, /etc/haproxy) and the sudoers
 	// whitelist, and add it to incus-admin so the socket API is fully usable
 	// without root. Idempotent on adoption. Hard failure: a panel without its
 	// sudoers whitelist would look healthy but silently fail every privileged
@@ -448,8 +449,8 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vps.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vps: %s", strings.TrimSpace(string(out)))
 	}
-	// Enforce the IPv4 inbound policy and the independent Traefik state.
-	// (v4_forward off = IPv6-only; net.traefik off = domain proxy disabled.)
+	// Enforce the IPv4 inbound policy and the independent HAProxy state.
+	// (v4_forward off = IPv6-only; net.haproxy off = domain proxy disabled.)
 	// Idempotent.
 	d2, err := db.Open(c.Panel.DB)
 	if err != nil {
@@ -587,14 +588,14 @@ func cmdIPv6Proxy() error {
 // ensureVPSUser sets up the unprivileged 'vps' account the panel daemon runs
 // as. Idempotent, called by `vps install`:
 //   - creates the system user if missing
-//   - chowns /etc/vpsmgr and /etc/traefik/dynamic so the panel can write its
-//     config, db, certs and domain files without root. /etc/traefik and the
-//     dynamic dir are 0755 (world-readable), so the traefik service reads the
-//     dynamic YAMLs as its own unprivileged user — no group cross-link needed.
+//   - chowns /etc/vpsmgr and the HAProxy layout root so the panel can write its
+//     config, db, certs and published proxy generations without root. The
+//     proxy root is 0755 so the haproxy service can read the generations it
+//     serves (it never needs to write there).
 //   - adds vps to the incus-admin group so the Incus Unix-socket API is fully
 //     usable (the socket is group-rw by incus-admin)
 //   - installs the sudoers whitelist granting ONLY the exact privileged
-//     commands the panel needs (nft reload, traefik/self systemctl, IPv6
+//     commands the panel needs (nft reload, haproxy/self systemctl, IPv6
 //     route/neigh/addr, sysctl forwarding, ndppd control)
 func ensureVPSUser(c *cfg.Config) error {
 	// 1. System user. A reinstall can leave the 'vps' group behind after
@@ -615,11 +616,11 @@ func ensureVPSUser(c *cfg.Config) error {
 	if err := exec.Command("chown", "-R", "vps:vps", c.DataDir()).Run(); err != nil {
 		return fmt.Errorf("chown %s: %w", c.DataDir(), err)
 	}
-	if err := os.MkdirAll(c.TraefikDir(), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", c.TraefikDir(), err)
+	if err := os.MkdirAll(c.ProxyDir(), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", c.ProxyDir(), err)
 	}
-	if err := exec.Command("chown", "-R", "vps:vps", c.TraefikDir()).Run(); err != nil {
-		return fmt.Errorf("chown %s: %w", c.TraefikDir(), err)
+	if err := exec.Command("chown", "-R", "vps:vps", c.ProxyDir()).Run(); err != nil {
+		return fmt.Errorf("chown %s: %w", c.ProxyDir(), err)
 	}
 	// 3. incus-admin group membership (the Incus socket's owning group).
 	if err := exec.Command("usermod", "-aG", "incus-admin", "vps").Run(); err != nil {
@@ -628,7 +629,7 @@ func ensureVPSUser(c *cfg.Config) error {
 	// 3b. ndppd.conf: the panel renders this file itself inside /etc/vpsmgr
 	// (its own writable dir) — no root-zone file to create or chown here.
 	// 4. sudoers whitelist — a hard requirement: without it every privileged
-	// operation (nft reload, traefik/systemctl, IPv6 wiring) fails at runtime.
+	// operation (nft reload, haproxy/systemctl, IPv6 wiring) fails at runtime.
 	if err := ensureSudoers(); err != nil {
 		return fmt.Errorf("sudoers whitelist: %w", err)
 	}
@@ -650,8 +651,14 @@ func ensureSudoers() error {
 vps ALL=(root) NOPASSWD: /usr/sbin/nft add table inet vpsmgr
 vps ALL=(root) NOPASSWD: /usr/sbin/nft -c -f /etc/vpsmgr/nftables.conf
 vps ALL=(root) NOPASSWD: /usr/sbin/nft -f /etc/vpsmgr/nftables.conf
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now traefik.service
-vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now haproxy.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now haproxy.service
+# A domain change publishes a new generation and then reloads: SIGUSR2 to the
+# master starts a worker on the new configuration while the old one drains its
+# established connections. A restart is deliberately NOT whitelisted — it would
+# drop every live HTTP/TLS connection.
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl reload haproxy.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet haproxy.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl restart vps.service
 vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet vps.service
 # IPv6 route/neigh/addr changes go through the vps ip6 root helper, which
@@ -713,15 +720,15 @@ func cmdServe() error {
 	if err := m.SetSnapshotShareEnabled(c.Snapshots.Share); err != nil {
 		log.Printf("warn: sync snapshot share mirror: %v", err)
 	}
-	// Reconcile the traefik dynamic directory against the DB at every panel
-	// start (review P1-7/P2-11): a crash between a DB write and a file write
-	// leaves the two divergent, and the domain YAMLs are the only thing a
-	// proxy actually reads. Regenerating from the DB (and dropping orphan
-	// files) makes the panel self-heal after any crash. Only meaningful when
-	// v4 forwarding is on.
+	// Reconcile the published HAProxy configuration against the DB at every
+	// panel start (review P1-7/P2-11): a crash between a DB write and a publish
+	// leaves the two divergent, and the published generation is the only thing
+	// the proxy reads. Regenerating from the DB (and dropping every domain the
+	// DB no longer knows) makes the panel self-heal after any crash. Only
+	// meaningful when v4 forwarding is on.
 	if m.V4ForwardLive() {
 		if err := m.SyncAllDomains(); err != nil {
-			log.Printf("warn: traefik reconciliation at startup: %v", err)
+			log.Printf("warn: haproxy reconciliation at startup: %v", err)
 		}
 	}
 	userPath := panelPath(c)
@@ -1067,22 +1074,22 @@ func configSet(args []string) error {
 			fmt.Printf("%s updated and applied to all containers.\n", key)
 			return nil
 		}
-		if key == "net.traefik" {
+		if key == "net.haproxy" {
 			d, err := db.Open(c.Panel.DB)
 			if err != nil {
-				return fmt.Errorf("config saved, but applying Traefik state failed: %w", err)
+				return fmt.Errorf("config saved, but applying HAProxy state failed: %w", err)
 			}
 			defer d.Close()
-			if err := mgr.New(c, d).ApplyTraefikState(); err != nil {
-				return fmt.Errorf("config saved, but applying Traefik state failed: %w", err)
+			if err := mgr.New(c, d).ApplyHaproxyState(); err != nil {
+				return fmt.Errorf("config saved, but applying HAProxy state failed: %w", err)
 			}
-			fmt.Printf("%s updated and applied (Traefik state refreshed).\n", key)
+			fmt.Printf("%s updated and applied (HAProxy state refreshed).\n", key)
 			return nil
 		}
 		if err := applyV4State(c); err != nil {
 			return err
 		}
-		fmt.Printf("%s updated and applied (firewall/traefik state refreshed).\n", key)
+		fmt.Printf("%s updated and applied (firewall/haproxy state refreshed).\n", key)
 	case cfg.ApplyNone:
 		return fmt.Errorf("%s is not settable", key)
 	}
@@ -1148,8 +1155,8 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 		switch key {
 		case "net.v4_forward":
 			what = "toggles container IPv4 inbound immediately — SSH / port / domain reachability of every container changes"
-		case "net.traefik":
-			what = "starts/stops Traefik immediately and changes whether new domains may be added"
+		case "net.haproxy":
+			what = "starts/stops HAProxy immediately and changes whether new domains may be added"
 		case "incus.swap_ratio":
 			what = "re-applies the swap allowance of every existing container (no restart)"
 		default:
@@ -1190,7 +1197,7 @@ func listenFree(addr string) bool {
 }
 
 // applyV4State enforces the current net.v4_forward policy (firewall plus the
-// related Traefik state).
+// related HAProxy state).
 func applyV4State(c *cfg.Config) error {
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {
@@ -1353,7 +1360,7 @@ func userDel(name string) error {
 	if err := m.Del(name); err != nil {
 		return err
 	}
-	fmt.Printf("user %s deleted (container, nft rules, traefik config, records)\n", name)
+	fmt.Printf("user %s deleted (container, nft rules, domain routes, records)\n", name)
 	return nil
 }
 
