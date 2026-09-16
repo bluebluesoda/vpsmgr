@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,11 +20,20 @@ func TestCPULimitCardSave(t *testing.T) {
 	prefix := "/" + testAdminSecret
 	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
 
-	// The overview carries the editor, prefilled with the default rule.
+	// The overview carries the editor, prefilled with the default rule, and with
+	// the rule off the parameter fields are not shown at all.
 	rr := doReq(t, h, http.MethodGet, prefix, nil, cookie)
-	if body := rr.Body.String(); !strings.Contains(body, `action="`+prefix+`/cpu-limit"`) ||
+	body := rr.Body.String()
+	if !strings.Contains(body, `action="`+prefix+`/cpu-limit"`) ||
 		!strings.Contains(body, `name="window_minutes"`) {
 		t.Fatalf("overview missing the CPU limit editor (code %d)", rr.Code)
+	}
+	if !strings.Contains(body, `id="cpuFields" hidden`) {
+		t.Error("the parameter fields are shown while the rule is disabled")
+	}
+	if !strings.Contains(body, `id="cpuStateOff" class="cpu-state off" `) ||
+		strings.Contains(body, `id="cpuStateOff" class="cpu-state off" hidden`) {
+		t.Error("the disabled state line is not the one shown by default")
 	}
 	if def := srv.mgr.CPULimitRule(); def != mgr.DefaultCPULimitRule() {
 		t.Fatalf("fresh rule = %+v, want the disabled default", def)
@@ -36,6 +46,10 @@ func TestCPULimitCardSave(t *testing.T) {
 	}, cookie)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("cpu-limit save = %d, want 302", rr.Code)
+	}
+	if msg := flashMsg(t, h, prefix, cookie); !strings.Contains(msg, "立即生效") &&
+		!strings.Contains(msg, "applied now") {
+		t.Errorf("enabled save flash = %q, want it to say it is in effect", msg)
 	}
 	want := mgr.CPULimitRule{Enabled: true, WindowMinutes: 3, Percent: 25, CoresX10: 2, DurationSeconds: 3900}
 	if got := srv.mgr.CPULimitRule(); got != want {
@@ -83,9 +97,34 @@ func TestCPULimitCardSave(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("disable save = %d, want 302", rr.Code)
 	}
+	// The message must not claim the rule is in effect when it is off.
+	if msg := flashMsg(t, h, prefix, cookie); !strings.Contains(msg, "未启用") &&
+		!strings.Contains(msg, "no container is capped") {
+		t.Errorf("disabled save flash = %q, want it to say the rule is off", msg)
+	}
 	off := want
 	off.Enabled = false
 	if got := srv.mgr.CPULimitRule(); got != off {
 		t.Fatalf("disabled rule = %+v, want %+v", got, off)
 	}
+
+	// Re-rendering with the rule off hides the parameters again, and the warning
+	// on the page is the disabled one.
+	rr = doReq(t, h, http.MethodGet, prefix, nil, cookie)
+	if body := rr.Body.String(); !strings.Contains(body, `id="cpuFields" hidden`) {
+		t.Error("parameter fields shown for a disabled rule")
+	}
+}
+
+// flashMsg pops the pending flash message for an admin session.
+func flashMsg(t *testing.T, h http.Handler, prefix string, cookie *http.Cookie) string {
+	t.Helper()
+	rr := doReq(t, h, http.MethodPost, prefix+"/flash", nil, cookie)
+	var out struct {
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("flash JSON: %v (%s)", err, rr.Body.String())
+	}
+	return out.Msg
 }
