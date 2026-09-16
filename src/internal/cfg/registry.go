@@ -53,11 +53,12 @@ func (k FieldKind) String() string {
 type Apply int
 
 const (
-	ApplyRestart   Apply = iota // panel is restarted automatically by `vps config set`
-	ApplyInstall                // re-run `vps install` (or `vps config set --apply`)
-	ApplyImmediate              // applied by vps config set right now
-	ApplyNextAdd                // used on the next vps add / reinstall
-	ApplyNone                   // not settable
+	ApplyRestart     Apply = iota // panel is restarted automatically by `vps config set`
+	ApplyInstall                  // re-run `vps install` (or `vps config set --apply`)
+	ApplyImmediate                // applied by vps config set right now
+	ApplyNextAdd                  // used on the next vps add / reinstall
+	ApplyDestructive              // applied by a panel restart, and applying it DISCARDS stored state
+	ApplyNone                     // not settable
 )
 
 func (a Apply) String() string {
@@ -70,6 +71,8 @@ func (a Apply) String() string {
 		return "applied immediately"
 	case ApplyNextAdd:
 		return "next add / reinstall"
+	case ApplyDestructive:
+		return "restart panel (auto), discards stored state"
 	case ApplyNone:
 		return "-"
 	}
@@ -227,8 +230,8 @@ var Fields = []Field{
 			c.Panel.ShowFooter = b
 			return nil
 		}},
-	{"panel.bandwidth_reset_day", KindOperator, ApplyRestart,
-		"day of month the monthly bandwidth quota resets (1-28; 28 keeps February safe)",
+	{"panel.bandwidth_reset_day", KindOperator, ApplyDestructive,
+		"day of month the monthly bandwidth quota resets (1-28; 28 keeps February safe). WARNING: changing it discards EVERY user's accumulated bandwidth totals — the accounting period key moves, so the next sampler pass starts a fresh period",
 		"1",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.BandwidthResetDay) }),
 		func(c *Config, v string) error {

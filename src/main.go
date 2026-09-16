@@ -1000,12 +1000,23 @@ func configSet(args []string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	if noApply {
+		if f.Apply == cfg.ApplyDestructive {
+			// --no-apply skips the confirmation above, so say it here instead:
+			// the discarded totals land at the NEXT panel restart, which would
+			// otherwise make the loss look like a separate event. Setting the
+			// value back before that restart avoids it entirely.
+			fmt.Printf("WARNING: %s is a destructive setting — applying it at the next panel restart discards every user's accumulated bandwidth totals (already-lost totals are not restored by setting it back).\n", key)
+		}
 		fmt.Printf("%s saved (not applied).\n", key)
 		return nil
 	}
 
 	switch f.Apply {
-	case cfg.ApplyRestart:
+	case cfg.ApplyRestart, cfg.ApplyDestructive:
+		// ApplyDestructive carries the same "restart the panel" mechanics; the
+		// difference is that the operator was warned in confirmApply that the
+		// change discards stored state (only panel.bandwidth_reset_day today),
+		// and it is stated again below so it cannot be missed.
 		switch key {
 		case "panel.listen":
 			if !listenFree(c.Panel.Listen) {
@@ -1019,6 +1030,8 @@ func configSet(args []string) error {
 			if _, err := os.Stat(c.Panel.Key); err != nil {
 				fmt.Printf("warning: key file %s does not exist — panel may fail to start\n", c.Panel.Key)
 			}
+		case "panel.bandwidth_reset_day":
+			fmt.Printf("note: the monthly bandwidth period now starts on day %d — every user's accumulated traffic totals are discarded and counting restarts from the next sample.\n", c.Panel.BandwidthResetDay)
 		}
 		if err := restartPanel(); err != nil {
 			fmt.Printf("%s saved, but the panel was NOT restarted: %v\n", key, err)
@@ -1138,10 +1151,12 @@ func promptConfigValue(c *cfg.Config, f *cfg.Field) (value string, changed bool,
 
 // dangerousApply reports whether applying a field change is disruptive enough
 // to warrant a second confirmation: re-running `vps install` (regenerates
-// firewall/routing/container wiring) or a live runtime toggle (net.v4_forward
-// changes SSH/port/domain reachability of every container).
+// firewall/routing/container wiring), a live runtime toggle (net.v4_forward
+// changes SSH/port/domain reachability of every container), or a change that
+// DISCARDS stored state (panel.bandwidth_reset_day zeroes every user's
+// accumulated traffic totals).
 func dangerousApply(f *cfg.Field) bool {
-	return f.Apply == cfg.ApplyInstall || f.Apply == cfg.ApplyImmediate
+	return f.Apply == cfg.ApplyInstall || f.Apply == cfg.ApplyImmediate || f.Apply == cfg.ApplyDestructive
 }
 
 // confirmApply asks for a y/N confirmation before saving a change whose apply
@@ -1151,6 +1166,15 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 	switch f.Apply {
 	case cfg.ApplyInstall:
 		what = "re-runs `vps install`, regenerating the firewall / routing / container wiring"
+	case cfg.ApplyDestructive:
+		switch key {
+		case "panel.bandwidth_reset_day":
+			what = "restarts the panel AND DISCARDS every user's accumulated bandwidth totals — " +
+				"the monthly accounting period is derived from this day, so moving it starts a fresh period " +
+				"(any over-quota throttle is lifted as a result). This cannot be undone"
+		default:
+			what = "restarts the panel and discards stored state"
+		}
 	case cfg.ApplyImmediate:
 		switch key {
 		case "net.v4_forward":

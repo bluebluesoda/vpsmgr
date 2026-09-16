@@ -370,3 +370,38 @@ func TestSwapRatioValidator(t *testing.T) {
 		}
 	}
 }
+
+// TestBandwidthResetDayIsDestructive pins the classification that makes
+// `vps config set panel.bandwidth_reset_day` ask for confirmation: changing
+// the day moves the accounting period key, which discards every user's
+// accumulated bandwidth totals (see TestApplyBandwidthPeriodChangeDiscardsTotals
+// in internal/db). If this ever drops back to a plain ApplyRestart the change
+// would happen silently again.
+func TestBandwidthResetDayIsDestructive(t *testing.T) {
+	f := FieldFor("panel.bandwidth_reset_day")
+	if f == nil {
+		t.Fatal("panel.bandwidth_reset_day is not registered")
+	}
+	if f.Apply != ApplyDestructive {
+		t.Errorf("Apply = %v, want ApplyDestructive", f.Apply)
+	}
+	// The warning has to name the consequence, since that is all the operator
+	// sees in `vps config help`.
+	for _, want := range []string{"discards", "bandwidth"} {
+		if !strings.Contains(f.Desc, want) {
+			t.Errorf("description does not mention %q: %s", want, f.Desc)
+		}
+	}
+	// And the value range is unchanged.
+	c := Default()
+	for _, bad := range []string{"0", "29", "abc"} {
+		if err := f.Assign(c, bad); err == nil {
+			t.Errorf("invalid %q accepted", bad)
+		}
+	}
+	for _, ok := range []string{"1", "22", "28"} {
+		if err := f.Assign(c, ok); err != nil {
+			t.Errorf("valid %q rejected: %v", ok, err)
+		}
+	}
+}

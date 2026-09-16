@@ -59,6 +59,39 @@ func BandwidthPeriod(t time.Time, resetDay int) string {
 	return firstOfMonth.AddDate(0, -1, 0).Format("2006-01")
 }
 
+// BandwidthNextReset returns the moment the quota period in force ends, i.e.
+// when the current period's counters roll over.
+//
+// It is the configured day of the month AFTER the current period's start
+// month — not "the configured day next month". The distinction matters right
+// after the reset day has passed: with resetDay=1 and today mid-month, the next
+// reset is the 1st of the FOLLOWING month, while with resetDay=22 and today the
+// 16th it is the 22nd of THIS month (the period still started last month).
+//
+// The caller renders it; ThisNextMonth reports whether that lands in the
+// current calendar month or the next one. resetDay is clamped exactly like
+// BandwidthPeriod (1..28) so the two can never disagree about the boundary.
+func BandwidthNextReset(t time.Time, resetDay int) time.Time {
+	if resetDay < 1 || resetDay > 28 {
+		resetDay = 1
+	}
+	t = t.UTC()
+	// Same period arithmetic as BandwidthPeriod: on/after resetDay we are in
+	// this month's period, before it we are still in last month's.
+	year, month := t.Year(), t.Month()
+	if t.Day() < resetDay {
+		month--
+		if month < time.January {
+			month = time.December
+			year--
+		}
+	}
+	// The period ends on the reset day of the following month.
+	firstOfPeriod := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+	end := firstOfPeriod.AddDate(0, 1, 0)
+	return time.Date(end.Year(), end.Month(), resetDay, 0, 0, 0, 0, time.UTC)
+}
+
 // ParseBandwidthGB parses a bandwidth quota in GiB: empty or "0" = unlimited,
 // otherwise a non-negative integer.
 func ParseBandwidthGB(s string) (int, error) {
