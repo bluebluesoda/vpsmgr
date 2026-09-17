@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+/* A standalone window, not a modal: the whole point is that the user can drag
+   it to any size (or maximise it) and the terminal follows. */
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#0b1220;color:#e2e8f0;display:flex;flex-direction:column;
+     font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif}
+header{display:flex;align-items:center;gap:.6rem;padding:.4rem .7rem;background:#0f172a;
+       border-bottom:1px solid #1e293b;font-size:.78rem;flex:none}
+header .host{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#22c55e}
+header .host::before{content:">_ ";opacity:.7}
+header .status{color:#7c8aa0}
+header .spacer{flex:1 1 auto}
+header button{background:#12203a;color:#cbd5e1;border:1px solid #1e3a5f;border-radius:6px;
+              padding:.2rem .6rem;font-size:.76rem;cursor:pointer;font-family:inherit}
+header button:hover{background:#18294a}
+main{flex:1 1 auto;min-height:0}
+main>div{height:100%}
+.term{height:100%;outline:none;padding:.5rem .6rem;background:#0f172a;overflow:hidden;cursor:text;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;
+      font-size:13px;line-height:1.35;color:#e2e8f0}
+.term-rows{white-space:pre;user-select:text}
+.term-row{white-space:pre;height:1.35em;overflow:hidden}
+.term-probe{position:absolute;visibility:hidden;white-space:pre;line-height:1.35}
+.term-input{position:absolute;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;
+            resize:none;overflow:hidden}
+</style>
+</head>
+<body>
+<header>
+<span class="host">{{.User.Name}}</span>
+<span class="status" id="status">{{if eq .Lang "zh"}}连接中…{{else}}connecting…{{end}}</span>
+<span class="spacer"></span>
+<button type="button" id="fsBtn">{{if eq .Lang "zh"}}全屏{{else}}Fullscreen{{end}}</button>
+<button type="button" id="reBtn">{{if eq .Lang "zh"}}重连{{else}}Reconnect{{end}}</button>
+</header>
+<main><div id="termMount" tabindex="0"></div></main>
+<script src="{{.Prefix}}/assets/term.js"></script>
+<script>
+(function(){
+  var LANG='{{.Lang}}';
+  var P='{{.Prefix}}';
+  var mount=document.getElementById('termMount');
+  var status=document.getElementById('status');
+  var session=null;
+
+  function setStatus(t){ status.textContent=t; }
+  function start(){
+    if(session){ try{session.close();}catch(e){} session=null; }
+    mount.innerHTML='';
+    setStatus(LANG==='zh'?'连接中…':'connecting…');
+    session=window.vpsmgrOpenTerminal(mount, P+'/terminal', {
+      onStatus:setStatus,
+      onExit:function(code){ setStatus((LANG==='zh'?'会话已结束':'session ended')+(code?(' · exit '+code):'')); },
+      onClose:function(){ setStatus(LANG==='zh'?'连接已断开':'connection closed'); }
+    });
+  }
+
+  document.getElementById('reBtn').addEventListener('click',start);
+  document.getElementById('fsBtn').addEventListener('click',function(){
+    if(document.fullscreenElement){ document.exitFullscreen(); return; }
+    if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+  });
+
+  // Remember the size the user dragged the window to, so the panel reopens it
+  // the same way. The opener reads this key.
+  var saveT=null;
+  window.addEventListener('resize',function(){
+    if(saveT)clearTimeout(saveT);
+    saveT=setTimeout(function(){
+      try{ localStorage.setItem('vpsmgr_ssh_size',JSON.stringify([window.outerWidth,window.outerHeight])); }catch(e){}
+    },400);
+  });
+
+  start();
+  mount.focus();
+})();
+</script>
+</body>
+</html>
