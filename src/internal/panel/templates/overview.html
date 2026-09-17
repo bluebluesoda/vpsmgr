@@ -641,6 +641,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
 </div>
 <div class="re-note" id="reHint" hidden>{{if eq .Lang "zh"}}将从该检查点恢复，不安装系统。{{else}}Rebuilding from that checkpoint; no system is installed.{{end}}</div>
+<div id="reInitWrap" hidden style="margin-top:.5rem"><label class="chk"><input type="checkbox" name="run_init" id="reInit" value="1" autocomplete="off"> {{if eq .Lang "zh"}}运行初始化脚本{{else}}Run init script{{end}}</label></div>
 {{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -785,6 +786,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var reDesc=document.getElementById('reDesc');
   var reHint=document.getElementById('reHint');
   var reShare=document.getElementById('reShare');
+  var reInitWrap=document.getElementById('reInitWrap');
+  var reInit=document.getElementById('reInit');
   var defaultAlias='';
   var descByAlias={};
   function checkAlias(alias){
@@ -804,16 +807,28 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   // highlight entirely — "nothing selected" is a real state here: the container
   // is rebuilt from a checkpoint, not from an image. Clearing the code restores
   // the default image.
+  // The "run init script" switch only exists for a clone from someone else's
+  // checkpoint, so it follows the share box. Its state is never remembered:
+  // whenever it is out of scope it is also unchecked, so going back to a plain
+  // image always leaves it off.
+  function syncInitToggle(){
+    if(!reInitWrap)return;
+    var on=!!(reShare&&reShare.value.trim()!=='');
+    reInitWrap.hidden=!on;
+    if(!on&&reInit)reInit.checked=false;
+  }
   function syncShareMode(){
     if(reShare&&reShare.value.trim()!==''){
       checkAlias('');
       showDesc('');
       if(reHint)reHint.hidden=false;
+      syncInitToggle();
       return;
     }
     if(reHint)reHint.hidden=true;
     if(checkedAlias()===''&&defaultAlias)checkAlias(defaultAlias);
     showDesc(checkedAlias());
+    syncInitToggle();
   }
   // Clicking a tile is an explicit system choice: it wins, so a code still in
   // the box is dropped rather than silently overriding the selection.
@@ -821,6 +836,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(reShare&&reShare.value.trim()!=='')reShare.value='';
     if(reHint)reHint.hidden=true;
     showDesc(checkedAlias());
+    syncInitToggle();
   }
   if(reShare)reShare.addEventListener('input',syncShareMode);
   function loadImages(){
@@ -845,6 +861,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     }).catch(function(){});
   }
   reBtn.addEventListener('click',function(){
+    // A fresh open always starts with the switch off: it has to be ticked by
+    // hand every time, and this also defeats browser form-state restoration.
+    if(reInit)reInit.checked=false;
+    syncInitToggle();
     loadImages().then(function(){reModal.classList.add('show');});
   });
   reCancel.addEventListener('click',function(){reModal.classList.remove('show');});
