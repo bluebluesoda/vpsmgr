@@ -2049,6 +2049,7 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 		Knowledge: []knowledgeArticle{{
 			ID: 7, Title: "Getting started", UpdatedAt: "2026-08-01T10:00:00Z",
 			HTML: template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
+			Source: "REGINNAME=*#*#region#*#*",
 		}},
 	})
 	for _, want := range []string{
@@ -2057,6 +2058,13 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 	} {
 		if !strings.Contains(one, want) {
 			t.Errorf("single-article knowledge modal missing %q", want)
+		}
+	}
+	// The "copy all" button needs the raw Markdown, which rides along in a
+	// hidden textarea (html/template escapes the textarea as RCDATA).
+	for _, want := range []string{`class="btn kb-copy-all"`, `class="kb-src"`, "*#*#region#*#*"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("knowledge article is missing %q", want)
 		}
 	}
 	if strings.Contains(one, `id="kbList"`) {
