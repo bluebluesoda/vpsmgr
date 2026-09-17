@@ -605,11 +605,23 @@
       var ss3 = { 1: "P", 2: "Q", 3: "R", 4: "S" };
       send = ss3[f] ? "\x1bO" + ss3[f] : "\x1b[" + [15, 17, 18, 19, 20, 21, 23, 24][f - 5] + "~";
     } else if (e.ctrlKey && !e.altKey && e.key.length === 1) {
-      var c = e.key.toUpperCase().charCodeAt(0);
-      if (c >= 64 && c < 128) send = String.fromCharCode(c & 0x1f);
+      // The physical key is what a terminal wants: on a layout where Ctrl+A
+      // composes into something else, e.key is that something else.
+      var ck = /^Key([A-Z])$/.exec(e.code || "");
+      if (ck) send = String.fromCharCode(ck[1].charCodeAt(0) - 64);
       else if (e.key === " ") send = "\x00";
-    } else if (e.altKey && e.key.length === 1) {
-      send = "\x1b" + e.key;
+      else {
+        // Non-letters keep the plain ASCII mapping, which is what makes
+        // Ctrl+[ an Escape and Ctrl+6 Ctrl+^.
+        var cc = e.key.toUpperCase().charCodeAt(0);
+        if (cc >= 64 && cc < 128) send = String.fromCharCode(cc & 0x1f);
+      }
+    } else if (e.altKey && !e.metaKey) {
+      // Again the physical key: on macOS Option+a arrives as "å", so sending
+      // e.key would put that in the shell instead of Meta-a.
+      var ak = /^Key([A-Z])$/.exec(e.code || "");
+      if (ak) send = "\x1b" + ak[1].toLowerCase();
+      else if (e.key.length === 1) send = "\x1b" + e.key;
     } else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
       send = e.key;
     }
