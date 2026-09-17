@@ -58,7 +58,7 @@ var termJS []byte
 // termIn is a message from the browser. Terminal output travels the other way
 // as raw binary frames; only control messages are JSON.
 type termIn struct {
-	T     string `json:"t"` // hello | input | resize | takeover | cancel | bye
+	T     string `json:"t"` // hello | input | resize | takeover
 	Token string `json:"token,omitempty"`
 	Data  string `json:"data,omitempty"`
 	Cols  int    `json:"cols,omitempty"`
@@ -557,11 +557,6 @@ func (s *Server) serveTermClient(conn *websocket.Conn, sock *termSocket, sess *t
 				_ = s.db.AddAuditLog("000+"+user, "terminal.takeover")
 			}
 			s.notifyOthers(user)
-		case "bye":
-			// The window is going away for good: end the shell now rather than
-			// holding it for the grace period.
-			sess.close()
-			return
 		}
 	}
 }
