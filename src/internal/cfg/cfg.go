@@ -153,6 +153,12 @@ type PanelCfg struct {
 	// URLPath nor AdminPath get a bare, headerless 404.
 	AdminPath  string `yaml:"admin_url_path,omitempty"`
 	ShowFooter bool   `yaml:"show_footer"`
+	// WebSSH enables the browser terminal in the user panel. On by default,
+	// including for config files written before the feature existed (a missing
+	// key keeps the default). An operator who does not want a shell reachable
+	// from the panel turns it off: the button disappears and the panel refuses
+	// both the terminal page and the terminal connection.
+	WebSSH bool `yaml:"web_ssh"`
 	// BandwidthResetDay is the day of the month the monthly bandwidth period
 	// rolls over. 1-28 (capped at 28 so February always has the day).
 	BandwidthResetDay int `yaml:"bandwidth_reset_day"`
@@ -289,7 +295,7 @@ type SnapshotsCfg struct {
 
 func Default() *Config {
 	c := &Config{}
-	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, BandwidthResetDay: 1}
+	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, WebSSH: true, BandwidthResetDay: 1}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Haproxy: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}

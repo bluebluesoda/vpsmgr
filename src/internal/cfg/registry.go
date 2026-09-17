@@ -230,6 +230,18 @@ var Fields = []Field{
 			c.Panel.ShowFooter = b
 			return nil
 		}},
+	{"panel.web_ssh", KindOperator, ApplyRestart,
+		"browser terminal (Web SSH) in the user panel; false hides the button and refuses terminal connections entirely",
+		"true or false",
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Panel.WebSSH) }),
+		func(c *Config, v string) error {
+			b, ok := parseBool(v)
+			if !ok {
+				return fmt.Errorf("panel.web_ssh must be true/false or 1/0")
+			}
+			c.Panel.WebSSH = b
+			return nil
+		}},
 	{"panel.bandwidth_reset_day", KindOperator, ApplyDestructive,
 		"day of month the monthly bandwidth quota resets (1-28; 28 keeps February safe). WARNING: changing it discards EVERY user's accumulated bandwidth totals — the accounting period key moves, so the next sampler pass starts a fresh period",
 		"1",

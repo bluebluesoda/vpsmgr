@@ -34,6 +34,28 @@ func Allowed(r *http.Request) bool {
 	return originHost(origin) == r.Host
 }
 
+// SameOrigin reports whether a request provably comes from the panel's own
+// origin, and is meant for the WebSocket handshake.
+//
+// That handshake is a GET, so Allowed's POST check never sees it, and it is not
+// covered by SameSite the way a form post is: a browser attaches the session
+// cookie to a cross-site WebSocket just as readily. Requiring positive proof
+// here is what stops another page from opening a shell on the user's container.
+// Every browser sends Origin on a WebSocket handshake, so its absence means a
+// non-browser client and is rejected too.
+func SameOrigin(r *http.Request) bool {
+	site := r.Header.Get("Sec-Fetch-Site")
+	if site != "" && site != "same-origin" && site != "none" {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// No Origin to compare: only acceptable with a positive signal.
+		return site == "same-origin" || site == "none"
+	}
+	return originHost(origin) == r.Host
+}
+
 // originHost strips the scheme (and trailing path, if any) from an Origin
 // header, leaving "host[:port]" to compare against r.Host.
 func originHost(origin string) string {

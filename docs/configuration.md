@@ -35,6 +35,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
 | `panel.show_footer` | operator | restart panel | user panel footer with project link and installed/build version; `false` hides the entire footer |
+| `panel.web_ssh` | operator | restart panel | browser terminal in the user panel; default `true`. When `false` the Web SSH button is not rendered and the panel refuses the terminal page and connection outright |
 | `panel.bandwidth_reset_day` | operator | restart panel — **discards stored state** | day of month the monthly bandwidth quota resets, `1`-`28` (28 keeps February safe); default `1`. **Changing it wipes every user's accumulated traffic totals** — see below |
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |

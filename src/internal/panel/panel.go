@@ -91,10 +91,16 @@ type Server struct {
 	mgr     *mgr.Manager
 	limiter *loginLimiter
 	flash   *flashStore
+	terms   *termRegistry
 }
 
 func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
-	return &Server{cfg: c, db: d, mgr: m, limiter: newLoginLimiter(), flash: newFlashStore()}
+	return &Server{
+		cfg: c, db: d, mgr: m,
+		limiter: newLoginLimiter(),
+		flash:   newFlashStore(),
+		terms:   newTermRegistry(),
+	}
 }
 
 func (s *Server) templates() (*template.Template, error) {
@@ -219,7 +225,10 @@ type pageData struct {
 	// impersonating admin can tell users apart. Users cannot set it themselves.
 	ThemeColor string
 	ShowFooter bool
-	Version    string
+	// WebSSH mirrors cfg.Panel.WebSSH: the overview renders the Web SSH button
+	// only when the terminal is enabled.
+	WebSSH  bool
+	Version string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -239,6 +248,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainDel))))
 	mux.HandleFunc("/domain-update", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainUpdate))))
 	mux.HandleFunc("/init-script", s.requireAuth(s.requireActive(s.requirePost(s.handleInitScript))))
+	// The terminal is a WebSocket upgrade (a GET), so it checks expiry itself
+	// rather than going through requireActive's redirect.
+	mux.HandleFunc("/webssh", s.requireAuth(s.handleWebSSH))
+	mux.HandleFunc("/terminal", s.requireAuth(s.handleTerminal))
+	mux.HandleFunc(termAssetPath, s.requireAuth(s.handleTermAsset))
 	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshot))))
@@ -397,6 +411,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		V4Forward:         s.mgr.V4ForwardLive(),
 		ProxyEnabled:      s.mgr.HaproxyLive(),
 		ShowFooter:        s.cfg.Panel.ShowFooter,
+		WebSSH:            s.cfg.Panel.WebSSH,
 		Version:           ver.Version,
 		InitScript:        u.InitScript,
 		MaxNotesPlaintext: cfg.MaxNotesPlaintextBytes,
