@@ -140,6 +140,16 @@
       if (v) { self.input.value = ""; self._send(v); }
     });
     this.mount.addEventListener("keydown", function (e) { self._onKey(e); });
+    // A browser can move focus off the page's own element (Escape is one way),
+    // and then every keystroke goes nowhere until the user clicks back in. This
+    // window sits on a page that IS the terminal, so take the key instead of
+    // making the user find the focus again.
+    window.addEventListener("keydown", function (e) {
+      if (self.disposed || self.exited) return;
+      if (self.mount.contains(document.activeElement)) return; // already ours
+      self.input.focus();
+      self._onKey(e);
+    });
     this.mount.addEventListener("paste", function (e) { self._onPaste(e); });
     this.mount.addEventListener("wheel", function (e) { self._onWheel(e); }, { passive: false });
     // A click must leave focus on the hidden input, never on the mount itself:
@@ -513,7 +523,10 @@
     if (this.vy > maxVy) this.vy = maxVy;
     var start = total - this.rows - this.vy;
     var focused = this.mount.contains(document.activeElement);
-    var cursorRow = (this.vy === 0 && !this.modes.alt) ? this.cy : -1;
+    // The alternate screen is where the cursor matters most: vi, less and htop
+    // all run there, and an editor with no cursor tells you nothing about where
+    // you are typing.
+    var cursorRow = this.vy === 0 ? this.cy : -1;
 
     for (var y = 0; y < this.rows; y++) {
       var idx = start + y;
