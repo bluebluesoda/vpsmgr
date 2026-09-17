@@ -344,6 +344,9 @@ type AddOptions struct {
 	IPv6Addr string
 	// Days is the initial quota validity in days (0 or negative = permanent).
 	Days int
+	// FromShare is a snapshot share code. When set, the container is cloned
+	// from that checkpoint instead of being built from an image.
+	FromShare string
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -367,6 +370,20 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	}
 	if _, err := m.db.GetUserByName(name); err == nil {
 		return nil, errors.New("user already exists: " + name)
+	}
+	// Resolve the clone source before any allocation work: a dead share code
+	// (or disabled sharing) should fail immediately, not after we have picked
+	// an IP, a port block and an IPv6 block.
+	cloneOwner, cloneSnap := "", ""
+	if opt.FromShare != "" {
+		if !m.SnapshotShareEnabled() {
+			return nil, errors.New("snapshot sharing is disabled by the administrator")
+		}
+		owner, snap, err := m.resolveShare(opt.FromShare)
+		if err != nil {
+			return nil, err
+		}
+		cloneOwner, cloneSnap = owner.Name, snap
 	}
 	// The panel password is shared by a user group. A new group gets a fresh
 	// password; a new member of an existing group reuses its hash. The generated
@@ -458,14 +475,30 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.checkIncusConflict(name, ip); err != nil {
 		return nil, err
 	}
-	// Make sure the image is present locally (a remote-qualified fallback like
-	// "images:debian/13" is pulled first; the API cannot auto-fetch it inside
-	// the create call the way the old `incus launch` CLI did).
-	if err := m.lx.EnsureImage(image); err != nil {
-		return nil, fmt.Errorf("ensure image %s: %w", image, err)
-	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
-		return nil, fmt.Errorf("launch container: %w", err)
+	// Either build a fresh container from an image, or clone one from a shared
+	// checkpoint. Cloning cannot be expressed as a normal launch: the API needs
+	// the source instance plus snapshot name, and leaves the result stopped.
+	provisionImage := image
+	cloned := cloneOwner != ""
+	if cloned {
+		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
+			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, ipv6, blockStr, poolAddr,
+			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
+		}
+		// A clone always originates from a vpsmgr image, so provisioning must
+		// take the managed alias rather than the configured/fallback one.
+		provisionImage = m.cfg.Incus.Image
+	} else {
+		// Make sure the image is present locally (a remote-qualified fallback
+		// like "images:debian/13" is pulled first; the API cannot auto-fetch it
+		// inside the create call the way the old `incus launch` CLI did).
+		if err := m.lx.EnsureImage(image); err != nil {
+			return nil, fmt.Errorf("ensure image %s: %w", image, err)
+		}
+		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+			return nil, fmt.Errorf("launch container: %w", err)
+		}
 	}
 	// From here on any failure must roll the container and its host-side
 	// plumbing back. Cleanup distinguishes a SUCCESSFUL rollback (delete the DB
@@ -501,9 +534,31 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("zfs snapshot rollback setup: %w", err)
 	}
-	if err := m.Provision(name, image, pass); err != nil {
+	// A clone comes back stopped (Launch starts and waits itself), so bring it
+	// up before provisioning.
+	if cloned {
+		if err := m.lx.Start(name); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("start container: %w", err)
+		}
+		if err := m.lx.WaitReady(name, 120*time.Second); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("wait for container: %w", err)
+		}
+	}
+	if err := m.Provision(name, provisionImage, pass); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
+	}
+	// A clone carries the source's machine-id (a duplicate DUID makes dnsmasq
+	// drop DHCPv6 leases) and the source's authorized_keys, which would
+	// otherwise let the owner of the source checkpoint log straight in.
+	if cloned {
+		if err := m.regenerateMachineID(name); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("regenerate machine-id: %w", err)
+		}
+		m.clearAuthorizedKeys(name)
 	}
 	// IPv6 pass-through. Pool mode: the container binds its /128 itself
 	// (ConfigureContainerIPv6) and the host routes + proxy_ndp it

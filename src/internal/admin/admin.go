@@ -28,6 +28,7 @@ type Server struct {
 	sessions *sessionStore
 	limiter  *loginLimiter
 	flash    *flashStore
+	batches  *batchJobs
 }
 
 // New builds the admin server. maxSessions caps how many persisted admin
@@ -40,6 +41,7 @@ func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
 		sessions: newSessionStore(d, 2048),
 		limiter:  newLoginLimiter(),
 		flash:    newFlashStore(),
+		batches:  newBatchJobs(),
 	}
 }
 
@@ -75,6 +77,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/audit", s.requireAuth(s.handleAudit))
 	mux.HandleFunc("/audit/api", s.requireAuth(s.handleAuditAPI))
 	mux.HandleFunc("/user-add", s.requireAuth(s.requirePost(s.handleUserAdd)))
+	mux.HandleFunc("/user-batch", s.requireAuth(s.requirePost(s.handleUserBatch)))
+	mux.HandleFunc("/user-batch-status", s.requireAuth(s.handleUserBatchStatus))
 	mux.HandleFunc("/user-del", s.requireAuth(s.requirePost(s.handleUserDel)))
 	mux.HandleFunc("/user-quota", s.requireAuth(s.requirePost(s.requireTargetActive(s.handleUserQuota))))
 	mux.HandleFunc("/user-expiry", s.requireAuth(s.requirePost(s.handleUserExpiry)))
