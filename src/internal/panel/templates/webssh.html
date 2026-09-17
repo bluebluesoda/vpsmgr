@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="{{if eq .Lang "zh"}}zh{{else}}en{{end}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+/* A standalone window, not a modal: the whole point is that the user can drag
+   it to any size (or maximise it) and the terminal follows. */
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#0b1220;color:#e2e8f0;display:flex;flex-direction:column;
+     font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif}
+header{display:flex;align-items:center;gap:.6rem;padding:.4rem .7rem;background:#0f172a;
+       border-bottom:1px solid #1e293b;font-size:.78rem;flex:none}
+header .host{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#22c55e}
+header .host::before{content:">_ ";opacity:.7}
+header .status{color:#7c8aa0}
+header .spacer{flex:1 1 auto}
+header button{background:#12203a;color:#cbd5e1;border:1px solid #1e3a5f;border-radius:6px;
+              padding:.2rem .6rem;font-size:.76rem;cursor:pointer;font-family:inherit}
+header button:hover{background:#18294a}
+header .others{color:#fbbf24;display:flex;align-items:center;gap:.4rem}
+header .others button{padding:.1rem .45rem;font-size:.72rem}
+main{flex:1 1 auto;min-height:0}
+/* The keys a browser keeps for itself, as buttons. Deliberately small: the
+   point is that typing works, this is only for the handful that cannot. */
+.keys{display:flex;align-items:center;gap:.25rem;padding:.25rem .6rem;background:#0d1626;
+      border-bottom:1px solid #1e293b;flex:none}
+.keys .sep{width:1px;height:1.1rem;background:#1e3a5f;margin:0 .25rem}
+.keys button{background:#12203a;color:#9fb3c8;border:1px solid #1e3a5f;border-radius:5px;
+             padding:.1rem .45rem;font-size:.74rem;cursor:pointer;font-family:ui-monospace,
+             SFMono-Regular,Menlo,Consolas,monospace;min-width:2rem;line-height:1.5}
+.keys button:hover{background:#18294a;color:#e2e8f0}
+.keys button:active{background:#15803d;border-color:#15803d;color:#fff}
+main>div{height:100%}
+.term{height:100%;outline:none;padding:.5rem .6rem;background:#0f172a;overflow:hidden;cursor:text;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;
+      font-size:13px;line-height:1.35;color:#e2e8f0}
+.term-rows{white-space:pre;user-select:text}
+.term-row{white-space:pre;height:1.35em;overflow:hidden}
+.term-probe{position:absolute;visibility:hidden;white-space:pre;line-height:1.35}
+.term-input{position:absolute;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;
+            resize:none;overflow:hidden}
+.ask{position:fixed;inset:0;background:rgba(2,6,16,.72);display:flex;align-items:center;
+     justify-content:center;z-index:10}
+/* display:flex above would otherwise beat the hidden attribute, leaving an
+   invisible full-screen sheet swallowing every click. */
+.ask[hidden]{display:none}
+.ask-box{background:#0f172a;border:1px solid #1e3a5f;border-radius:10px;padding:1.1rem 1.2rem;
+         max-width:26rem;font-size:.85rem;line-height:1.5}
+.ask-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
+.ask-actions button{background:#12203a;color:#cbd5e1;border:1px solid #1e3a5f;border-radius:6px;
+                    padding:.35rem .8rem;font-size:.8rem;cursor:pointer;font-family:inherit}
+.ask-actions button.go{background:#15803d;border-color:#15803d;color:#fff}
+.ask-actions button:hover{filter:brightness(1.15)}
+</style>
+</head>
+<body>
+<header>
+<span class="host">{{.User.Name}}</span>
+<span class="status" id="status">{{if eq .Lang "zh"}}连接中…{{else}}connecting…{{end}}</span>
+<span class="others" id="others" hidden></span>
+<span class="spacer"></span>
+<button type="button" id="fsBtn">{{if eq .Lang "zh"}}全屏{{else}}Fullscreen{{end}}</button>
+<button type="button" id="reBtn">{{if eq .Lang "zh"}}重连{{else}}Reconnect{{end}}</button>
+</header>
+<div class="keys" id="keys">
+  <button type="button" data-key="Escape">Esc</button>
+  <button type="button" data-key="Tab">Tab</button>
+  <span class="sep"></span>
+  <button type="button" data-key="ArrowLeft">←</button>
+  <button type="button" data-key="ArrowUp">↑</button>
+  <button type="button" data-key="ArrowDown">↓</button>
+  <button type="button" data-key="ArrowRight">→</button>
+  <span class="sep"></span>
+  <button type="button" data-ctl="c">^C</button>
+  <button type="button" data-ctl="z">^Z</button>
+  <button type="button" data-ctl="d">^D</button>
+</div>
+<main><div id="termMount" tabindex="0"></div></main>
+<div class="ask" id="ask" hidden>
+  <div class="ask-box">
+    <p id="askText"></p>
+    <div class="ask-actions">
+      <button type="button" id="askCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+      <button type="button" id="askTake" class="go">{{if eq .Lang "zh"}}关闭其他终端并继续{{else}}Close the others and continue{{end}}</button>
+    </div>
+  </div>
+</div>
+<script src="{{.Prefix}}/assets/term.js"></script>
+<script>
+(function(){
+  var LANG='{{.Lang}}';
+  var P='{{.Prefix}}';
+  var mount=document.getElementById('termMount');
+  var status=document.getElementById('status');
+  var othersEl=document.getElementById('others');
+  var ask=document.getElementById('ask');
+  var askText=document.getElementById('askText');
+  var session=null;
+  var pendingDecide=null;
+  var T=function(zh,en){ return LANG==='zh'?zh:en; };
+
+  function setStatus(t){ status.textContent=t; }
+
+  // The notice stays visible while other windows hold shells, and offers the
+  // one action that matters: take their slots back.
+  function setOthers(n){
+    if(!othersEl)return;
+    if(n<=0){ othersEl.hidden=true; othersEl.textContent=''; return; }
+    othersEl.hidden=false;
+    othersEl.textContent=T('另有 '+n+' 个终端在运行',' +'+n+' other terminal(s)');
+    var b=document.createElement('button');
+    b.type='button';
+    b.textContent=T('全部关闭','Close them');
+    b.addEventListener('click',function(){ if(session)session.closeOthers(); });
+    othersEl.appendChild(b);
+  }
+
+  function start(){
+    if(session){ try{session.close();}catch(e){} session=null; }
+    ask.hidden=true;
+    setStatus(T('连接中…','connecting…'));
+    session=window.vpsmgrOpenTerminal(mount, P+'/terminal', {
+      msg:{
+        connecting:T('连接中…','connecting…'),
+        connected:T('已连接','connected'),
+        reconnecting:T('正在重新连接','reconnecting'),
+        ended:T('会话已结束','session ended'),
+        disconnected:T('已断开，点「重连」再试','disconnected — press Reconnect'),
+        busy:T('已有其他终端在运行','another terminal is already open')
+      },
+      onStatus:setStatus,
+      onOthers:setOthers,
+      onReady:function(){ ask.hidden=true; pendingDecide=null; },
+      onBusy:function(n,decide){
+        askText.textContent=T(
+          '你的账号下还有 '+n+' 个终端在运行（可能是关掉的窗口，或刚断线还在等待恢复的会话）。要关闭它们并在这里继续吗？',
+          'Your account still has '+n+' other terminal(s) open — a closed window, or a session waiting to be resumed. Close them and continue here?');
+        ask.hidden=false;
+        pendingDecide=decide;
+      },
+      onExit:function(code){ setStatus(T('会话已结束','session ended')+(code?(' · exit '+code):'')); },
+      onClose:function(){ setStatus(T('已断开，点「重连」再试','disconnected — press Reconnect')); }
+    });
+  }
+
+  function answerAsk(take){
+    var d=pendingDecide;
+    pendingDecide=null;
+    ask.hidden=true;
+    if(d)d(take);
+  }
+  document.getElementById('askTake').addEventListener('click',function(){ answerAsk(true); });
+  document.getElementById('askCancel').addEventListener('click',function(){ answerAsk(false); });
+
+  // Reconnect does double duty: a fresh start, and the manual path once the
+  // automatic retries have given up.
+  // The bar must not take focus: it is a convenience for keys the browser will
+  // not deliver, and stealing keyboard focus would defeat the point.
+  var keys=document.getElementById('keys');
+  // A control character cannot be written into an HTML attribute, so the
+  // buttons carry a name and the byte is looked up here.
+  var CTL={c:"\u0003",z:"\u001a",d:"\u0004"};
+  keys.addEventListener('mousedown',function(e){ e.preventDefault(); });
+  keys.addEventListener('click',function(e){
+    var b=e.target.closest('button');
+    if(!b||!session)return;
+    if(b.dataset.key)session.key(b.dataset.key);
+    else if(b.dataset.ctl&&CTL[b.dataset.ctl])session.raw(CTL[b.dataset.ctl]);
+  });
+
+  document.getElementById('reBtn').addEventListener('click',function(){
+    if(session&&session.reconnect){ session.reconnect(); return; }
+    start();
+  });
+  document.getElementById('fsBtn').addEventListener('click',function(){
+    if(document.fullscreenElement){ document.exitFullscreen(); return; }
+    if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+  });
+
+  // Remember the size the user dragged the window to, so the panel reopens it
+  // the same way. The opener reads this key.
+  var saveT=null;
+  window.addEventListener('resize',function(){
+    if(saveT)clearTimeout(saveT);
+    saveT=setTimeout(function(){
+      try{ localStorage.setItem('vpsmgr_ssh_size',JSON.stringify([window.outerWidth,window.outerHeight])); }catch(e){}
+    },400);
+  });
+
+  start();
+  mount.focus();
+})();
+</script>
+</body>
+</html>

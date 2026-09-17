@@ -60,6 +60,11 @@ code.copyable.copied{outline:1px solid var(--ok);outline-offset:2px;color:var(--
 .warn{background:var(--warn);color:#fff;border-color:var(--warn)}
 .danger{background:var(--danger);color:#fff;border-color:var(--danger)}
 .violet{background:var(--violet-bg);color:var(--violet-fg);border-color:var(--violet-border)}
+/* The Web SSH button deliberately breaks from the panel's palette: a black key
+   with green type is what a remote shell looks like everywhere else. */
+.ssh{background:#04120a;color:#22c55e;border-color:#15803d;
+     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em}
+.ssh:hover{filter:none;background:#062012;box-shadow:0 0 0 3px rgba(34,197,94,.2)}
 .btnrow{display:flex;flex-wrap:wrap;gap:.45rem;margin-bottom:.55rem}
 .btnrow:last-child{margin-bottom:0}
 form.inline{display:inline}
@@ -327,6 +332,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn ok">{{if eq .Lang "zh"}}开机{{else}}Start{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="stop"><button class="btn warn">{{if eq .Lang "zh"}}关机{{else}}Stop{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="restart"><button class="btn">{{if eq .Lang "zh"}}重启{{else}}Restart{{end}}</button></form>
+{{if .WebSSH}}<button class="btn ssh" type="button" id="sshBtn" title="{{if eq .Lang "zh"}}在独立窗口里打开一个 shell{{else}}Open a shell in its own window{{end}}">Web SSH</button>{{end}}
 </div>
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
@@ -2111,6 +2117,27 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       }else showLocked();
     });
   }).catch(function(){showEnable();});
+})();
+// Web SSH: opens the shell in its own browser window. A window can be dragged
+// to any size, moved between screens and maximised; a modal cannot, and the
+// terminal is exactly the thing that wants more room.
+(function(){
+  var btn=document.getElementById('sshBtn');
+  if(!btn)return;
+  var LANG='{{.Lang}}';
+  var P='{{.Prefix}}';
+  btn.addEventListener('click',function(){
+    var size=[1040,660];
+    try{
+      var v=JSON.parse(localStorage.getItem('vpsmgr_ssh_size'));
+      if(v&&v[0]>=420&&v[1]>=320)size=v;   // the size the user last dragged it to
+    }catch(e){}
+    var feat='width='+size[0]+',height='+size[1]+
+             ',menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes';
+    var w=window.open(P+'/webssh','vpsmgr_ssh',feat);
+    if(w){ w.focus(); return; }
+    toast(LANG==='zh'?'弹窗被浏览器拦截，请允许本站点弹出窗口':'popup blocked — allow popups for this site',true);
+  });
 })();
 </script>
 </body>

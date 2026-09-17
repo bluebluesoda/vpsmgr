@@ -38,6 +38,11 @@ func useTempProxyLayout(t *testing.T) {
 func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
 	c := cfg.Default()
+	// Point the Incus client at a socket that cannot exist, so a test never
+	// reaches a real container. Several tests drive handlers that would
+	// otherwise power-cycle or delete whatever instance happens to share a
+	// fixture's name on the machine running the suite.
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
 	c.Panel.URLPath = testSecret
 	c.Panel.PublicIP = "127.0.0.1"
 	c.Panel.SessionDays = 3
@@ -2062,7 +2067,7 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 		Prefix: "/" + testSecret,
 		Knowledge: []knowledgeArticle{{
 			ID: 7, Title: "Getting started", UpdatedAt: "2026-08-01T10:00:00Z",
-			HTML: template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
+			HTML:   template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
 			Source: "REGINNAME=*#*#region#*#*",
 		}},
 	})
