@@ -223,7 +223,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
-    <div style="margin:-4px 0 10px"><button type="button" class="btn" id="batchBtn">{{if eq .Lang "zh"}}批量创建用户（从分享快照克隆）{{else}}Batch create (clone from a shared snapshot){{end}}</button></div>
+    <div style="margin:-4px 0 10px"><button type="button" class="btn" id="batchBtn">{{if eq .Lang "zh"}}批量创建用户{{else}}Batch create{{end}}</button></div>
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field create-field name-field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
@@ -507,31 +507,29 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h3>{{if eq .Lang "zh"}}批量创建用户{{else}}Batch create users{{end}}</h3>
     <form action="{{.Prefix}}/user-batch" method="post" id="batchForm">
       <div class="field">
-        <label>{{if eq .Lang "zh"}}用户名（每行一个）{{else}}Usernames (one per line){{end}}</label>
+        <label>{{if eq .Lang "zh"}}用户名{{else}}Usernames{{end}}</label>
         <textarea name="names" id="batchNames" rows="7" spellcheck="false" required placeholder="alice&#10;bob&#10;carol"></textarea>
-        <small style="color:#6b7280;display:block;margin-top:4px">{{if eq .Lang "zh"}}最多 50 个。只要有任何一个名字非法、重复或已存在，整批都不会执行。{{else}}Max 50. If any name is invalid, listed twice or already taken, nothing is created.{{end}}</small>
+        <small style="color:#6b7280;display:block;margin-top:4px">{{if eq .Lang "zh"}}每行一个，最多 50 个{{else}}One per line, max 50{{end}}</small>
       </div>
       <div class="field">
         <label>{{if eq .Lang "zh"}}分享快照 UUID{{else}}Shared snapshot UUID{{end}}</label>
         <input name="share" id="batchShare" autocomplete="off" spellcheck="false" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-        <small style="color:#6b7280;display:block;margin-top:4px">{{if eq .Lang "zh"}}每个容器都从该检查点克隆。快照里的内容（含源用户的密钥与数据）会被复制到每个新用户。{{else}}Every container is cloned from this checkpoint. Its contents — including the source user's keys and data — are copied into each new user.{{end}}</small>
       </div>
       <div class="field">
-        <label>{{if eq .Lang "zh"}}建号时激活的管理员公钥{{else}}Admin keys to activate on creation{{end}}</label>
+        <label>{{if eq .Lang "zh"}}管理员公钥{{else}}Admin keys{{end}}</label>
         <div id="batchKeys" style="display:flex;flex-direction:column;gap:6px">
         {{range .AdminKeys}}
           <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" name="akeys" value="{{.ID}}" style="width:auto;flex:none"><span style="flex:none">{{.Name}}</span><span style="color:#6b7280;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{.Key}}</span></label>
         {{end}}
         </div>
-        {{if not .AdminKeys}}<div style="color:#6b7280;font-size:12px">{{if eq .Lang "zh"}}还没有公钥，请先在「SSH 公钥管理」里添加。{{else}}No keys yet — add one in the SSH public keys modal first.{{end}}</div>{{end}}
-        <small style="color:#6b7280;display:block;margin-top:4px">{{if eq .Lang "zh"}}勾选的公钥会在建号时写入这些用户的机器；用户之后可在自己的面板里取消勾选。不勾选也照样建号，只是不带任何密钥。{{else}}Ticked keys are written into each new machine; users can untick them in their own panel later. Leaving them unticked still creates the users, just without any key.{{end}}</small>
+        {{if not .AdminKeys}}<div style="color:#6b7280;font-size:12px">{{if eq .Lang "zh"}}未添加公钥{{else}}No admin keys{{end}}</div>{{end}}
       </div>
       <div class="form-grid">
         <div class="field"><label>CPU</label><input name="cpu" type="number" min="0.1" step="any" value="1" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" type="number" min="0" step="1" value="0"></div>
-        <div class="field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
+        <div class="field"><label>{{if eq .Lang "zh"}}有效期天数{{else}}Validity days{{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
       </div>
       <div class="foot">
         <button type="button" id="batchCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -547,7 +545,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h3>{{if eq .Lang "zh"}}批量创建进度{{else}}Batch create progress{{end}} <span id="batchProgSum" style="color:#6b7280;font-size:13px"></span></h3>
     <div id="batchProgList" style="display:flex;flex-direction:column;gap:6px;max-height:44vh;overflow:auto"></div>
     <div id="batchCredWrap" hidden style="margin-top:14px">
-      <div style="color:#6b7280;font-size:12px;margin-bottom:4px">{{if eq .Lang "zh"}}一次性凭据：只存在内存里，刷新或关闭页面后不再显示。{{else}}One-time credentials: kept in memory only, gone once you reload.{{end}}</div>
+      <div style="color:#6b7280;font-size:12px;margin-bottom:4px">{{if eq .Lang "zh"}}刷新或关闭页面后不再显示{{else}}Gone once you reload{{end}}</div>
       <div class="body" id="batchCred" style="max-height:22vh;overflow:auto"></div>
     </div>
     <div class="foot">

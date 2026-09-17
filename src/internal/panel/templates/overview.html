@@ -207,15 +207,17 @@ footer a{color:var(--muted);text-decoration:underline}
 .kb-article pre{position:relative;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:1.8rem .8rem .7rem;overflow:auto;margin:.55rem 0}
 .kb-article pre code{background:none;color:inherit;padding:0}
 .kb-article .kb-copy{position:absolute;top:.35rem;right:.35rem;font-size:.72rem;padding:.15rem .5rem}
-.kb-toolbar{display:flex;justify-content:flex-end;margin:.1rem 0 .15rem}
-.kb-blank{font:inherit;color:#fde68a;background:rgba(148,163,184,.16);border:none;border-bottom:1px dashed #94a3b8;border-radius:3px 3px 0 0;padding:0 .2rem;margin:0 .1rem;min-width:4ch;outline:none}
-.kb-blank::placeholder{color:rgba(226,232,240,.45)}
-.kb-blank:focus{border-bottom-color:var(--accent);background:rgba(148,163,184,.26)}
+/* A blank is an exam-style underline, not a box: no background, no padding and
+   a height pinned to one line, so it never stretches the code line it sits in.
+   JS sets the width from the content, so it grows with what is typed without
+   ever taking over the rest of the line. */
+.kb-article .kb-blank{font:inherit;color:inherit;background:none;border:none;border-bottom:1px solid #facc15;border-radius:0;padding:0;margin:0 .15em;height:1.05em;line-height:1.05em;min-width:3ch;outline:none;vertical-align:baseline}
+.kb-article .kb-blank::placeholder{color:#facc15;opacity:1}
+.kb-article .kb-blank:focus{border-bottom-color:var(--accent)}
 .kb-hint{font-size:.72rem;color:var(--muted);margin:.1rem 0 .55rem}
-.kb-copy.kb-gated{display:none}
-.kb-copy.kb-pulse{animation:kbPulse 1.6s ease-in-out infinite}
-@keyframes kbPulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.55)}50%{box-shadow:0 0 0 .32rem rgba(56,189,248,0)}}
-@media (prefers-reduced-motion:reduce){.kb-copy.kb-pulse{animation:none;outline:1px solid var(--accent)}}
+.kb-copy.kb-pulse{animation:kbPulse 1.4s ease-in-out infinite;background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+@keyframes kbPulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.9);transform:scale(1)}50%{box-shadow:0 0 0 .5rem rgba(56,189,248,0);transform:scale(1.08)}}
+@media (prefers-reduced-motion:reduce){.kb-copy.kb-pulse{animation:none;outline:2px solid var(--accent)}}
 .kb-back{align-self:flex-start;margin-bottom:.5rem}
 @media (max-width:600px){
   .overlay{padding:0}
@@ -554,7 +556,10 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="modal kb-modal">
 <div class="kb-head">
 <h3>{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</h3>
+<div style="display:flex;gap:.5rem;align-items:center">
+<button class="btn" type="button" id="kbCopyAll" hidden>{{if eq .Lang "zh"}}复制全文为 MD{{else}}Copy all as MD{{end}}</button>
 <button class="btn" type="button" id="kbClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+</div>
 </div>
 {{if .Knowledge}}
 {{if gt (len .Knowledge) 1}}
@@ -570,7 +575,6 @@ footer a{color:var(--muted);text-decoration:underline}
 {{range .Knowledge}}
 <div class="kb-article" id="kb-art-{{.ID}}"{{if gt (len $.Knowledge) 1}} hidden{{end}}>
 {{if gt (len $.Knowledge) 1}}<button type="button" class="btn kb-back" data-kb-back="1">{{if eq $.Lang "zh"}}← 返回{{else}}← Back{{end}}</button>{{end}}
-<div class="kb-toolbar"><button type="button" class="btn kb-copy-all">{{if eq $.Lang "zh"}}复制全文{{else}}Copy all{{end}}</button></div>
 <h2>{{.Title}}</h2>
 {{.HTML}}
 <textarea class="kb-src" hidden readonly>{{.Source}}</textarea>
@@ -1158,8 +1162,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var arts=Array.prototype.slice.call(modal.querySelectorAll('.kb-article'));
   function open(){modal.classList.add('show');}
   function closeM(){modal.classList.remove('show');}
-  function showList(){if(list)list.style.display='';arts.forEach(function(a){a.hidden=true;});}
-  function showArt(id){if(list)list.style.display='none';arts.forEach(function(a){a.hidden=(a.id!=='kb-art-'+id);});}
+  function showList(){if(list)list.style.display='';arts.forEach(function(a){a.hidden=true;});syncCopyAll();}
+  function showArt(id){if(list)list.style.display='none';arts.forEach(function(a){a.hidden=(a.id!=='kb-art-'+id);});syncCopyAll();}
   btn.addEventListener('click',function(){
     open();
     if(arts.length===1)showArt(arts[0].id.replace('kb-art-',''));
@@ -1217,18 +1221,16 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var n=Math.max(dispLen(inp.value||''),dispLen(inp.getAttribute('placeholder')||''));
     inp.style.width=(n+1)+'ch';
   }
-  // The copy button stays hidden until every blank in its own block is filled.
-  // Blocks without blanks keep the button always on (unchanged behaviour).
-  function gate(block){
+  // The copy button is always on: a block may legitimately have optional or
+  // annotated blanks, and copying then simply yields the text with those parts
+  // left empty. It starts breathing as soon as ANY blank in that block has
+  // content, so the reader can see their input made it into the copy.
+  function pulseBlock(block){
     var copyBtn=block.querySelector('.kb-copy');
     if(!copyBtn)return;
-    var blanks=block.querySelectorAll('.kb-blank');
-    if(!blanks.length)return;
-    var filled=0;
-    blanks.forEach(function(i){if(i.value.trim())filled++;});
-    var ok=filled===blanks.length;
-    copyBtn.classList.toggle('kb-gated',!ok);
-    copyBtn.classList.toggle('kb-pulse',ok);
+    var any=false;
+    block.querySelectorAll('.kb-blank').forEach(function(i){if(i.value.trim())any=true;});
+    copyBtn.classList.toggle('kb-pulse',any);
   }
   // The hint shows once anything is typed, and says where the values live.
   function hint(block){
@@ -1291,10 +1293,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     block.querySelectorAll('.kb-blank').forEach(function(inp){
       fit(inp);
       inp.addEventListener('input',function(){
-        fit(inp);gate(block);hint(block);scheduleSave(art);
+        fit(inp);pulseBlock(block);hint(block);scheduleSave(art);
       });
     });
-    gate(block);
+    pulseBlock(block);
     hint(block);
   }
   arts.forEach(function(art){
@@ -1311,9 +1313,18 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       pre.appendChild(b);
       wire(art,pre);
     });
-    var all=art.querySelector('.kb-copy-all');
-    if(all)all.addEventListener('click',function(){copy(articleText(art),all);});
   });
+
+  // The head button copies whichever article is on screen; in the list view
+  // there is nothing to copy, so it hides.
+  var copyAll=document.getElementById('kbCopyAll');
+  function currentArt(){for(var i=0;i<arts.length;i++){if(!arts[i].hidden)return arts[i];}return null;}
+  function syncCopyAll(){if(copyAll)copyAll.hidden=!currentArt();}
+  if(copyAll)copyAll.addEventListener('click',function(){
+    var art=currentArt();
+    if(art)copy(articleText(art),copyAll);
+  });
+  syncCopyAll();
 })();
 // Quota validity countdown: renders "剩余 N 天 M 小时" (or 已到期) from the
 // server-provided absolute deadline, refreshed every minute. Read-only; the

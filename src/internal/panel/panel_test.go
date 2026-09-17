@@ -2076,7 +2076,7 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 	}
 	// The "copy all" button needs the raw Markdown, which rides along in a
 	// hidden textarea (html/template escapes the textarea as RCDATA).
-	for _, want := range []string{`class="btn kb-copy-all"`, `class="kb-src"`, "*#*#region#*#*"} {
+	for _, want := range []string{`id="kbCopyAll"`, `class="kb-src"`, "*#*#region#*#*"} {
 		if !strings.Contains(one, want) {
 			t.Errorf("knowledge article is missing %q", want)
 		}

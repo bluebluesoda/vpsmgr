@@ -1291,7 +1291,7 @@ func TestOverviewBatchUI(t *testing.T) {
 	}
 	// "No keys yet" also appears (hidden) in the pre-existing SSH-keys modal,
 	// so assert on this form's own wording.
-	const emptyHint = "add one in the SSH public keys modal first"
+	const emptyHint = "No admin keys"
 	if strings.Contains(withKeys, emptyHint) {
 		t.Error("the empty-keys hint must not show when a key exists")
 	}
