@@ -41,6 +41,11 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 	}
 	t.Setenv("VPSMGR_HAPROXY_BIN", bin)
 	c := cfg.Default()
+	// Point the Incus client at a socket that cannot exist, so a test never
+	// reaches a real container. Several tests drive handlers that would
+	// otherwise power-cycle or delete whatever instance happens to share a
+	// fixture's name on the machine running the suite.
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
 	c.Panel.URLPath = "UserSecRet99"
 	c.Panel.AdminPath = testAdminSecret
 	c.Panel.PublicIP = "127.0.0.1"

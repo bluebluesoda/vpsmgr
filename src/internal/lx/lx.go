@@ -1106,67 +1106,17 @@ func (c *Client) Exec(name string, command []string, stdin string, timeout time.
 		Group:            0,
 	}
 
-	// POST the exec operation. With wait-for-websocket the response carries the
-	// websocket secrets (fds) in the operation metadata.
-	body, err := json.Marshal(req)
+	// With wait-for-websocket the response carries the websocket secrets (fds)
+	// in the operation metadata; execOpen posts the request and connects them.
+	opID, conns, err := c.execOpen(ctx, name, req)
 	if err != nil {
 		return "", err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.base+"/1.0/instances/"+url.PathEscape(name)+"/exec", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	var op struct {
-		Type       string `json:"type"`
-		Operation  string `json:"operation"`
-		Error      string `json:"error"`
-		StatusCode int    `json:"status_code"`
-		Metadata   struct {
-			Status string `json:"status"`
-			Err    string `json:"err"`
-			Inner  struct {
-				Fds map[string]string `json:"fds"`
-			} `json:"metadata"`
-		} `json:"metadata"`
-	}
-	if err := json.Unmarshal(raw, &op); err != nil {
-		return "", fmt.Errorf("incus exec %s: bad response: %w", name, err)
-	}
-	if op.Type == "error" {
-		return "", errors.New(op.Error)
-	}
-	if op.Operation == "" {
-		return "", fmt.Errorf("incus exec %s: no operation returned", name)
-	}
-	if len(op.Metadata.Inner.Fds) == 0 {
-		return "", fmt.Errorf("incus exec %s: no websocket fds in response", name)
-	}
-	opID := strings.TrimPrefix(op.Operation, "/1.0/operations/")
-	wsURL := func(secret string) string {
-		return "ws://unix/1.0/operations/" + opID + "/websocket?secret=" + secret
-	}
-
-	dialer := c.dialer()
-	conns := make(map[string]*websocket.Conn, len(op.Metadata.Inner.Fds))
-	for k, secret := range op.Metadata.Inner.Fds {
-		ws, _, err := dialer.DialContext(ctx, wsURL(secret), nil)
-		if err != nil {
-			return "", fmt.Errorf("incus exec %s: connect fd %s: %w", name, k, err)
+	defer func() {
+		for _, ws := range conns {
+			_ = ws.Close()
 		}
-		conns[k] = ws
-		defer ws.Close()
-	}
+	}()
 
 	stdout, ok1 := conns["1"]
 	stderr, ok2 := conns["2"]
