@@ -137,3 +137,56 @@ func TestTermRegistryLimits(t *testing.T) {
 		t.Error("registry went negative")
 	}
 }
+
+// The shell lives in its own window, so the panel serves a page for it rather
+// than opening a modal.
+func TestWebSSHPage(t *testing.T) {
+	srv, d := newTestServer(t)
+	cookie := sessionCookie(t, d, "alice")
+	h := srv.Handler()
+
+	rr := doReq(t, h, http.MethodGet, srv.p("/webssh"), nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /webssh = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`id="termMount"`, `id="fsBtn"`, `id="reBtn"`,
+		srv.p(termAssetPath), `'/terminal'`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("webssh page missing %q", want)
+		}
+	}
+	// It must never carry the panel's own chrome (it is a bare terminal window).
+	if strings.Contains(body, `id="kbModal"`) || strings.Contains(body, "Sticky notes") {
+		t.Error("webssh page should be standalone, not the overview")
+	}
+
+	// Without a session it is the ordinary login redirect.
+	rr = doReq(t, h, http.MethodGet, srv.p("/webssh"), nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Errorf("GET /webssh without a session = %d, want the login redirect", rr.Code)
+	}
+}
+
+// The button belongs next to Start/Stop/Restart, and must read as a shell.
+func TestOverviewWebSSHButton(t *testing.T) {
+	srv, _ := newTestServer(t)
+	body := srv.renderToString(t, "overview.html", pageData{
+		User: &db.User{Name: "alice"}, Prefix: "/" + testSecret, Lang: langEn,
+	})
+	i := strings.Index(body, `id="sshBtn"`)
+	if i < 0 {
+		t.Fatal("overview is missing the Web SSH button")
+	}
+	if !strings.Contains(body[:i], `value="restart"`) {
+		t.Error("the Web SSH button should sit right after Start/Stop/Restart")
+	}
+	if !strings.Contains(body[i-200:i+200], `class="btn ssh"`) {
+		t.Error("the Web SSH button should carry the ssh style")
+	}
+	if strings.Contains(body, `id="termModal"`) {
+		t.Error("the terminal must no longer be a modal")
+	}
+}

@@ -102,6 +102,29 @@ var termUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return csrf.SameOrigin(r) },
 }
 
+// handleWebSSH serves the standalone terminal window.
+//
+// It is a page rather than a modal on purpose: the terminal is the one thing in
+// the panel that wants more room, and only a real browser window can be dragged
+// to any size, moved to another screen or maximised. The page remembers the
+// size it was last resized to, so the next open comes back the same way.
+func (s *Server) handleWebSSH(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if u == nil {
+		http.Redirect(w, r, s.p("/login"), http.StatusFound)
+		return
+	}
+	if s.isExpired(r) {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_account_expired"))
+		return
+	}
+	s.render(w, r, "webssh.html", pageData{
+		User:   u,
+		Prefix: s.p(""),
+		Title:  u.Name + " — Web SSH",
+	})
+}
+
 // handleTerminal serves an interactive shell for the session's own container.
 //
 // The container is always taken from the session, never from the request: the

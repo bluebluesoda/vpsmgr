@@ -247,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/init-script", s.requireAuth(s.requireActive(s.requirePost(s.handleInitScript))))
 	// The terminal is a WebSocket upgrade (a GET), so it checks expiry itself
 	// rather than going through requireActive's redirect.
+	mux.HandleFunc("/webssh", s.requireAuth(s.handleWebSSH))
 	mux.HandleFunc("/terminal", s.requireAuth(s.handleTerminal))
 	mux.HandleFunc(termAssetPath, s.requireAuth(s.handleTermAsset))
 	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
