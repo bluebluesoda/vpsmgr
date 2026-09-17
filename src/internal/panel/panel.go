@@ -91,10 +91,16 @@ type Server struct {
 	mgr     *mgr.Manager
 	limiter *loginLimiter
 	flash   *flashStore
+	terms   *termRegistry
 }
 
 func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
-	return &Server{cfg: c, db: d, mgr: m, limiter: newLoginLimiter(), flash: newFlashStore()}
+	return &Server{
+		cfg: c, db: d, mgr: m,
+		limiter: newLoginLimiter(),
+		flash:   newFlashStore(),
+		terms:   newTermRegistry(),
+	}
 }
 
 func (s *Server) templates() (*template.Template, error) {
@@ -239,6 +245,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainDel))))
 	mux.HandleFunc("/domain-update", s.requireAuth(s.requireActive(s.requirePost(s.handleDomainUpdate))))
 	mux.HandleFunc("/init-script", s.requireAuth(s.requireActive(s.requirePost(s.handleInitScript))))
+	// The terminal is a WebSocket upgrade (a GET), so it checks expiry itself
+	// rather than going through requireActive's redirect.
+	mux.HandleFunc("/terminal", s.requireAuth(s.handleTerminal))
+	mux.HandleFunc(termAssetPath, s.requireAuth(s.handleTermAsset))
 	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshot))))

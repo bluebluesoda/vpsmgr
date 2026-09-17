@@ -188,8 +188,8 @@ footer a{color:var(--muted);text-decoration:underline}
 /* knowledge base: a large panel (nearly fullscreen on phones) with the article
    list and server-rendered Markdown */
 .kb-modal{max-width:1000px;width:96vw;max-height:90vh;overflow:auto;display:flex;flex-direction:column;align-items:stretch}
-.kb-modal .kb-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem}
-.kb-modal .kb-head h3{margin:0}
+.kb-modal .kb-head,.term-modal .kb-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem}
+.kb-modal .kb-head h3,.term-modal .kb-head h3{margin:0}
 .kb-list{display:flex;flex-direction:column;gap:.4rem}
 .kb-item{display:flex;justify-content:space-between;align-items:center;gap:.6rem;text-align:left;width:100%;padding:.55rem .7rem;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);cursor:pointer;font:inherit}
 .kb-item:hover{border-color:var(--accent)}
@@ -219,6 +219,17 @@ footer a{color:var(--muted);text-decoration:underline}
 @keyframes kbPulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.9);transform:scale(1)}50%{box-shadow:0 0 0 .5rem rgba(56,189,248,0);transform:scale(1.08)}}
 @media (prefers-reduced-motion:reduce){.kb-copy.kb-pulse{animation:none;outline:2px solid var(--accent)}}
 .kb-back{align-self:flex-start;margin-bottom:.5rem}
+/* Terminal: the mount is sized by CSS and the emulator measures it to work out
+   how many rows and columns fit. */
+.term-modal{width:min(1100px,96vw);height:min(720px,92vh);padding:.9rem;display:flex;flex-direction:column}
+.term-status{font-size:.75rem;color:var(--muted)}
+.term-mount{position:relative;flex:1 1 auto;min-height:0;background:#0f172a;border-radius:8px;padding:.6rem;overflow:hidden;cursor:text}
+.term{outline:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;font-size:13px;line-height:1.35;color:#e2e8f0}
+.term-probe{position:absolute;visibility:hidden;white-space:pre;line-height:1.35}
+.term-input{position:absolute;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;resize:none;overflow:hidden}
+.term-rows{white-space:pre;user-select:text}
+.term-row{white-space:pre;height:1.35em;overflow:hidden}
+@media (max-width:600px){.term-modal{width:100vw;height:100vh;max-height:100vh;border-radius:0}}
 @media (max-width:600px){
   .overlay{padding:0}
   .kb-modal{width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0;padding:1rem}
@@ -334,6 +345,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <button class="btn" id="kbBtn">{{if eq .Lang "zh"}}知识库{{else}}Knowledge base{{end}}</button>
 <button class="btn" id="sshKeysBtn">{{if eq .Lang "zh"}}SSH 密钥{{else}}SSH keys{{end}}</button>
 <button class="btn" id="initBtn">{{if eq .Lang "zh"}}初始化脚本{{else}}Init script{{end}}</button>
+<button class="btn accent" id="termBtn">{{if eq .Lang "zh"}}终端{{else}}Terminal{{end}}</button>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 {{end}}
@@ -552,6 +564,19 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 </div>
 
+<div class="overlay" id="termModal">
+<div class="modal term-modal">
+<div class="kb-head">
+<h3 id="termTitle">{{if eq .Lang "zh"}}终端{{else}}Terminal{{end}}</h3>
+<div style="display:flex;gap:.5rem;align-items:center">
+<span class="term-status" id="termStatus"></span>
+<button class="btn" type="button" id="termClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+</div>
+</div>
+<div class="term-mount" id="termMount" tabindex="0"></div>
+</div>
+</div>
+
 <div class="overlay" id="kbModal">
 <div class="modal kb-modal">
 <div class="kb-head">
@@ -663,6 +688,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 </div>
 </div>
 
+<script src="{{.Prefix}}/assets/term.js"></script>
 <script>
 // Dynamic CPU limit countdown: while capped, tick down the remaining time
 // locally from the server-provided expiry; when it reaches zero, reload so the
@@ -2111,6 +2137,51 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       }else showLocked();
     });
   }).catch(function(){showEnable();});
+})();
+// Terminal: opens the modal, starts a session against /terminal, and tears it
+// down on close so the shell does not outlive the dialog.
+(function(){
+  var btn=document.getElementById('termBtn');
+  var modal=document.getElementById('termModal');
+  var mount=document.getElementById('termMount');
+  var close=document.getElementById('termClose');
+  var status=document.getElementById('termStatus');
+  if(!btn||!modal||!mount)return;
+  var LANG='{{.Lang}}';
+  var P='{{.Prefix}}';
+  var session=null;
+
+  function setStatus(t){ if(status)status.textContent=t; }
+
+  function stop(){
+    if(session){ try{session.close();}catch(e){} session=null; }
+    mount.innerHTML='';
+    setStatus('');
+  }
+
+  function start(){
+    stop();
+    if(!window.vpsmgrOpenTerminal){
+      mount.textContent=(LANG==='zh')?'终端组件加载失败':'terminal engine failed to load';
+      return;
+    }
+    setStatus(LANG==='zh'?'连接中…':'connecting…');
+    session=window.vpsmgrOpenTerminal(mount, P+'/terminal', {
+      onStatus:setStatus,
+      onExit:function(code){ setStatus((LANG==='zh'?'会话已结束':'session ended')+(code?(' · exit '+code):'')); }
+    });
+  }
+
+  btn.addEventListener('click',function(){
+    modal.classList.add('show');
+    start();
+    // The mount has no size until the overlay is displayed, and the terminal
+    // measures itself on the next frame.
+    requestAnimationFrame(function(){ if(session)session.focus(); });
+  });
+  if(close)close.addEventListener('click',function(){ stop(); modal.classList.remove('show'); });
+  modal.addEventListener('click',function(e){ if(e.target===modal){ stop(); modal.classList.remove('show'); } });
+  window.addEventListener('beforeunload',stop);
 })();
 </script>
 </body>
