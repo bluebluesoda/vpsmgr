@@ -332,7 +332,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn ok">{{if eq .Lang "zh"}}开机{{else}}Start{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="stop"><button class="btn warn">{{if eq .Lang "zh"}}关机{{else}}Stop{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="restart"><button class="btn">{{if eq .Lang "zh"}}重启{{else}}Restart{{end}}</button></form>
-<button class="btn ssh" type="button" id="sshBtn" title="{{if eq .Lang "zh"}}在独立窗口里打开一个 shell{{else}}Open a shell in its own window{{end}}">Web SSH</button>
+{{if .WebSSH}}<button class="btn ssh" type="button" id="sshBtn" title="{{if eq .Lang "zh"}}在独立窗口里打开一个 shell{{else}}Open a shell in its own window{{end}}">Web SSH</button>{{end}}
 </div>
 <div class="btnrow">
 <form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>

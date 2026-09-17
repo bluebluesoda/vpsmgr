@@ -21,6 +21,8 @@ header .spacer{flex:1 1 auto}
 header button{background:#12203a;color:#cbd5e1;border:1px solid #1e3a5f;border-radius:6px;
               padding:.2rem .6rem;font-size:.76rem;cursor:pointer;font-family:inherit}
 header button:hover{background:#18294a}
+header .others{color:#fbbf24;display:flex;align-items:center;gap:.4rem}
+header .others button{padding:.1rem .45rem;font-size:.72rem}
 main{flex:1 1 auto;min-height:0}
 main>div{height:100%}
 .term{height:100%;outline:none;padding:.5rem .6rem;background:#0f172a;overflow:hidden;cursor:text;
@@ -31,17 +33,39 @@ main>div{height:100%}
 .term-probe{position:absolute;visibility:hidden;white-space:pre;line-height:1.35}
 .term-input{position:absolute;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;
             resize:none;overflow:hidden}
+.ask{position:fixed;inset:0;background:rgba(2,6,16,.72);display:flex;align-items:center;
+     justify-content:center;z-index:10}
+/* display:flex above would otherwise beat the hidden attribute, leaving an
+   invisible full-screen sheet swallowing every click. */
+.ask[hidden]{display:none}
+.ask-box{background:#0f172a;border:1px solid #1e3a5f;border-radius:10px;padding:1.1rem 1.2rem;
+         max-width:26rem;font-size:.85rem;line-height:1.5}
+.ask-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
+.ask-actions button{background:#12203a;color:#cbd5e1;border:1px solid #1e3a5f;border-radius:6px;
+                    padding:.35rem .8rem;font-size:.8rem;cursor:pointer;font-family:inherit}
+.ask-actions button.go{background:#15803d;border-color:#15803d;color:#fff}
+.ask-actions button:hover{filter:brightness(1.15)}
 </style>
 </head>
 <body>
 <header>
 <span class="host">{{.User.Name}}</span>
 <span class="status" id="status">{{if eq .Lang "zh"}}连接中…{{else}}connecting…{{end}}</span>
+<span class="others" id="others" hidden></span>
 <span class="spacer"></span>
 <button type="button" id="fsBtn">{{if eq .Lang "zh"}}全屏{{else}}Fullscreen{{end}}</button>
 <button type="button" id="reBtn">{{if eq .Lang "zh"}}重连{{else}}Reconnect{{end}}</button>
 </header>
 <main><div id="termMount" tabindex="0"></div></main>
+<div class="ask" id="ask" hidden>
+  <div class="ask-box">
+    <p id="askText"></p>
+    <div class="ask-actions">
+      <button type="button" id="askCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+      <button type="button" id="askTake" class="go">{{if eq .Lang "zh"}}关闭其他终端并继续{{else}}Close the others and continue{{end}}</button>
+    </div>
+  </div>
+</div>
 <script src="{{.Prefix}}/assets/term.js"></script>
 <script>
 (function(){
@@ -49,21 +73,72 @@ main>div{height:100%}
   var P='{{.Prefix}}';
   var mount=document.getElementById('termMount');
   var status=document.getElementById('status');
+  var othersEl=document.getElementById('others');
+  var ask=document.getElementById('ask');
+  var askText=document.getElementById('askText');
   var session=null;
+  var pendingDecide=null;
+  var T=function(zh,en){ return LANG==='zh'?zh:en; };
 
   function setStatus(t){ status.textContent=t; }
+
+  // The notice stays visible while other windows hold shells, and offers the
+  // one action that matters: take their slots back.
+  function setOthers(n){
+    if(!othersEl)return;
+    if(n<=0){ othersEl.hidden=true; othersEl.textContent=''; return; }
+    othersEl.hidden=false;
+    othersEl.textContent=T('另有 '+n+' 个终端在运行',' +'+n+' other terminal(s)');
+    var b=document.createElement('button');
+    b.type='button';
+    b.textContent=T('全部关闭','Close them');
+    b.addEventListener('click',function(){ if(session)session.closeOthers(); });
+    othersEl.appendChild(b);
+  }
+
   function start(){
     if(session){ try{session.close();}catch(e){} session=null; }
-    mount.innerHTML='';
-    setStatus(LANG==='zh'?'连接中…':'connecting…');
+    ask.hidden=true;
+    setStatus(T('连接中…','connecting…'));
     session=window.vpsmgrOpenTerminal(mount, P+'/terminal', {
+      msg:{
+        connecting:T('连接中…','connecting…'),
+        connected:T('已连接','connected'),
+        reconnecting:T('正在重新连接','reconnecting'),
+        ended:T('会话已结束','session ended'),
+        disconnected:T('已断开，点「重连」再试','disconnected — press Reconnect'),
+        busy:T('已有其他终端在运行','another terminal is already open')
+      },
       onStatus:setStatus,
-      onExit:function(code){ setStatus((LANG==='zh'?'会话已结束':'session ended')+(code?(' · exit '+code):'')); },
-      onClose:function(){ setStatus(LANG==='zh'?'连接已断开':'connection closed'); }
+      onOthers:setOthers,
+      onReady:function(){ ask.hidden=true; pendingDecide=null; },
+      onBusy:function(n,decide){
+        askText.textContent=T(
+          '你的账号下还有 '+n+' 个终端在运行（可能是关掉的窗口，或刚断线还在等待恢复的会话）。要关闭它们并在这里继续吗？',
+          'Your account still has '+n+' other terminal(s) open — a closed window, or a session waiting to be resumed. Close them and continue here?');
+        ask.hidden=false;
+        pendingDecide=decide;
+      },
+      onExit:function(code){ setStatus(T('会话已结束','session ended')+(code?(' · exit '+code):'')); },
+      onClose:function(){ setStatus(T('已断开，点「重连」再试','disconnected — press Reconnect')); }
     });
   }
 
-  document.getElementById('reBtn').addEventListener('click',start);
+  function answerAsk(take){
+    var d=pendingDecide;
+    pendingDecide=null;
+    ask.hidden=true;
+    if(d)d(take);
+  }
+  document.getElementById('askTake').addEventListener('click',function(){ answerAsk(true); });
+  document.getElementById('askCancel').addEventListener('click',function(){ answerAsk(false); });
+
+  // Reconnect does double duty: a fresh start, and the manual path once the
+  // automatic retries have given up.
+  document.getElementById('reBtn').addEventListener('click',function(){
+    if(session&&session.reconnect){ session.reconnect(); return; }
+    start();
+  });
   document.getElementById('fsBtn').addEventListener('click',function(){
     if(document.fullscreenElement){ document.exitFullscreen(); return; }
     if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();

@@ -225,7 +225,10 @@ type pageData struct {
 	// impersonating admin can tell users apart. Users cannot set it themselves.
 	ThemeColor string
 	ShowFooter bool
-	Version    string
+	// WebSSH mirrors cfg.Panel.WebSSH: the overview renders the Web SSH button
+	// only when the terminal is enabled.
+	WebSSH  bool
+	Version string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -408,6 +411,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		V4Forward:         s.mgr.V4ForwardLive(),
 		ProxyEnabled:      s.mgr.HaproxyLive(),
 		ShowFooter:        s.cfg.Panel.ShowFooter,
+		WebSSH:            s.cfg.Panel.WebSSH,
 		Version:           ver.Version,
 		InitScript:        u.InitScript,
 		MaxNotesPlaintext: cfg.MaxNotesPlaintextBytes,

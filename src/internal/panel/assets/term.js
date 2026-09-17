@@ -632,75 +632,207 @@
     if (this._raf) cancelAnimationFrame(this._raf);
   };
 
+  window.VpsmgrTerm = Term;
+
   // ---- session ----------------------------------------------------------
 
-  // openTerminal wires an emulator to /terminal over a WebSocket. Text frames
-  // in both directions carry JSON control messages; terminal output arrives as
-  // binary frames so arbitrary bytes survive untouched.
+  // The terminal is a connection to a shell on the far side of the internet, so
+  // the session is built to survive the link, not the other way round:
+  //
+  //   - the shell outlives the socket (the server keeps it for a grace period
+  //     and buffers what it prints), so a reconnect resumes the same shell
+  //     rather than starting a new one. The token that claims it lives in
+  //     sessionStorage, so reloading the page comes back to it and closing the
+  //     window lets it go.
+  //   - a browser cannot see protocol-level pings, so the server also sends a
+  //     small JSON heartbeat; hearing nothing for a while means the socket is
+  //     dead even though it has not said so.
+  //   - a dropped connection is retried with exponential backoff and jitter,
+  //     and giving up is a state the page can offer a manual reconnect from.
+  var TOKEN_KEY = "vpsmgr_ssh_token";
+  var HEARTBEAT_MS = 5000;   // how often we check for silence
+  var SILENCE_MS = 45000;    // no message for this long means it is gone
+  var MAX_ATTEMPTS = 8;
+  // A handshake that neither completes nor fails would otherwise stall the
+  // retry loop for good — exactly the shape a flaky link produces.
+  var CONNECT_TIMEOUT_MS = 15000;
+
   window.vpsmgrOpenTerminal = function (mount, url, hooks) {
     hooks = hooks || {};
+    var msg = hooks.msg || {};
     var status = function (t) { if (hooks.onStatus) hooks.onStatus(t); };
-    // Declared before the emulator: it reports its size from its constructor,
-    // and that callback must not touch an unset socket.
-    var ws = null;
-    function control(obj) {
+    var setOthers = function (n) { if (hooks.onOthers) hooks.onOthers(n); };
+    var askBusy = function (n, decide) { if (hooks.onBusy) hooks.onBusy(n, decide); };
+
+    var Term = window.VpsmgrTerm;
+    var term = null, ws = null, hb = null, retryT = null, retryAt = 0, connectT = null;
+    var attempt = 0, lastSeen = 0, finished = false;
+
+    function token() {
+      try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+    }
+    function setToken(v) {
+      try { if (v) sessionStorage.setItem(TOKEN_KEY, v); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}
+    }
+    function send(obj) {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
     }
-    function send(data) { control({ t: "i", data: data }); }
-    var term = new Term(mount, {
-      onTitle: function (t) { if (hooks.onTitle) hooks.onTitle(t); },
-      onReply: function (s) { send(s); },
-      onInput: function (s) { send(s); },
-      onResize: function (c, r) { control({ t: "r", cols: c, rows: r }); }
-    });
+    function input(data) { send({ t: "input", data: data }); }
 
-    var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var q = "?cols=" + term.cols + "&rows=" + term.rows;
-    ws = new WebSocket(proto + "//" + location.host + url + q);
-    ws.binaryType = "arraybuffer";
-    var closed = false;
+    function build() {
+      mount.innerHTML = "";
+      term = new Term(mount, {
+        onTitle: function (t) { if (hooks.onTitle) hooks.onTitle(t); },
+        onReply: input,
+        onInput: input,
+        onResize: function (c, r) { send({ t: "resize", cols: c, rows: r }); }
+      });
+    }
 
-    ws.onopen = function () {
-      // Send the size the emulator settled on; the shell would otherwise start
-      // at the server's default until the window is resized.
-      control({ t: "r", cols: term.cols, rows: term.rows });
-      term.focus();
-      status("");
-    };
-    ws.onmessage = function (e) {
-      if (typeof e.data === "string") {
-        var msg;
-        try { msg = JSON.parse(e.data); } catch (err) { return; }
-        if (msg.t === "exit") {
-          term.exited = true;
-          status("session ended" + (msg.code ? " (exit " + msg.code + ")" : ""));
-          if (hooks.onExit) hooks.onExit(msg.code);
-        } else if (msg.t === "error") {
-          term.exited = true;
-          term.write(new TextEncoder().encode("\r\n[ " + msg.error + " ]\r\n"));
-          status("error");
-          if (hooks.onError) hooks.onError(msg.error);
+    function stopHeartbeat() { if (hb) { clearInterval(hb); hb = null; } }
+    function stopConnectTimer() { if (connectT) { clearTimeout(connectT); connectT = null; } }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      hb = setInterval(function () {
+        if (finished) return;
+        if (Date.now() - lastSeen > SILENCE_MS) {
+          // Silent for too long: treat it as gone and let the retry logic run.
+          try { ws.close(); } catch (e) { /* already gone */ }
+          lost();
         }
+      }, HEARTBEAT_MS);
+    }
+
+    function connect() {
+      if (finished) return;
+      retryT = null;
+      stopHeartbeat();
+      // A resumed terminal starts blank and is rebuilt from what the server
+      // replays, so the emulator is recreated rather than left showing stale
+      // output from before the drop.
+      build();
+      status(attempt === 0 ? (msg.connecting || "connecting…")
+                           : (msg.reconnecting || "reconnecting…") + " (" + attempt + "/" + MAX_ATTEMPTS + ")");
+
+      var proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(proto + "//" + location.host + url);
+      ws.binaryType = "arraybuffer";
+
+      var opened = false;
+      ws.onopen = function () {
+        opened = true;
+        stopConnectTimer();
+        lastSeen = Date.now();
+        send({ t: "hello", token: token(), cols: term.cols, rows: term.rows });
+        startHeartbeat();
+      };
+      connectT = setTimeout(function () {
+        if (opened) return;
+        try { ws.close(); } catch (e) { /* not open anyway */ }
+        lost();
+      }, CONNECT_TIMEOUT_MS);
+      ws.onmessage = onMessage;
+      ws.onclose = lost;
+      ws.onerror = function () { /* onclose follows */ };
+    }
+
+    function onMessage(e) {
+      lastSeen = Date.now();
+      if (typeof e.data !== "string") {
+        if (term) term.write(new Uint8Array(e.data));
         return;
       }
-      term.write(new Uint8Array(e.data));
-    };
-    ws.onclose = function () {
-      if (closed) return;
-      closed = true;
-      term.exited = true;
-      status("connection closed");
-      if (hooks.onClose) hooks.onClose();
-    };
-    ws.onerror = function () { status("connection error"); };
+      var m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      switch (m.t) {
+        case "ping":
+          return;
+        case "ready":
+          attempt = 0;
+          if (hooks.onReady) hooks.onReady();
+          setToken(m.token);
+          setOthers(m.others || 0);
+          status(msg.connected || "");
+          if (term) term.focus();
+          return;
+        case "others":
+          setOthers(m.others || 0);
+          return;
+        case "busy":
+          status(msg.busy || "another terminal is open");
+          askBusy(m.others || 0, function (take) {
+            if (!take) { close(); return; }
+            send({ t: "takeover" });
+            status(msg.connecting || "connecting…");
+          });
+          return;
+        case "exit":
+          finish((msg.ended || "session ended") + (m.code ? " · exit " + m.code : ""));
+          if (hooks.onExit) hooks.onExit(m.code);
+          return;
+        case "error":
+          if (term) term.write(new TextEncoder().encode("\r\n[ " + m.error + " ]\r\n"));
+          finish(m.error);
+          if (hooks.onError) hooks.onError(m.error);
+          return;
+      }
+    }
+
+    // finish stops for good: the shell is over, so retrying would only start a
+    // different one behind the user's back.
+    function finish(text) {
+      finished = true;
+      stopHeartbeat();
+      stopConnectTimer();
+      setToken("");
+      status(text);
+    }
+
+    // lost handles a connection that went away on its own.
+    function lost() {
+      stopHeartbeat();
+      stopConnectTimer();
+      if (finished || retryT) return;
+      attempt++;
+      if (attempt > MAX_ATTEMPTS) {
+        finished = true;
+        status(msg.disconnected || "disconnected");
+        if (hooks.onClose) hooks.onClose();
+        return;
+      }
+      // Exponential backoff with jitter, so a rack of tabs does not come back
+      // in lockstep.
+      var delay = Math.min(400 * Math.pow(2, attempt - 1), 8000) + Math.random() * 400;
+      retryAt = Date.now() + delay;
+      status((msg.reconnecting || "reconnecting…") + " (" + attempt + "/" + MAX_ATTEMPTS + ")");
+      retryT = setTimeout(connect, delay);
+    }
+
+    function close() {
+      finished = true;
+      stopHeartbeat();
+      stopConnectTimer();
+      if (retryT) { clearTimeout(retryT); retryT = null; }
+      setToken("");
+      try { ws.close(); } catch (e) { /* already gone */ }
+    }
+
+    connect();
 
     return {
-      focus: function () { term.focus(); },
-      close: function () {
-        closed = true;
-        try { ws.close(); } catch (e) { /* already gone */ }
-        term.dispose();
-      }
+      focus: function () { if (term) term.focus(); },
+      close: close,
+      // closeOthers ends the user's other shells and keeps this one.
+      closeOthers: function () { send({ t: "takeover" }); },
+      // reconnect is the manual path offered once the retries are exhausted.
+      reconnect: function () {
+        finished = false;
+        attempt = 0;
+        if (retryT) { clearTimeout(retryT); retryT = null; }
+        connect();
+      },
+      retryInMs: function () { return retryT ? Math.max(0, retryAt - Date.now()) : 0; }
     };
   };
 })();

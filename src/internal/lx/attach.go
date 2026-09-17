@@ -17,6 +17,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// ptyWriteWait bounds a write to the Incus side of a session. Without it a
+// connection that has gone unresponsive — the daemon timed the websocket out
+// while the panel was busy, a network hiccup on the way to it — blocks the
+// caller (and the session's mutex) forever, which is a wedged panel goroutine
+// rather than a failed terminal.
+const ptyWriteWait = 5 * time.Second
+
 // TermSize is a terminal window size in character cells.
 type TermSize struct {
 	Cols int
@@ -328,7 +335,9 @@ func (p *Pty) Write(b []byte) error {
 	if p.dead {
 		return errors.New("terminal session is closed")
 	}
-	return p.conns["0"].WriteMessage(websocket.BinaryMessage, b)
+	ws := p.conns["0"]
+	_ = ws.SetWriteDeadline(time.Now().Add(ptyWriteWait))
+	return ws.WriteMessage(websocket.BinaryMessage, b)
 }
 
 // Resize tells the PTY its new window size so full-screen programs reflow. The
@@ -355,6 +364,7 @@ func (p *Pty) Resize(size TermSize) error {
 	if err != nil {
 		return err
 	}
+	_ = ws.SetWriteDeadline(time.Now().Add(ptyWriteWait))
 	return ws.WriteMessage(websocket.TextMessage, msg)
 }
 
