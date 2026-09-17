@@ -45,6 +45,21 @@ survive the link rather than to be torn down by it.
 - **Token.** The resume token lives in `sessionStorage`, so reloading the page
   comes back to the shell and closing the window lets it go.
 
+## Keys and the mouse
+
+Typing works as it does in any terminal: arrows, Home/End, PageUp/PageDown,
+Insert/Delete, Tab, Escape and the function keys all send what a terminal sends,
+and the arrows follow the mode a full-screen program asks for.
+
+A small bar above the terminal carries the few keys a browser keeps for itself
+(Ctrl+C, Ctrl+Z, Ctrl+D, Escape, Tab and the arrows), so they are never out of
+reach.
+
+Copy and paste use the platform's own shortcuts — Cmd+C/Cmd+V, Ctrl+V,
+Shift+Insert — and the browser's right-click menu. Pasting a block of several
+lines is handed to the shell exactly as the shell asked for it: a shell that
+enables bracketed paste shows the text in its edit buffer first.
+
 ## Turning it off
 
 ```

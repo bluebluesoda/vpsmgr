@@ -575,6 +575,31 @@
     else this._send(text);
   };
 
+  // keySequence is what a named key sends. The arrows depend on the mode the
+  // running program asked for (application cursor keys), which is exactly why
+  // the on-screen bar cannot hard-code them.
+  Term.prototype.keySequence = function (name) {
+    var m = this.modes;
+    var arrows = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D", Home: "H", End: "F" };
+    if (arrows[name]) return m.appCursor ? "\x1bO" + arrows[name] : "\x1b[" + arrows[name];
+    switch (name) {
+      case "Enter": return "\r";
+      case "Backspace": return "\x7f";
+      case "Tab": return "\t";
+      case "Escape": return "\x1b";
+      case "PageUp": return "\x1b[5~";
+      case "PageDown": return "\x1b[6~";
+      case "Insert": return "\x1b[2~";
+      case "Delete": return "\x1b[3~";
+    }
+    if (/^F([1-9]|1[0-2])$/.test(name)) {
+      var f = parseInt(name.slice(1), 10);
+      var ss3 = { 1: "P", 2: "Q", 3: "R", 4: "S" };
+      return ss3[f] ? "\x1bO" + ss3[f] : "\x1b[" + [15, 17, 18, 19, 20, 21, 23, 24][f - 5] + "~";
+    }
+    return null;
+  };
+
   Term.prototype._onKey = function (e) {
     if (this.exited) return;
     if (e.isComposing || e.keyCode === 229) return; // the IME owns this keystroke
@@ -586,44 +611,38 @@
       e.preventDefault();
       return;
     }
-    if (e.ctrlKey && e.shiftKey && (e.key === "C" || e.key === "V")) return; // browser copy/paste
+    // Shortcuts the platform uses for copy and paste are left alone, so the
+    // browser fires the paste event we actually want. Ctrl+V and Shift+Insert
+    // paste on Windows and X11, Cmd+V on macOS, Ctrl+Shift+Insert on X11.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "v" || e.key === "V")) return;
+    if (e.shiftKey && e.key === "Insert") return;
+    if (e.ctrlKey && e.shiftKey && (e.key === "C" || e.key === "V")) return;
     // Ctrl+C interrupts, unless the user is copying a selection.
     if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "c" && String(window.getSelection())) return;
 
-    var arrows = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D", Home: "H", End: "F" };
-    if (arrows[e.key]) send = m.appCursor ? "\x1bO" + arrows[e.key] : "\x1b[" + arrows[e.key];
-    else if (e.key === "Enter") send = "\r";
-    else if (e.key === "Backspace") send = "\x7f";
-    else if (e.key === "Tab") send = "\t";
-    else if (e.key === "Escape") send = "\x1b";
-    else if (e.key === "PageUp") send = "\x1b[5~";
-    else if (e.key === "PageDown") send = "\x1b[6~";
-    else if (e.key === "Insert") send = "\x1b[2~";
-    else if (e.key === "Delete") send = "\x1b[3~";
-    else if (/^F([1-9]|1[0-2])$/.test(e.key)) {
-      var f = parseInt(e.key.slice(1), 10);
-      var ss3 = { 1: "P", 2: "Q", 3: "R", 4: "S" };
-      send = ss3[f] ? "\x1bO" + ss3[f] : "\x1b[" + [15, 17, 18, 19, 20, 21, 23, 24][f - 5] + "~";
-    } else if (e.ctrlKey && !e.altKey && e.key.length === 1) {
-      // The physical key is what a terminal wants: on a layout where Ctrl+A
-      // composes into something else, e.key is that something else.
-      var ck = /^Key([A-Z])$/.exec(e.code || "");
-      if (ck) send = String.fromCharCode(ck[1].charCodeAt(0) - 64);
-      else if (e.key === " ") send = "\x00";
-      else {
-        // Non-letters keep the plain ASCII mapping, which is what makes
-        // Ctrl+[ an Escape and Ctrl+6 Ctrl+^.
-        var cc = e.key.toUpperCase().charCodeAt(0);
-        if (cc >= 64 && cc < 128) send = String.fromCharCode(cc & 0x1f);
+    send = this.keySequence(e.key);
+    if (send === null) {
+      if (e.ctrlKey && !e.altKey && e.key.length === 1) {
+        // The physical key is what a terminal wants: on a layout where Ctrl+A
+        // composes into something else, e.key is that something else.
+        var ck = /^Key([A-Z])$/.exec(e.code || "");
+        if (ck) send = String.fromCharCode(ck[1].charCodeAt(0) - 64);
+        else if (e.key === " ") send = "\x00";
+        else {
+          // Non-letters keep the plain ASCII mapping, which is what makes
+          // Ctrl+[ an Escape and Ctrl+6 Ctrl+^.
+          var cc = e.key.toUpperCase().charCodeAt(0);
+          if (cc >= 64 && cc < 128) send = String.fromCharCode(cc & 0x1f);
+        }
+      } else if (e.altKey && !e.metaKey) {
+        // Again the physical key: on macOS Option+a arrives as "å", so sending
+        // e.key would put that in the shell instead of Meta-a.
+        var ak = /^Key([A-Z])$/.exec(e.code || "");
+        if (ak) send = "\x1b" + ak[1].toLowerCase();
+        else if (e.key.length === 1) send = "\x1b" + e.key;
+      } else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
+        send = e.key;
       }
-    } else if (e.altKey && !e.metaKey) {
-      // Again the physical key: on macOS Option+a arrives as "å", so sending
-      // e.key would put that in the shell instead of Meta-a.
-      var ak = /^Key([A-Z])$/.exec(e.code || "");
-      if (ak) send = "\x1b" + ak[1].toLowerCase();
-      else if (e.key.length === 1) send = "\x1b" + e.key;
-    } else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
-      send = e.key;
     }
 
     if (send === null) {
@@ -636,12 +655,6 @@
     e.preventDefault();
     if (this.vy !== 0) this._scrollBy(-this.vy);
     this._send(send);
-  };
-
-  Term.prototype.dispose = function () {
-    this.disposed = true;
-    if (this._ro) this._ro.disconnect();
-    if (this._raf) cancelAnimationFrame(this._raf);
   };
 
   window.VpsmgrTerm = Term;
@@ -837,6 +850,14 @@
       close: close,
       // closeOthers ends the user's other shells and keeps this one.
       closeOthers: function () { send({ t: "takeover" }); },
+      // key and raw are what the on-screen key bar uses: the bar is a fallback
+      // for keys a browser will not hand over, not the primary way to type.
+      key: function (name) {
+        if (!term) return;
+        var seq = term.keySequence(name);
+        if (seq !== null) { input(seq); term.focus(); }
+      },
+      raw: function (text) { input(text); if (term) term.focus(); },
       // reconnect is the manual path offered once the retries are exhausted.
       reconnect: function () {
         finished = false;
