@@ -2067,7 +2067,7 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 		Prefix: "/" + testSecret,
 		Knowledge: []knowledgeArticle{{
 			ID: 7, Title: "Getting started", UpdatedAt: "2026-08-01T10:00:00Z",
-			HTML: template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
+			HTML:   template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
 			Source: "REGINNAME=*#*#region#*#*",
 		}},
 	})

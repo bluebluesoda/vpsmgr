@@ -1,6 +1,8 @@
 package cfg
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,6 +43,11 @@ func TestFieldValueReadsConfig(t *testing.T) {
 	}
 	if v := FieldValue(c, "net.haproxy"); v != "true" {
 		t.Errorf("net.haproxy default = %q", v)
+	}
+	// The upgrade case matters: a config written before Web SSH existed has no
+	// key for it, and the feature must still come out enabled.
+	if v := FieldValue(c, "panel.web_ssh"); v != "true" {
+		t.Errorf("panel.web_ssh default = %q, want true (upgrades must get it enabled)", v)
 	}
 	if v := FieldValue(c, "panel.show_footer"); v != "true" {
 		t.Errorf("panel.show_footer default = %q", v)
@@ -403,5 +410,37 @@ func TestBandwidthResetDayIsDestructive(t *testing.T) {
 		if err := f.Assign(c, ok); err != nil {
 			t.Errorf("valid %q rejected: %v", ok, err)
 		}
+	}
+}
+
+// A config file written before the feature existed decodes with the key absent,
+// and the feature must come out enabled — that is what "upgrades get it on"
+// means in practice.
+func TestWebSSHDefaultsOnForAnOlderConfig(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("VPSMGR_CONFIG", filepath.Join(base, "config.yaml"))
+	if err := Save(Default()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "web_ssh") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if err := os.WriteFile(Path(), []byte(strings.Join(kept, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Panel.WebSSH {
+		t.Error("an old config without the key must still enable Web SSH")
 	}
 }
