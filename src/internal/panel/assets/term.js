@@ -290,7 +290,13 @@
           break;
         case "csi":
           if (code >= 0x40 && code <= 0x7e) { this._csi(ch); this.state = "ground"; }
-          else if (code === 0x3f) this.priv = true;
+          else if (code === 0x3f || code === 0x3c || code === 0x3d || code === 0x3e) {
+            // The private/extension markers are ? < = >. All four have to be
+            // recognised: ignoring one lets its parameters leak into the final
+            // byte, which is how xterm's modifyOtherKeys (CSI > 4 ; 2 m) used to
+            // arrive as "underline on" and stay on for the rest of the session.
+            this.priv = true;
+          }
           else if (code >= 0x30 && code <= 0x39) this.buf += ch;
           else if (code === 0x3b) { this.params.push(parseInt(this.buf, 10)); this.buf = ""; }
           break;
@@ -371,14 +377,16 @@
         if (this.scrollBot <= this.scrollTop) { this.scrollTop = 0; this.scrollBot = this.rows - 1; }
         this.cx = 0; this.cy = this.scrollTop;
         break;
-      case "m": this._sgr(p); break;
+      case "m": if (!this.priv) this._sgr(p); break;
       case "h": this._mode(p, true); break;
       case "l": this._mode(p, false); break;
       case "n":
         if (p[0] === 6 && this.opts.onReply) this.opts.onReply("\x1b[" + (this.cy + 1) + ";" + (this.cx + 1) + "R");
         break;
       case "c":
-        if (this.opts.onReply) this.opts.onReply("\x1b[?1;2c");
+        // A private ">" query asks for the secondary attributes; answering with
+        // the primary form (or not at all) makes a program wait for its timeout.
+        if (this.opts.onReply) this.opts.onReply(this.priv ? "\x1b[>0;0;0c" : "\x1b[?1;2c");
         break;
     }
     this._scheduleRender();
@@ -602,7 +610,13 @@
 
   Term.prototype._onKey = function (e) {
     if (this.exited) return;
-    if (e.isComposing || e.keyCode === 229) return; // the IME owns this keystroke
+    // The IME owns a keystroke while a composition is running. Which that is
+    // has to come from our own compositionstart/end tracking rather than from
+    // e.isComposing alone: a browser can leave that flag set after an IME
+    // candidate is cancelled (Escape), and then every later key is dropped
+    // until the user clicks somewhere else. Same for a key the IME is
+    // consuming, which browsers report as "Process".
+    if (this.composing || e.key === "Process" || e.key === "Unidentified") return;
     var m = this.modes;
     var send = null;
 
