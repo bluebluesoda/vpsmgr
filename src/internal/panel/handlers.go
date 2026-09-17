@@ -305,7 +305,10 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 	if share := strings.TrimSpace(r.FormValue("share")); share != "" {
 		// Resolve first so the audit row records whose checkpoint was installed.
 		owner, _, _ := s.mgr.ResolveShare(share)
-		pass, err := s.mgr.ReinstallFromShare(u.Name, share)
+		// The "run init script" switch is opt-in and never persisted: an
+		// unchecked box is simply absent from the form body.
+		runInit := r.FormValue("run_init") == "1"
+		pass, err := s.mgr.ReinstallFromShare(u.Name, share, runInit)
 		if err != nil {
 			s.redirect(w, r, s.p(""), "error: "+err.Error())
 			return

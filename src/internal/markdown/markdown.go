@@ -7,10 +7,18 @@
 // and unordered lists, blockquotes, horizontal rules, paragraphs with single
 // newlines kept as <br>.
 //
+// Inside a fenced code block only, the directive *#*#label#*#* renders as an
+// inline fill-in-the-blank input. The label becomes the placeholder and, hashed,
+// a stable node id the panel stores the reader's answer under. The directive is
+// inert outside a fence. The label only ever lands in escaped attribute values,
+// so the escape-first guarantee below still holds.
+//
 // Everything is HTML-escaped first, so source content can never inject markup.
 package markdown
 
 import (
+	"fmt"
+	"hash/fnv"
 	"html"
 	"html/template"
 	"regexp"
@@ -32,11 +40,17 @@ var (
 	reItalic    = regexp.MustCompile(`\*([^*]+)\*`)
 	reCodePlace = regexp.MustCompile("\x00(\\d+)\x00")
 	reLang      = regexp.MustCompile(`[^A-Za-z0-9_+.-]`)
+	// reFill matches a fill-in-the-blank directive inside a code block. The
+	// delimiters are deliberately exotic so they cannot collide with real code.
+	reFill = regexp.MustCompile(`\*#\*#(.+?)#\*#\*`)
 )
 
 func render(src string) string {
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	var b strings.Builder
+	// occ counts each label within this Render call, so a label used twice gets
+	// a distinct node id while keeping the id stable across reordering.
+	occ := map[string]int{}
 	for i := 0; i < len(lines); {
 		trimmed := strings.TrimSpace(lines[i])
 
@@ -54,7 +68,7 @@ func render(src string) string {
 			if i < len(lines) {
 				i++ // closing fence
 			}
-			b.WriteString(codeBlock(info, strings.Join(code, "\n")))
+			b.WriteString(codeBlock(info, strings.Join(code, "\n"), occ))
 			continue
 		}
 		if trimmed == "" {
@@ -130,7 +144,7 @@ func startsBlock(line string) bool {
 		reUL.MatchString(line) || reOL.MatchString(line)
 }
 
-func codeBlock(info, code string) string {
+func codeBlock(info, code string, occ map[string]int) string {
 	cls := ""
 	if info != "" {
 		lang := reLang.ReplaceAllString(info, "")
@@ -138,7 +152,44 @@ func codeBlock(info, code string) string {
 			cls = ` class="language-` + html.EscapeString(lang) + `"`
 		}
 	}
-	return "<pre><code" + cls + ">" + html.EscapeString(code) + "</code></pre>\n"
+	return "<pre><code" + cls + ">" + fillBlanks(code, occ) + "</code></pre>\n"
+}
+
+// fillBlanks renders the body of a fenced code block. Literal runs are escaped
+// as usual; each *#*#label#*#* directive becomes an inline text input. No value
+// is ever emitted: answers live only in the reader's browser, so the server
+// cannot reflect them back.
+func fillBlanks(code string, occ map[string]int) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range reFill.FindAllStringSubmatchIndex(code, -1) {
+		b.WriteString(html.EscapeString(code[last:m[0]]))
+		last = m[1]
+		label := strings.TrimSpace(code[m[2]:m[3]])
+		if label == "" {
+			// A blank label is not a usable prompt; keep the directive literal.
+			b.WriteString(html.EscapeString(code[m[0]:m[1]]))
+			continue
+		}
+		id := shortHash(label)
+		if n := occ[label]; n > 0 {
+			id += "-" + strconv.Itoa(n)
+		}
+		occ[label]++
+		esc := html.EscapeString(label)
+		b.WriteString(`<input type="text" class="kb-blank" data-node="` + id +
+			`" placeholder="` + esc + `" aria-label="` + esc +
+			`" autocomplete="off" spellcheck="false">`)
+	}
+	b.WriteString(html.EscapeString(code[last:]))
+	return b.String()
+}
+
+// shortHash derives a stable, compact node id from a directive label.
+func shortHash(s string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 // inline applies span-level formatting to one already-block-scoped string.

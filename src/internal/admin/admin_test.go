@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1149,4 +1150,154 @@ func (s *Server) renderToString(t *testing.T, name string, data pageData) string
 		t.Fatal(err)
 	}
 	return b.String()
+}
+
+// TestUserBatchValidation covers the all-or-nothing pre-check: a batch with any
+// problem must create nothing and say why.
+func TestUserBatchValidation(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	// Sharing is opt-in; without it the handler stops at that gate and the
+	// per-field validation below is never reached.
+	if err := srv.mgr.SetSnapshotShareEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	full := func() url.Values {
+		return url.Values{
+			"share": {"some-code"}, "names": {"alice"}, "cpu": {"1"},
+			"mem": {"1024"}, "disk": {"10"}, "bandwidth": {"0"}, "days": {"0"},
+		}
+	}
+	cases := []struct {
+		name   string
+		mutate func(url.Values)
+		want   string
+	}{
+		{"missing share", func(v url.Values) { v.Set("share", "") }, "required"},
+		{"bad name", func(v url.Values) { v.Set("names", "9lead") }, "line 1"},
+		{"duplicate", func(v url.Values) { v.Set("names", "dup\ndup") }, "listed twice"},
+		{"bad cpu", func(v url.Values) { v.Set("cpu", "0") }, "cpu"},
+		{"bad disk", func(v url.Values) { v.Set("disk", "x") }, "disk must be"},
+		{"bad days", func(v url.Values) { v.Set("days", "-1") }, "day"},
+		{"unresolvable share", nil, "invalid or expired"},
+	}
+	for _, tc := range cases {
+		form := full()
+		if tc.mutate != nil {
+			tc.mutate(form)
+		}
+		rr := doReq(t, h, http.MethodPost, prefix+"/user-batch", form, cookie)
+		if rr.Code != http.StatusFound {
+			t.Fatalf("%s: code = %d, want a redirect", tc.name, rr.Code)
+		}
+		if loc := rr.Header().Get("Location"); strings.Contains(loc, "batch=") {
+			t.Errorf("%s: redirected to a job (%s), want no batch started", tc.name, loc)
+		}
+		msg, _, _, _ := srv.flash.Pop(cookie.Value)
+		if !strings.Contains(msg, tc.want) {
+			t.Errorf("%s: flash = %q, want it to mention %q", tc.name, msg, tc.want)
+		}
+	}
+	// Nothing above may have claimed the running slot.
+	if _, err := srv.batches.start([]string{"probe"}); err != nil {
+		t.Fatalf("a rejected batch must not occupy the running slot: %v", err)
+	}
+}
+
+// TestUserBatchStatus covers the progress endpoint and the single-batch rule.
+func TestUserBatchStatus(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	id, err := srv.batches.start([]string{"alice", "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second batch may not start while the first is still running.
+	if _, err := srv.batches.start([]string{"carol"}); err == nil {
+		t.Error("a second batch started while one was running")
+	}
+	srv.batches.update(id, mgr.BatchResult{Name: "alice", State: mgr.BatchRunning})
+	srv.batches.update(id, mgr.BatchResult{Name: "alice", State: mgr.BatchDone, Password: "pw-alice"})
+	srv.batches.update(id, mgr.BatchResult{Name: "bob", State: mgr.BatchFailed, Err: errors.New("clone failed")})
+	srv.batches.finish(id)
+
+	rr := doReq(t, h, http.MethodGet, prefix+"/user-batch-status?id="+id, nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var resp struct {
+		OK       bool `json:"ok"`
+		Total    int  `json:"total"`
+		Done     int  `json:"done"`
+		Finished bool `json:"finished"`
+		Items    []struct {
+			Name     string `json:"name"`
+			State    string `json:"state"`
+			Password string `json:"password"`
+			Error    string `json:"error"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v (%s)", err, rr.Body.String())
+	}
+	if !resp.OK || resp.Total != 2 || resp.Done != 2 || !resp.Finished {
+		t.Fatalf("unexpected summary: %+v", resp)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(resp.Items))
+	}
+	if resp.Items[0].Name != "alice" || resp.Items[0].State != mgr.BatchDone || resp.Items[0].Password != "pw-alice" {
+		t.Errorf("first item = %+v", resp.Items[0])
+	}
+	if resp.Items[1].State != mgr.BatchFailed || !strings.Contains(resp.Items[1].Error, "clone failed") {
+		t.Errorf("second item = %+v", resp.Items[1])
+	}
+	// Finishing must free the running slot for the next batch.
+	if _, err := srv.batches.start([]string{"carol"}); err != nil {
+		t.Errorf("a finished batch must free the slot: %v", err)
+	}
+
+	// An unknown or expired id answers 404 rather than pretending it is empty.
+	rr = doReq(t, h, http.MethodGet, prefix+"/user-batch-status?id=nope", nil, cookie)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown id = %d, want 404", rr.Code)
+	}
+}
+
+// TestOverviewBatchUI checks the batch entry point and form render, including
+// the admin-key checkboxes and the empty-store hint.
+func TestOverviewBatchUI(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	withKeys := srv.renderToString(t, "admin_overview.html", pageData{
+		Prefix: "/" + testAdminSecret, Lang: langEn,
+		AdminKeys: []sshKeyRow{{ID: 5, Name: "ops-host", Key: "ssh-ed25519 AAAABODY ops-host", Active: true}},
+	})
+	for _, want := range []string{
+		`id="batchBtn"`, `id="batchModal"`, `id="batchProgModal"`, `id="batchProgList"`,
+		`name="names"`, `name="share"`, `name="akeys"`, `value="5"`, `/user-batch"`,
+	} {
+		if !strings.Contains(withKeys, want) {
+			t.Errorf("batch UI missing %q", want)
+		}
+	}
+	// "No keys yet" also appears (hidden) in the pre-existing SSH-keys modal,
+	// so assert on this form's own wording.
+	const emptyHint = "add one in the SSH public keys modal first"
+	if strings.Contains(withKeys, emptyHint) {
+		t.Error("the empty-keys hint must not show when a key exists")
+	}
+
+	noKeys := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langEn})
+	if !strings.Contains(noKeys, emptyHint) {
+		t.Error("missing the empty-keys hint")
+	}
 }

@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,88 @@ func TestRenderRejectsUnsafeLinks(t *testing.T) {
 		}
 		if !strings.Contains(got, "click") {
 			t.Errorf("unsafe URL %q dropped the link text: %q", bad, got)
+		}
+	}
+}
+
+var reNode = regexp.MustCompile(`data-node="([^"]+)"`)
+
+func TestRenderFillBlanks(t *testing.T) {
+	got := string(Render("```yaml\nREGINNAME=*#*#填写地域信息#*#*\n```"))
+	if !strings.Contains(got, `<input type="text" class="kb-blank" data-node="`) {
+		t.Fatalf("directive did not render a fill input: %q", got)
+	}
+	if !strings.Contains(got, `placeholder="填写地域信息"`) {
+		t.Fatalf("label was not used as the placeholder: %q", got)
+	}
+	if !strings.Contains(got, "REGINNAME=") {
+		t.Fatalf("literal code around the directive was dropped: %q", got)
+	}
+	if strings.Contains(got, "*#*#") {
+		t.Fatalf("directive leaked into the output: %q", got)
+	}
+	// The answer lives in the browser only: never emit a value attribute.
+	if strings.Contains(got, "value=") {
+		t.Fatalf("a value attribute was emitted: %q", got)
+	}
+}
+
+func TestRenderFillBlanksEscapesLabel(t *testing.T) {
+	got := string(Render("```\n*#*#a\"b<c#*#*\n```"))
+	if !strings.Contains(got, `placeholder="a&#34;b&lt;c"`) {
+		t.Fatalf("label not escaped into the attribute: %q", got)
+	}
+	if strings.Contains(got, "b<c") || strings.Contains(got, `placeholder="a"`) {
+		t.Fatalf("label injected raw markup into the attribute: %q", got)
+	}
+}
+
+func TestRenderFillBlanksNodeIDs(t *testing.T) {
+	const src = "```\na=*#*#host#*#*\nb=*#*#host#*#*\n```"
+	got := string(Render(src))
+	ids := reNode.FindAllStringSubmatch(got, -1)
+	if len(ids) != 2 {
+		t.Fatalf("want 2 fills, got %d: %q", len(ids), got)
+	}
+	if ids[0][1] == ids[1][1] {
+		t.Fatalf("a repeated label reused node id %q", ids[0][1])
+	}
+	// A label repeated across blocks must not collide either.
+	got2 := string(Render("```\nx=*#*#host#*#*\n```\n\ntext\n\n```\ny=*#*#host#*#*\n```"))
+	ids2 := reNode.FindAllStringSubmatch(got2, -1)
+	if len(ids2) != 2 || ids2[0][1] == ids2[1][1] {
+		t.Fatalf("cross-block node ids collided: %q", got2)
+	}
+	// Ids derive from the label, so the same source renders identically (which
+	// is what keeps a reader's saved answer attached across reloads).
+	if again := string(Render(src)); again != got {
+		t.Fatalf("render is not deterministic:\n%q\n%q", got, again)
+	}
+}
+
+func TestRenderFillBlanksOnlyInFences(t *testing.T) {
+	for _, src := range []string{
+		"text *#*#label#*#* text",
+		"# heading *#*#label#*#*",
+		"- item *#*#label#*#*",
+		"> quote *#*#label#*#*",
+	} {
+		if got := string(Render(src)); strings.Contains(got, "kb-blank") {
+			t.Errorf("directive rendered outside a fence for %q: %q", src, got)
+		}
+	}
+}
+
+func TestRenderFillBlanksMalformed(t *testing.T) {
+	cases := []string{
+		"```\n*#*##*#*\n```",     // empty label
+		"```\n*#*#   #*#*\n```",  // whitespace-only label
+		"```\n*#*#unclosed\n```", // no closing delimiter
+		"```\nno directives\n```",
+	}
+	for _, src := range cases {
+		if got := string(Render(src)); strings.Contains(got, "kb-blank") {
+			t.Errorf("malformed directive produced a fill for %q: %q", src, got)
 		}
 	}
 }

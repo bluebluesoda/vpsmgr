@@ -53,6 +53,8 @@ label { display: block; font-size: 12px; color: #6b7280; margin: 10px 0 4px; }
 .md code { background: #f3f4f6; padding: 1px 6px; border-radius: 5px; font-size: .92em; }
 @media (prefers-color-scheme: dark) { .md code { background: #14161a; } }
 .md pre code { background: none; padding: 0; }
+.md .kb-blank { font: inherit; color: #fde68a; background: rgba(148,163,184,.16); border: none; border-bottom: 1px dashed #94a3b8; border-radius: 3px 3px 0 0; padding: 0 4px; margin: 0 2px; }
+.md .kb-blank::placeholder { color: rgba(226,232,240,.45); }
 .md blockquote { border-left: 3px solid #d1d5db; margin: .5em 0; padding: 2px 12px; color: #6b7280; }
 .md ul, .md ol { margin: .4em 0; padding-left: 1.4em; }
 .md hr { border: none; border-top: 1px solid #d1d5db; margin: .8em 0; }
@@ -110,7 +112,7 @@ label { display: block; font-size: 12px; color: #6b7280; margin: 10px 0 4px; }
       <input type="hidden" name="id" value="{{if .Editing}}{{.Editing.ID}}{{end}}">
       <label for="kbTitle">{{if eq .Lang "zh"}}标题{{else}}Title{{end}}</label>
       <input id="kbTitle" name="title" maxlength="200" required value="{{if .Editing}}{{.Editing.Title}}{{end}}">
-      <label for="kbContent">{{if eq .Lang "zh"}}Markdown：标题、列表、代码块、粗体/斜体、链接、引用{{else}}Markdown: headings, lists, code blocks, bold/italic, links, quotes{{end}}</label>
+      <label for="kbContent">{{if eq .Lang "zh"}}Markdown：标题、列表、代码块、粗体/斜体、链接、引用；代码块内 *#*#说明#*#* 会变成填空{{else}}Markdown: headings, lists, code blocks, bold/italic, links, quotes; inside a code block *#*#hint#*#* becomes a blank{{end}}</label>
       <textarea id="kbContent" name="content" spellcheck="false" required>{{.Content}}</textarea>
       <div class="growbar">
         <button type="button" class="btn" id="kbPreviewBtn">{{if eq .Lang "zh"}}预览{{else}}Preview{{end}}</button>

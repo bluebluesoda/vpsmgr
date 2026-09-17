@@ -1250,7 +1250,8 @@ func TestOverviewSnapshotModal(t *testing.T) {
 
 // TestOverviewSnapshotShareUI verifies the share UI: a published checkpoint
 // shows its code with a revoke button, an unpublished one shows a Share button,
-// and the reinstall modal carries the share-code field.
+// and the reinstall modal carries the share-code field plus the opt-in
+// run-init-script switch (which must ship off).
 func TestOverviewSnapshotShareUI(t *testing.T) {
 	srv, _ := newTestServer(t)
 	body := srv.renderToString(t, "overview.html", pageData{
@@ -1269,10 +1270,23 @@ func TestOverviewSnapshotShareUI(t *testing.T) {
 		`onclick="unshareSnap()"`,
 		`onclick="shareSnap('snap-other','2026-08-02T00:00:00Z')"`,
 		`name="share"`,
+		`name="run_init"`, `id="reInitWrap"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("overview share UI missing %q", want)
 		}
+	}
+	// The switch is opt-in: it must not arrive pre-ticked.
+	i := strings.Index(body, `id="reInit"`)
+	if i < 0 {
+		t.Fatal("reinstall modal is missing the run-init switch")
+	}
+	tag := body[i:]
+	if j := strings.Index(tag, ">"); j >= 0 {
+		tag = tag[:j]
+	}
+	if strings.Contains(tag, "checked") {
+		t.Errorf("run-init switch must default to off: %q", tag)
 	}
 	// The published checkpoint must not also offer a Share button.
 	if strings.Contains(body, `shareSnap('snap-shared'`) {
@@ -2049,6 +2063,7 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 		Knowledge: []knowledgeArticle{{
 			ID: 7, Title: "Getting started", UpdatedAt: "2026-08-01T10:00:00Z",
 			HTML: template.HTML("<h1>Getting started</h1><pre><code>ls -la</code></pre>"),
+			Source: "REGINNAME=*#*#region#*#*",
 		}},
 	})
 	for _, want := range []string{
@@ -2057,6 +2072,13 @@ func TestOverviewKnowledgeModal(t *testing.T) {
 	} {
 		if !strings.Contains(one, want) {
 			t.Errorf("single-article knowledge modal missing %q", want)
+		}
+	}
+	// The "copy all" button needs the raw Markdown, which rides along in a
+	// hidden textarea (html/template escapes the textarea as RCDATA).
+	for _, want := range []string{`class="btn kb-copy-all"`, `class="kb-src"`, "*#*#region#*#*"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("knowledge article is missing %q", want)
 		}
 	}
 	if strings.Contains(one, `id="kbList"`) {

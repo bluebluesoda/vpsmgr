@@ -129,6 +129,7 @@ type knowledgeArticle struct {
 	Title     string
 	UpdatedAt string
 	HTML      template.HTML
+	Source    string // raw Markdown, for the reader's "copy all" button
 }
 
 // sshKeyRow is one public key shown in the SSH-key management panel.
@@ -499,7 +500,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	if arts, err := s.db.ListKnowledge(); err == nil {
 		for _, a := range arts {
 			d.Knowledge = append(d.Knowledge, knowledgeArticle{
-				ID: a.ID, Title: a.Title, UpdatedAt: a.UpdatedAt, HTML: markdown.Render(a.Content),
+				ID: a.ID, Title: a.Title, UpdatedAt: a.UpdatedAt,
+				HTML: markdown.Render(a.Content), Source: a.Content,
 			})
 		}
 	}
