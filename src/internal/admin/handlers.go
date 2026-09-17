@@ -54,6 +54,9 @@ type pageData struct {
 	PoolTotal    int
 	// AdminKeys is the operator's own SSH-key store (management panel only).
 	AdminKeys []sshKeyRow
+	// BatchID, when set, is a running/recent batch create the page should show
+	// the progress modal for (carried through the redirect after submitting).
+	BatchID string
 	// Global dynamic CPU limit rule, edited by the card below (the DB is the
 	// single source of truth — there is no config.yaml / CLI equivalent). The
 	// Active list is the containers currently capped by it.
@@ -397,6 +400,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // automatic polling.
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	d := s.buildPageData("", "")
+	d.BatchID = strings.TrimSpace(r.URL.Query().Get("batch"))
 	s.loadUsers(&d)
 	s.render(w, r, "admin_overview.html", d)
 }
@@ -506,6 +510,137 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	cred += "\npanel:     " + s.panelURL(r, "/"+s.cfg.Panel.URLPath)
 	// Carry the username as flash data so the modal can offer "log in as".
 	s.redirectModalData(w, r, s.p(""), cred, res.User.Name)
+}
+
+// handleUserBatch starts a background batch create that clones each user from a
+// shared checkpoint. Everything is validated up front — share code, the whole
+// name list, quotas, admin keys — so a rejected batch creates nothing at all.
+func (s *Server) handleUserBatch(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if !s.mgr.SnapshotShareEnabled() {
+		s.redirect(w, r, s.p(""), "error: snapshot sharing is disabled")
+		return
+	}
+	share := strings.TrimSpace(r.FormValue("share"))
+	if share == "" {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "batch_need_share"))
+		return
+	}
+	// Validate the form first: a typo should be reported without an Incus
+	// round-trip on the share code.
+	names, err := s.mgr.ValidateBatchNames(strings.Split(r.FormValue("names"), "\n"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	cpu, err := mgr.ParseCPU(r.FormValue("cpu"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	memMB, err := parseMem(r.FormValue("mem"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	diskGB, err := strconv.Atoi(r.FormValue("disk"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
+		return
+	}
+	bandwidthGB, err := mgr.ParseBandwidthGB(r.FormValue("bandwidth"))
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	days, err := strconv.Atoi(strings.TrimSpace(r.FormValue("days")))
+	if err != nil || days < 0 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_days"))
+		return
+	}
+	keyIDs, err := s.parseAdminKeyIDs(r.Form["akeys"])
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	// Resolve last: this is the only check that has to ask the database and
+	// Incus whether the checkpoint is still there. Doing it here means a dead
+	// code fails once, up front, instead of N times inside the batch.
+	if _, _, err := s.mgr.ResolveShare(share); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	id, err := s.batches.start(names)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	opt := mgr.AddOptions{
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB,
+		AllowChild: true, Days: days, FromShare: share,
+	}
+	_ = s.db.AddAuditLog("000", "user.batch_create")
+	// Background: each clone takes tens of seconds, so the request returns at
+	// once and the page polls for progress (and for the one-time passwords).
+	go func() {
+		s.mgr.AddBatch(names, opt, keyIDs, func(res mgr.BatchResult) {
+			if res.State == mgr.BatchDone {
+				_ = s.db.AddAuditLog("000+"+res.Name, "user.create")
+			}
+			s.batches.update(id, res)
+		})
+		s.batches.finish(id)
+	}()
+	s.redirect(w, r, s.p("/?batch="+id), s.t(r, "batch_started"))
+}
+
+// parseAdminKeyIDs validates the submitted admin-key selection against the
+// operator's store, so a stale checkbox cannot grant a key that no longer
+// exists.
+func (s *Server) parseAdminKeyIDs(raw []string) ([]int64, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	keys, err := s.db.ListAdminKeys()
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[int64]bool, len(keys))
+	for _, k := range keys {
+		known[k.ID] = true
+	}
+	out := make([]int64, 0, len(raw))
+	for _, v := range raw {
+		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil || !known[id] {
+			return nil, errors.New("unknown admin key: " + v)
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// handleUserBatchStatus reports batch progress. The job id is random and only
+// handed to the operator who started it; the one-time passwords ride along, so
+// the response is never cached (Cache-Control: no-store is set panel-wide).
+func (s *Server) handleUserBatchStatus(w http.ResponseWriter, r *http.Request) {
+	job, ok := s.batches.get(strings.TrimSpace(r.URL.Query().Get("id")))
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error,omitempty"`
+		}{false, "unknown or expired batch"})
+		return
+	}
+	json.NewEncoder(w).Encode(struct {
+		OK bool `json:"ok"`
+		batchJob
+	}{true, job})
 }
 
 func (s *Server) handleUserDel(w http.ResponseWriter, r *http.Request) {

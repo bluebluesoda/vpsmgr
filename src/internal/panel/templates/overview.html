@@ -207,6 +207,15 @@ footer a{color:var(--muted);text-decoration:underline}
 .kb-article pre{position:relative;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:1.8rem .8rem .7rem;overflow:auto;margin:.55rem 0}
 .kb-article pre code{background:none;color:inherit;padding:0}
 .kb-article .kb-copy{position:absolute;top:.35rem;right:.35rem;font-size:.72rem;padding:.15rem .5rem}
+.kb-toolbar{display:flex;justify-content:flex-end;margin:.1rem 0 .15rem}
+.kb-blank{font:inherit;color:#fde68a;background:rgba(148,163,184,.16);border:none;border-bottom:1px dashed #94a3b8;border-radius:3px 3px 0 0;padding:0 .2rem;margin:0 .1rem;min-width:4ch;outline:none}
+.kb-blank::placeholder{color:rgba(226,232,240,.45)}
+.kb-blank:focus{border-bottom-color:var(--accent);background:rgba(148,163,184,.26)}
+.kb-hint{font-size:.72rem;color:var(--muted);margin:.1rem 0 .55rem}
+.kb-copy.kb-gated{display:none}
+.kb-copy.kb-pulse{animation:kbPulse 1.6s ease-in-out infinite}
+@keyframes kbPulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.55)}50%{box-shadow:0 0 0 .32rem rgba(56,189,248,0)}}
+@media (prefers-reduced-motion:reduce){.kb-copy.kb-pulse{animation:none;outline:1px solid var(--accent)}}
 .kb-back{align-self:flex-start;margin-bottom:.5rem}
 @media (max-width:600px){
   .overlay{padding:0}
@@ -561,8 +570,10 @@ footer a{color:var(--muted);text-decoration:underline}
 {{range .Knowledge}}
 <div class="kb-article" id="kb-art-{{.ID}}"{{if gt (len $.Knowledge) 1}} hidden{{end}}>
 {{if gt (len $.Knowledge) 1}}<button type="button" class="btn kb-back" data-kb-back="1">{{if eq $.Lang "zh"}}← 返回{{else}}← Back{{end}}</button>{{end}}
+<div class="kb-toolbar"><button type="button" class="btn kb-copy-all">{{if eq $.Lang "zh"}}复制全文{{else}}Copy all{{end}}</button></div>
 <h2>{{.Title}}</h2>
 {{.HTML}}
+<textarea class="kb-src" hidden readonly>{{.Source}}</textarea>
 </div>
 {{end}}
 {{else}}
@@ -630,6 +641,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
 <input name="share" id="reShare" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="width:100%">
 </div>
 <div class="re-note" id="reHint" hidden>{{if eq .Lang "zh"}}将从该检查点恢复，不安装系统。{{else}}Rebuilding from that checkpoint; no system is installed.{{end}}</div>
+<div id="reInitWrap" hidden style="margin-top:.5rem"><label class="chk"><input type="checkbox" name="run_init" id="reInit" value="1" autocomplete="off"> {{if eq .Lang "zh"}}运行初始化脚本{{else}}Run init script{{end}}</label></div>
 {{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
@@ -774,6 +786,8 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   var reDesc=document.getElementById('reDesc');
   var reHint=document.getElementById('reHint');
   var reShare=document.getElementById('reShare');
+  var reInitWrap=document.getElementById('reInitWrap');
+  var reInit=document.getElementById('reInit');
   var defaultAlias='';
   var descByAlias={};
   function checkAlias(alias){
@@ -793,16 +807,28 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   // highlight entirely — "nothing selected" is a real state here: the container
   // is rebuilt from a checkpoint, not from an image. Clearing the code restores
   // the default image.
+  // The "run init script" switch only exists for a clone from someone else's
+  // checkpoint, so it follows the share box. Its state is never remembered:
+  // whenever it is out of scope it is also unchecked, so going back to a plain
+  // image always leaves it off.
+  function syncInitToggle(){
+    if(!reInitWrap)return;
+    var on=!!(reShare&&reShare.value.trim()!=='');
+    reInitWrap.hidden=!on;
+    if(!on&&reInit)reInit.checked=false;
+  }
   function syncShareMode(){
     if(reShare&&reShare.value.trim()!==''){
       checkAlias('');
       showDesc('');
       if(reHint)reHint.hidden=false;
+      syncInitToggle();
       return;
     }
     if(reHint)reHint.hidden=true;
     if(checkedAlias()===''&&defaultAlias)checkAlias(defaultAlias);
     showDesc(checkedAlias());
+    syncInitToggle();
   }
   // Clicking a tile is an explicit system choice: it wins, so a code still in
   // the box is dropped rather than silently overriding the selection.
@@ -810,6 +836,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     if(reShare&&reShare.value.trim()!=='')reShare.value='';
     if(reHint)reHint.hidden=true;
     showDesc(checkedAlias());
+    syncInitToggle();
   }
   if(reShare)reShare.addEventListener('input',syncShareMode);
   function loadImages(){
@@ -834,6 +861,10 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     }).catch(function(){});
   }
   reBtn.addEventListener('click',function(){
+    // A fresh open always starts with the switch off: it has to be ticked by
+    // hand every time, and this also defeats browser form-state restoration.
+    if(reInit)reInit.checked=false;
+    syncInitToggle();
     loadImages().then(function(){reModal.classList.add('show');});
   });
   reCancel.addEventListener('click',function(){reModal.classList.remove('show');});
@@ -1111,13 +1142,18 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   if(location.hash==='#snapshots')open();
 })();
 // Knowledge base: a large overlay listing the operator's articles, each
-// rendered from Markdown on the server. Code blocks get a copy button.
+// rendered from Markdown on the server. Code blocks get a copy button. A block
+// that contains *#*#blank#*#* fills keeps that button hidden until every blank
+// is filled, then breathes to draw the eye and copies the code with the
+// reader's answers substituted in. Answers are kept in this browser only.
 (function(){
   var modal=document.getElementById('kbModal');
   var btn=document.getElementById('kbBtn');
   var close=document.getElementById('kbClose');
   if(!modal||!btn)return;
   var LANG='{{.Lang}}';
+  var USER='{{.User.Name}}';
+  var RE=/\*#\*#(.+?)#\*#\*/g;
   var list=document.getElementById('kbList');
   var arts=Array.prototype.slice.call(modal.querySelectorAll('.kb-article'));
   function open(){modal.classList.add('show');}
@@ -1141,20 +1177,142 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     var d=new Date(el.getAttribute('data-ts'));
     if(!isNaN(d))el.textContent=d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes());
   });
+  function T(zh,en){return LANG==='zh'?zh:en;}
   function copy(text,el){
-    function done(){var t=el.textContent;el.textContent=(LANG==='zh')?'已复制':'Copied';setTimeout(function(){el.textContent=t;},1200);}
+    function done(){var t=el.textContent;el.textContent=T('已复制','Copied');setTimeout(function(){el.textContent=t;},1200);}
     if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){});}
     else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){}ta.remove();}
   }
-  modal.querySelectorAll('.kb-article pre').forEach(function(pre){
-    var b=document.createElement('button');
-    b.type='button'; b.className='btn kb-copy';
-    b.textContent=(LANG==='zh')?'复制':'Copy';
-    b.addEventListener('click',function(){
-      var code=pre.querySelector('code');
-      copy(code?code.innerText:pre.innerText, b);
+
+  // ---- fill-in-the-blank state, kept per article in localStorage ----
+  function artID(art){return art.id.replace('kb-art-','');}
+  function storeKey(id){return 'vpsmgr_kb_'+id+'_'+USER;}
+  function loadArt(art){
+    try{return JSON.parse(localStorage.getItem(storeKey(artID(art))))||{};}catch(e){return {};}
+  }
+  var pending=null;
+  function saveArt(art){
+    var data=loadArt(art);
+    art.querySelectorAll('.kb-blank').forEach(function(i){data[i.getAttribute('data-node')]=i.value;});
+    try{localStorage.setItem(storeKey(artID(art)),JSON.stringify(data));}catch(e){}
+  }
+  // Debounced: typing must not rewrite localStorage on every keystroke.
+  function scheduleSave(art){
+    if(pending)clearTimeout(pending);
+    pending=setTimeout(function(){pending=null;saveArt(art);},400);
+  }
+
+  // CJK glyphs are twice as wide as the '0' the ch unit is based on.
+  function dispLen(s){
+    var n=0;
+    for(var i=0;i<s.length;i++){
+      var c=s.charCodeAt(i);
+      n+=(c>=0x1100&&(c<=0x115f||c===0x2329||c===0x232a||(c>=0x2e80&&c<=0xa4cf)||
+        (c>=0xac00&&c<=0xd7a3)||(c>=0xf900&&c<=0xfaff)||(c>=0xfe30&&c<=0xfe6f)||
+        (c>=0xff00&&c<=0xff60)||(c>=0xffe0&&c<=0xffe6)))?2:1;
+    }
+    return n;
+  }
+  function fit(inp){
+    var n=Math.max(dispLen(inp.value||''),dispLen(inp.getAttribute('placeholder')||''));
+    inp.style.width=(n+1)+'ch';
+  }
+  // The copy button stays hidden until every blank in its own block is filled.
+  // Blocks without blanks keep the button always on (unchanged behaviour).
+  function gate(block){
+    var copyBtn=block.querySelector('.kb-copy');
+    if(!copyBtn)return;
+    var blanks=block.querySelectorAll('.kb-blank');
+    if(!blanks.length)return;
+    var filled=0;
+    blanks.forEach(function(i){if(i.value.trim())filled++;});
+    var ok=filled===blanks.length;
+    copyBtn.classList.toggle('kb-gated',!ok);
+    copyBtn.classList.toggle('kb-pulse',ok);
+  }
+  // The hint shows once anything is typed, and says where the values live.
+  function hint(block){
+    var blanks=block.querySelectorAll('.kb-blank');
+    if(!blanks.length)return;
+    var any=false;
+    blanks.forEach(function(i){if(i.value.trim())any=true;});
+    var el=block.nextElementSibling;
+    if(!(el&&el.classList&&el.classList.contains('kb-hint'))){
+      if(!any)return;
+      el=document.createElement('div');
+      el.className='kb-hint';
+      el.textContent=T('自定义内容仅保存在本浏览器，换设备需重新填写。',
+        'Your entries are saved in this browser only; they will not follow you to another device.');
+      block.parentNode.insertBefore(el,block.nextSibling);
+      return;
+    }
+    el.hidden=!any;
+  }
+  // A code block's text with the reader's answers in place. innerText cannot be
+  // used here: an <input> contributes nothing to it.
+  function blockText(block){
+    var out='';
+    var code=block.querySelector('code')||block;
+    code.childNodes.forEach(function(n){
+      if(n.nodeType===3)out+=n.nodeValue;
+      else if(n.tagName==='INPUT')out+=n.value;
+      else out+=n.textContent;
     });
-    pre.appendChild(b);
+    return out;
+  }
+  // The whole article as Markdown: the raw source rides along in .kb-src, and
+  // the n-th directive is swapped for the n-th blank's value. Only directives
+  // inside a fence are substituted, mirroring the server: a directive in prose
+  // renders no input, so substituting it would shift every answer after it.
+  function articleText(art){
+    var src=art.querySelector('.kb-src');
+    if(!src)return '';
+    var vals=[];
+    art.querySelectorAll('.kb-blank').forEach(function(i){vals.push(i.value);});
+    var lines=src.value.split('\n'), out=[], n=0, i=0;
+    var sub=function(){var v=vals[n++];return v===undefined?'':v;};
+    while(i<lines.length){
+      var t=lines[i].trim();
+      if(t.indexOf('```')===0||t.indexOf('~~~')===0){
+        var f=t.slice(0,3);
+        out.push(lines[i]); i++;
+        while(i<lines.length&&lines[i].trim().indexOf(f)!==0){
+          out.push(lines[i].replace(RE,sub)); i++;
+        }
+        if(i<lines.length){out.push(lines[i]); i++;}
+        continue;
+      }
+      out.push(lines[i]); i++;
+    }
+    return out.join('\n');
+  }
+
+  function wire(art,block){
+    block.querySelectorAll('.kb-blank').forEach(function(inp){
+      fit(inp);
+      inp.addEventListener('input',function(){
+        fit(inp);gate(block);hint(block);scheduleSave(art);
+      });
+    });
+    gate(block);
+    hint(block);
+  }
+  arts.forEach(function(art){
+    var saved=loadArt(art);
+    art.querySelectorAll('.kb-blank').forEach(function(inp){
+      var v=saved[inp.getAttribute('data-node')];
+      if(typeof v==='string')inp.value=v;
+    });
+    art.querySelectorAll('pre').forEach(function(pre){
+      var b=document.createElement('button');
+      b.type='button'; b.className='btn kb-copy';
+      b.textContent=T('复制','Copy');
+      b.addEventListener('click',function(){copy(blockText(pre),b);});
+      pre.appendChild(b);
+      wire(art,pre);
+    });
+    var all=art.querySelector('.kb-copy-all');
+    if(all)all.addEventListener('click',function(){copy(articleText(art),all);});
   });
 })();
 // Quota validity countdown: renders "剩余 N 天 M 小时" (or 已到期) from the

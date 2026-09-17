@@ -148,7 +148,7 @@ func TestSnapshotSharingToggleEnforced(t *testing.T) {
 		!strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("share while disabled = %v, want a disabled error", err)
 	}
-	if _, err := m.ReinstallFromShare("dave", "any-code"); err == nil ||
+	if _, err := m.ReinstallFromShare("dave", "any-code", false); err == nil ||
 		!strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("install while disabled = %v, want a disabled error", err)
 	}
@@ -182,7 +182,7 @@ func TestReinstallFromShareUnknownCode(t *testing.T) {
 	}
 	m := New(c, d)
 
-	if _, err := m.ReinstallFromShare("carol", "not-a-real-code"); err == nil ||
+	if _, err := m.ReinstallFromShare("carol", "not-a-real-code", false); err == nil ||
 		!strings.Contains(err.Error(), "invalid or expired") {
 		t.Fatalf("unknown code error = %v, want invalid/expired", err)
 	}

@@ -209,7 +209,12 @@ func (m *Manager) ResolveShare(code string) (owner, snap string, err error) {
 // container were deleted first). Otherwise the snapshot is cloned to a
 // temporary container, the old container is deleted, and the clone is renamed
 // into place — so a clone failure never leaves the user with nothing.
-func (m *Manager) ReinstallFromShare(name, code string) (string, error) {
+//
+// runInit is the opt-in "run my init script" switch from the reinstall form. It
+// applies only to the cross-container clone: a clone carries the source
+// checkpoint's state, so its init script is skipped unless the user asked for
+// it. Rolling back the user's own checkpoint ignores it entirely.
+func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, error) {
 	if !m.SnapshotShareEnabled() {
 		return "", errors.New("snapshot sharing is disabled by the administrator")
 	}
@@ -233,6 +238,8 @@ func (m *Manager) ReinstallFromShare(name, code string) (string, error) {
 			return "", err
 		}
 		m.applyUserKeys(u.Name)
+		// runInit is ignored here: the state came back from the checkpoint,
+		// so there is no image rebuild for the script to follow.
 		return "", nil
 	}
 
@@ -324,9 +331,16 @@ func (m *Manager) ReinstallFromShare(name, code string) (string, error) {
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
+	// The clone already carries the checkpoint's state, so the init script is
+	// opt-in here: it runs only if the user ticked the box on the reinstall
+	// form. Best-effort, exactly like a plain reinstall — a delivery failure
+	// never fails the rebuild, the container is already usable.
+	if runInit && u.InitScript != "" {
+		if err := m.lx.RunInitScript(u.Name, u.InitScript); err != nil {
+			fmt.Printf("  ! warn: init script: %v (container still recreated)\n", err)
+		}
+	}
 	m.applyUserKeys(u.Name)
-	// The init script is deliberately NOT run: the clone already carries the
-	// shared checkpoint's state.
 	if err := m.db.UpdateUserStatus(u.ID, db.StatusReady); err != nil {
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", fmt.Errorf("db: mark user ready: %w", err)
