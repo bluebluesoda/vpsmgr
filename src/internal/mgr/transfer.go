@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -13,27 +14,23 @@ import (
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/lx"
-	"vpsmgr/internal/pw"
 )
 
 // cross-machine transfer
 //
 // `vps transfer` moves one container's root disk between two vpsmgr hosts that
 // can reach each other over HTTPS but share nothing else. The source host
-// exports the stopped container to a single backup tarball, serves it from a
-// temporary listener, and the receiving host imports it over that listener.
+// exports the stopped container to a backup tarball and serves it, together
+// with a small JSON description of the account, from a temporary listener; the
+// receiving host imports the disk over that listener and recreates the account.
 //
-// Receiving is creating an account: the target name must be free, and the
-// import builds it the way `vps add` would — same allocation code, same
-// firewall rules, same panel row — then replaces the disk of the container it
-// just created with the transferred one. Nothing that already exists on the
-// receiving host is touched, so a failure anywhere is undone by deleting what
-// was created, and the machine is exactly as it was.
-//
-// Domains, SSH keys, sticky notes and bandwidth history stay behind on the
-// source: they are per-host configuration owned by that host's panel DB, and
-// the two hosts deliberately keep separate sets (their admin keys are not the
-// same). The account's quota does travel — the receive command carries it.
+// The point is that the owner should notice nothing but their address: the
+// quota, the SSH keys, the sticky notes and the init script all travel in that
+// JSON, so none of it has to be retyped on a command line or remembered. What
+// does NOT travel is everything that belongs to the source as a machine —
+// domains, admin key grants, bandwidth history, snapshots (which stay on the
+// host that took them) — and the receiving host's own IP, port block and IPv6
+// assignment, which stay randomly allocated as always.
 
 // TransferOptions carries the operator's choices for one transfer.
 type TransferOptions struct {
@@ -46,19 +43,52 @@ type TransferOptions struct {
 	Compression string
 	// Actor is recorded in the audit log (the operator running the command).
 	Actor string
-	// Account is how the receiving host sizes the account it creates.
-	Account AddOptions
 }
 
-// TransferManifest describes the artefact an export produced, and the account
-// settings the receiving host should recreate, so the printed receive command
-// carries both.
+// TransferMeta is the account's state as it travels with the archive: what the
+// receiving host needs in order to put the account back the way it was, and
+// how much room the disk it is about to receive needs.
+type TransferMeta struct {
+	User        string    `json:"user"`
+	CPU         int       `json:"cpu"`
+	MemMB       int       `json:"mem_mb"`
+	DiskGB      int       `json:"disk_gb"`
+	BandwidthGB int       `json:"bandwidth_gb"`
+	ExpiresAt   string    `json:"expires_at,omitempty"`
+	DiskUsed    int64     `json:"disk_used"`
+	InitScript  string    `json:"init_script,omitempty"`
+	SSHKeys     []MetaKey `json:"ssh_keys,omitempty"`
+	StickyNotes string    `json:"sticky_notes,omitempty"`
+}
+
+// MetaKey is one of the user's public keys, as the panel stores it.
+type MetaKey struct {
+	Name   string `json:"name"`
+	Key    string `json:"key"`
+	Active bool   `json:"active"`
+}
+
+// Account is the meta as the flags `vps add` takes. The deadline is not part of
+// it: it is an absolute date, applied on its own after the account exists.
+func (t *TransferMeta) Account() AddOptions {
+	return AddOptions{
+		CPU:         t.CPU,
+		MemMB:       t.MemMB,
+		DiskGB:      t.DiskGB,
+		BandwidthGB: t.BandwidthGB,
+	}
+}
+
+// TransferManifest describes the artefact an export produced, so the receiving
+// side can verify both files it is served.
 type TransferManifest struct {
-	User    string
-	Bytes   int64
-	SHA256  string
-	Elapsed time.Duration
-	Account AddOptions
+	User     string
+	Bytes    int64
+	SHA256   string
+	Meta     []byte
+	MetaSHA  string
+	DiskUsed int64
+	Elapsed  time.Duration
 }
 
 // TransferResult describes a completed import, so the CLI can print the
@@ -66,7 +96,6 @@ type TransferManifest struct {
 type TransferResult struct {
 	User      string
 	PanelPass string
-	RootPass  string
 	IP        string
 	SSHPort   int
 	Ports     string
@@ -76,26 +105,31 @@ type TransferResult struct {
 
 // TransferEstimate returns the number of bytes the container's root disk
 // currently occupies, used to check the temp file will fit before a long export
-// is started. It falls back to the user's disk quota when the daemon has no
-// exact figure (a stopped container on some storage drivers reports none).
+// is started, and to tell the far side how much room to find.
 func (m *Manager) TransferEstimate(name string) (int64, error) {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return 0, err
 	}
+	return m.transferDiskUsed(u), nil
+}
+
+// transferDiskUsed falls back to the user's disk quota when the daemon has no
+// exact figure (a stopped container on some storage drivers reports none).
+func (m *Manager) transferDiskUsed(u *db.User) int64 {
 	if n, err := m.lx.DiskUsage(u.Name); err == nil && n > 0 {
-		return n, nil
+		return n
 	}
 	if all, err := m.lx.Metrics(); err == nil {
 		if v, ok := all[u.Name]; ok && v.FilesystemSize > 0 && v.FilesystemAvail <= v.FilesystemSize {
-			return v.FilesystemSize - v.FilesystemAvail, nil
+			return v.FilesystemSize - v.FilesystemAvail
 		}
 	}
-	return int64(u.DiskGB) << 30, nil
+	return int64(u.DiskGB) << 30
 }
 
 // TransferExport streams the user's stopped container to w and returns the
-// manifest of what was written.
+// manifest of what was written, including the metadata that travels with it.
 //
 // The container must already be stopped by the operator: exporting a running
 // container copies a live filesystem, and this command never changes a
@@ -112,6 +146,18 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 	if err := m.requireStopped(u.Name); err != nil {
 		return nil, err
 	}
+	// An expired account is not migrated. Bringing one up on a new host would
+	// mean starting a container the panel has already locked and stopped, and
+	// an expiry that has already passed would be recreated as a live account.
+	// The operator decides: extend it here first, then move it.
+	if IsExpired(u.ExpiresAt, time.Now()) {
+		return nil, fmt.Errorf("%s expired on %s — extend it first (vps quota %s --days N), then move it",
+			u.Name, expiresDate(u.ExpiresAt), u.Name)
+	}
+	meta, err := m.buildTransferMeta(u)
+	if err != nil {
+		return nil, err
+	}
 
 	started := time.Now()
 	sum := sha256.New()
@@ -124,45 +170,85 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 	if err != nil {
 		return nil, err
 	}
+	metaSHA := sha256.Sum256(meta)
 	_ = m.db.AddAuditLog(opt.Actor, "transfer.export."+u.Name)
 	return &TransferManifest{
-		User:    u.Name,
-		Bytes:   n,
-		SHA256:  hex.EncodeToString(sum.Sum(nil)),
-		Elapsed: time.Since(started),
-		Account: accountFor(u),
+		User:     u.Name,
+		Bytes:    n,
+		SHA256:   hex.EncodeToString(sum.Sum(nil)),
+		Meta:     meta,
+		MetaSHA:  hex.EncodeToString(metaSHA[:]),
+		DiskUsed: m.transferDiskUsed(u),
+		Elapsed:  time.Since(started),
 	}, nil
 }
 
-// accountFor is the account a transfer recreates on the far side: the quota the
-// container has here, expressed as the flags `vps add` takes.
-func accountFor(u *db.User) AddOptions {
-	opt := AddOptions{
+// buildTransferMeta collects everything about the account that lives in this
+// host's panel database rather than inside the container.
+func (m *Manager) buildTransferMeta(u *db.User) ([]byte, error) {
+	meta := TransferMeta{
+		User:        u.Name,
 		CPU:         u.CPU,
 		MemMB:       u.MemMB,
 		DiskGB:      u.DiskGB,
 		BandwidthGB: u.BandwidthQuotaGB,
+		ExpiresAt:   u.ExpiresAt,
+		DiskUsed:    m.transferDiskUsed(u),
+		InitScript:  u.InitScript,
 	}
-	if u.ExpiresAt != "" {
-		if left := daysUntil(u.ExpiresAt); left > 0 {
-			opt.Days = left
-		}
+	keys, err := m.db.ListSSHKeys(u.ID)
+	if err != nil {
+		return nil, err
 	}
-	return opt
+	for _, k := range keys {
+		meta.SSHKeys = append(meta.SSHKeys, MetaKey{Name: k.Name, Key: k.Key, Active: k.Active})
+	}
+	notes, err := m.db.GetStickyNotes(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	meta.StickyNotes = notes
+	return json.Marshal(meta)
 }
 
-// daysUntil rounds an expiry deadline up to whole days, so a transfer never
-// shortens the account it recreates.
-func daysUntil(rfc3339 string) int {
-	t, err := time.Parse(time.RFC3339, rfc3339)
+// expiresDate renders a deadline for a message, falling back to the raw value.
+func expiresDate(rfc3339 string) string {
+	if t, err := time.Parse(time.RFC3339, rfc3339); err == nil {
+		return t.Format("2006-01-02 15:04 MST")
+	}
+	return rfc3339
+}
+
+// TransferSpaceCheck reports whether this host can take the disk described by
+// meta, by the same rule that guards `vps add`: the pool must not already be
+// 90% full. It is run before the archive is fetched, so a host that cannot take
+// the container says so instead of spending an hour downloading it, and it uses
+// the sending host's own figure for the disk rather than the archive's size,
+// which says nothing about how much will be unpacked.
+func (m *Manager) TransferSpaceCheck(meta []byte) error {
+	var t TransferMeta
+	if err := json.Unmarshal(meta, &t); err != nil {
+		return fmt.Errorf("unreadable transfer metadata: %w", err)
+	}
+	usage, err := m.PoolUsage()
 	if err != nil {
-		return 0
+		return err
 	}
-	d := time.Until(t)
-	if d <= 0 {
-		return 0
+	if usage >= 0.9 {
+		return fmt.Errorf("storage pool %s is %.0f%% used (>= 90%%), refusing to import %s",
+			m.cfg.Incus.Pool, usage*100, t.User)
 	}
-	return int((d + 24*time.Hour - 1) / (24 * time.Hour))
+	return nil
+}
+
+// TransferMetaAccount parses the account settings out of the metadata, so the
+// CLI can show the operator what it is about to create.
+func TransferMetaAccount(meta []byte) (AddOptions, string, error) {
+	var t TransferMeta
+	if err := json.Unmarshal(meta, &t); err != nil {
+		return AddOptions{}, "", fmt.Errorf("unreadable transfer metadata: %w", err)
+	}
+	return t.Account(), t.User, nil
 }
 
 // TransferTarget checks the receiving name is usable, so the operator learns
@@ -183,8 +269,8 @@ func (m *Manager) TransferTarget(name string) error {
 	return nil
 }
 
-// TransferImport creates the account from a backup tarball read from r and
-// returns its connection details.
+// TransferImport creates the account described by meta from a backup tarball
+// read from r and returns its connection details.
 //
 // The account is created first, exactly as `vps add` would create it — so its
 // IP, port block, IPv6 assignment, firewall rules and panel row all come from
@@ -192,16 +278,20 @@ func (m *Manager) TransferTarget(name string) error {
 // that produced is then replaced by the transferred one. Nothing that existed
 // before this call is modified, so any failure is undone by deleting what was
 // created.
-func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, opt TransferOptions) (*TransferResult, error) {
+func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, metaBytes []byte, opt TransferOptions) (*TransferResult, error) {
 	// No opMu here: Add and Del take it themselves, and this runs the two of
 	// them in sequence.
 	if err := m.TransferTarget(name); err != nil {
 		return nil, err
 	}
+	var meta TransferMeta
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		return nil, fmt.Errorf("unreadable transfer metadata: %w", err)
+	}
 	started := time.Now()
 	counting := &countingReader{r: r}
 
-	created, err := m.Add(name, opt.Account)
+	created, err := m.Add(name, meta.Account())
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +305,14 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 			fmt.Printf("  ! warn: could not remove the half-built account %s: %v\n", u.Name, derr)
 		}
 		return nil, err
+	}
+
+	// The account's own data before anything expensive: it is a handful of DB
+	// writes, and doing it first means a problem here costs nothing. The keys
+	// are injected into the container further down, by the same call that keeps
+	// them in step on any other account.
+	if err := m.applyTransferMeta(u, &meta); err != nil {
+		return fail(err)
 	}
 
 	// The container Add just made has to go before the transfer's disk is
@@ -235,7 +333,19 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	// against this host's networks as it creates the instance, so this host's
 	// own devices have to go in as part of the import rather than after it.
 	spec, devices := m.instanceConfig(u)
-	if err := m.lx.BackupImport(ctx, u.Name, m.cfg.Incus.Pool, devices, counting); err != nil {
+	// ...along with fresh hardware addresses, for the same reason and one more:
+	// the archive also carries the source's, and importing the same archive
+	// twice into one host would otherwise collide ("MAC address ... already
+	// defined on another NIC"). They are set here because Incus writes the DHCP
+	// reservation that gives a container its static IPv4 when the instance is
+	// created, keyed to the address it has at that moment — decide it later and
+	// the reservation names the old one, so the container is handed a dynamic
+	// address while every rule and record points at the static one.
+	fresh, err := freshNICAddrs()
+	if err != nil {
+		return fail(err)
+	}
+	if err := m.lx.BackupImport(ctx, u.Name, m.cfg.Incus.Pool, devices, fresh, counting); err != nil {
 		return fail(fmt.Errorf("import backup: %w", err))
 	}
 	// ...and the configuration is then replaced outright, which also clears
@@ -253,15 +363,19 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 		return fail(fmt.Errorf("wait for container: %w", err))
 	}
 
-	// The transferred disk still carries the source's root password, hostname,
-	// machine-id and SSH host keys. Rebuilding all of them is what makes the
-	// container this host's own rather than a copy of the other one: a shared
-	// machine-id makes dnsmasq drop DHCPv6 leases, and shared host keys would
-	// let two machines claim one identity to every client.
-	pass := pw.Generate(20)
+	// The transferred disk still carries the source's hostname, machine-id and
+	// SSH host keys. Rebuilding those is what makes the container this host's
+	// own rather than a copy of the other one: a shared machine-id makes
+	// dnsmasq drop DHCPv6 leases, and shared host keys would let two machines
+	// claim one identity to every client.
+	//
+	// The root password is deliberately NOT reset: it lives on the disk, the
+	// owner already knows it, and leaving it alone is the whole point of a
+	// migration that should feel like nothing happened.
+	//
 	// image only picks the provisioning path; the rootfs came from another
 	// vpsmgr host, so it is always one of the managed images.
-	if err := m.Provision(u.Name, m.cfg.Incus.Image, pass); err != nil {
+	if err := m.Provision(u.Name, m.cfg.Incus.Image, ""); err != nil {
 		return fail(fmt.Errorf("provision container: %w", err))
 	}
 	if err := m.regenerateMachineID(u.Name); err != nil {
@@ -271,6 +385,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 		return fail(fmt.Errorf("regenerate ssh host keys: %w", err))
 	}
 	// ...and the source's authorized_keys, or the source could still log in.
+	// The owner's own keys are written back by applyUserKeys below.
 	m.clearAuthorizedKeys(u.Name)
 
 	// The source's IPv6 stanza is still in the container's network config, and
@@ -308,13 +423,49 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	return &TransferResult{
 		User:      u.Name,
 		PanelPass: created.Password,
-		RootPass:  pass,
 		IP:        u.IP,
 		SSHPort:   u.SSHPort,
 		Ports:     UserPorts(u.StartPort, cfg.PortsPerUser),
 		Elapsed:   time.Since(started),
 		BytesRead: counting.n,
 	}, nil
+}
+
+// applyTransferMeta restores the account data that lives in the panel database:
+// the owner's public keys, their notes, their init script and their deadline.
+// It is done while the receiving container is still the empty one Add made, so
+// a failure here is cheap — but it never runs the script: an init script
+// belongs to a reinstall, and a migration must not re-run whatever it did the
+// first time.
+func (m *Manager) applyTransferMeta(u *db.User, meta *TransferMeta) error {
+	for _, k := range meta.SSHKeys {
+		name, key := k.Name, k.Key
+		if name == "" {
+			name = "imported"
+		}
+		if _, err := m.db.AddSSHKey(u.ID, name, key, k.Active); err != nil {
+			return fmt.Errorf("restore ssh key %q: %w", name, err)
+		}
+	}
+	if meta.StickyNotes != "" {
+		if err := m.db.SetStickyNotes(u.ID, meta.StickyNotes); err != nil {
+			return fmt.Errorf("restore sticky notes: %w", err)
+		}
+	}
+	if meta.InitScript != "" {
+		if err := m.db.UpdateInitScript(u.ID, meta.InitScript); err != nil {
+			return fmt.Errorf("restore init script: %w", err)
+		}
+	}
+	// The deadline is carried as the absolute date it was, so the account
+	// neither loses nor gains time by moving. An expired account never gets
+	// this far: the export refuses to start one.
+	if meta.ExpiresAt != "" {
+		if _, err := m.SetExpiry(u.Name, meta.ExpiresAt); err != nil {
+			return fmt.Errorf("restore the expiry: %w", err)
+		}
+	}
+	return nil
 }
 
 // stripForeignIPv6 removes the IPv6 configuration that the host this container
@@ -369,26 +520,64 @@ mv "$CFG.new" "$CFG"
 	return err
 }
 
-// ensureStaticIPv4 checks that the container actually holds the IPv4 address its
-// whole hosting setup is built around: the panel's records, the host's DNAT
-// rules and the user's own notes all name it, so a container that ends up on
-// another address is unreachable. Better to say so than to hand over a machine
-// nobody can connect to.
+// ensureStaticIPv4 waits for the container to take the IPv4 address its whole
+// hosting setup is built around: the panel's records, the host's DNAT rules and
+// the user's own notes all name it, so a container that ends up on another
+// address is unreachable — better to say so than to hand over a machine nobody
+// can connect to.
+//
+// The address is not configured at boot, it is leased: Incus hands a container
+// its static IPv4 from a DHCP reservation keyed to its MAC, so it arrives a
+// moment after the container is up (later than Ready means) and has to be
+// waited for. If the server is still holding the lease of the container this
+// one replaced, one restart is what makes it ask again.
 func (m *Manager) ensureStaticIPv4(u *db.User) error {
 	if u.IP == "" {
 		return nil
 	}
-	out, err := m.lx.ExecSH(u.Name, "ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}'")
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), u.IP+"/") {
-			return nil
+	last := ""
+	for attempt := 0; attempt < 2; attempt++ {
+		deadline := time.Now().Add(40 * time.Second)
+		for {
+			out, err := m.lx.ExecSH(u.Name, "ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}'")
+			if err != nil {
+				return err
+			}
+			last = strings.Join(strings.Fields(out), " ")
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), u.IP+"/") {
+					return nil
+				}
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(3 * time.Second)
+		}
+		if attempt == 0 {
+			fmt.Printf("  · %s has not taken %s yet — restarting it once\n", u.Name, u.IP)
+			if err := m.lx.Restart(u.Name); err != nil {
+				return err
+			}
 		}
 	}
 	return fmt.Errorf("the container came up on %s, not on its assigned %s — its port forwarding will not work until it takes that address",
-		strings.Join(strings.Fields(out), " "), u.IP)
+		last, u.IP)
+}
+
+// freshNICAddrs returns a new hardware address for each NIC name a vpsmgr
+// container can have. Setting one for a NIC the container turns out not to have
+// is harmless: it is just an unused configuration key.
+func freshNICAddrs() (map[string]string, error) {
+	out := map[string]string{}
+	for _, nic := range []string{"eth0", "eth1"} {
+		mac, err := lx.RandomMAC()
+		if err != nil {
+			return nil, err
+		}
+		out["volatile."+nic+".hwaddr"] = mac
+	}
+	return out, nil
 }
 
 // instanceConfig is the container specification this host gives the user: its

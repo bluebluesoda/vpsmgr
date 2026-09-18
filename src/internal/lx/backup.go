@@ -3,6 +3,7 @@ package lx
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,8 +94,8 @@ func (c *Client) BackupExport(ctx context.Context, name string, opt BackupOption
 }
 
 // BackupImport creates the container from a backup tarball read from r. Incus
-// takes the raw archive as the request body and the target name and pool from
-// headers.
+// takes the raw archive as the request body; the target name, pool, devices and
+// any extra configuration come from headers.
 //
 // devices, when set, is merged into the archive's device map before the
 // instance is created. That override is not optional in practice: an archive
@@ -105,9 +106,17 @@ func (c *Client) BackupExport(ctx context.Context, name string, opt BackupOption
 // device the archive has and this host does not want, which is why a transfer
 // expects both hosts to use the same IPv6 mode.
 //
+// extraConfig is merged into the instance's own configuration at the same
+// moment, and is where the fresh hardware addresses go. They have to be decided
+// here rather than afterwards: Incus writes the DHCP reservation that hands a
+// container its static IPv4 when the instance is created, keyed to the address
+// it has then, and a later change to the address does not move the reservation
+// with it — the container is then given a dynamic address and its port
+// forwarding points at nothing.
+//
 // Cancelling ctx aborts the upload, and the daemon discards the partial
 // instance rather than leaving one behind.
-func (c *Client) BackupImport(ctx context.Context, name, pool string, devices map[string]Device, r io.Reader) error {
+func (c *Client) BackupImport(ctx context.Context, name, pool string, devices map[string]Device, extraConfig map[string]string, r io.Reader) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/1.0/instances", r)
 	if err != nil {
 		return err
@@ -119,6 +128,9 @@ func (c *Client) BackupImport(ctx context.Context, name, pool string, devices ma
 	}
 	if len(devices) > 0 {
 		req.Header.Set("X-Incus-devices", deviceHeader(devices))
+	}
+	if len(extraConfig) > 0 {
+		req.Header.Set("X-Incus-config", configHeader(extraConfig))
 	}
 	resp, err := c.stream.Do(req)
 	if err != nil {
@@ -162,7 +174,7 @@ func (c *Client) ReplaceConfig(name string, config map[string]string, devices ma
 		merged[k] = v
 	}
 	for k, v := range cur.Config {
-		if strings.HasPrefix(k, "volatile.") && !perInstanceVolatile(k) {
+		if strings.HasPrefix(k, "volatile.") {
 			merged[k] = v
 		}
 	}
@@ -179,16 +191,35 @@ func (c *Client) ReplaceConfig(name string, config map[string]string, devices ma
 	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name), body, 2*time.Minute)
 }
 
-// perInstanceVolatile reports whether a volatile.* key describes the instance
-// an archive was taken from rather than the disk it holds: the hardware address
-// its bridge leased it, and the name of the veth pair on the host it ran on.
+// configHeader renders the X-Incus-config value: space-separated "key=value"
+// entries, in a stable order so a failure is reproducible.
+func configHeader(config map[string]string) string {
+	keys := make([]string, 0, len(config))
+	for k := range config {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+config[k])
+	}
+	return strings.Join(parts, " ")
+}
+
+// RandomMAC returns a fresh locally-administered unicast MAC address, in the
+// form Incus stores in volatile.<nic>.hwaddr.
 //
-// Both belong to the machine the disk came from. Carried over, the new
-// container claims an address that may already be in use here — importing the
-// same archive twice fails outright with "MAC address ... already defined on
-// another NIC" — so they are dropped and Incus issues fresh ones.
-func perInstanceVolatile(key string) bool {
-	return strings.HasSuffix(key, ".hwaddr") || strings.HasSuffix(key, ".host_name")
+// A re-homed container needs one of its own: the archive carries the address
+// the container had on the host it came from, and importing the same archive
+// twice into one host would otherwise fail with "MAC address ... already
+// defined on another NIC".
+func RandomMAC() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[0] = (b[0] | 0x02) & 0xfe // locally administered, unicast
+	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]), nil
 }
 
 // DiskUsage returns the number of bytes the container's root volume currently
