@@ -292,7 +292,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               {{else}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false)">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false,{{if .IPv6}}true{{else}}false{{end}})">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
               <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary neutral"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
@@ -423,6 +423,17 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="quotaBandwidth" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
+      {{if .IPv6PoolMode}}
+      <!-- Offered only for a container that has no pool address: an address,
+           once given to a customer, is theirs until the account is deleted. -->
+      <div class="field" id="quotaIpv6Wrap" style="display:none"><label>{{if eq .Lang "zh"}}分配 IPv6{{else}}Assign IPv6{{end}}</label>
+        <select name="ipv6" id="quotaIpv6" class="field-select">
+          <option value="keep">{{if eq .Lang "zh"}}不分配{{else}}None{{end}}</option>
+          <option value="auto">{{if eq .Lang "zh"}}自动分配（第一个空闲）{{else}}Auto (first free){{end}}</option>
+          {{range .PoolFree}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+      </div>
+      {{end}}
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>
@@ -597,7 +608,7 @@ function copyModal(){
   if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
   else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
-function quota(name, cpu, mem, disk, bandwidth, expires, expired){
+function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
   document.getElementById('quotaBwName').value = name;
@@ -614,6 +625,9 @@ function quota(name, cpu, mem, disk, bandwidth, expires, expired){
     var el = document.getElementById(id); if(el) el.disabled = lock;
   });
   var save = document.getElementById('quotaSaveBtn'); if(save) save.disabled = lock;
+  // A pool address can be given to a container that has none, and only then.
+  var v6wrap = document.getElementById('quotaIpv6Wrap');
+  if(v6wrap) v6wrap.style.display = (hasIpv6 || lock) ? 'none' : '';
   var note = document.getElementById('quotaExpiredNote'); if(note) note.style.display = lock ? 'block' : 'none';
   document.getElementById('quotaExtend').value = 'none';
   document.getElementById('quotaExtendDaysWrap').style.display = 'none';

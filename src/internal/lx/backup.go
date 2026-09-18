@@ -222,6 +222,17 @@ func RandomMAC() (string, error) {
 	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]), nil
 }
 
+// PoolDriver returns the Incus storage driver backing pool (zfs, btrfs, dir…).
+func (c *Client) PoolDriver(pool string) (string, error) {
+	var p struct {
+		Driver string `json:"driver"`
+	}
+	if err := c.get("/1.0/storage-pools/"+url.PathEscape(pool), &p); err != nil {
+		return "", err
+	}
+	return p.Driver, nil
+}
+
 // DiskUsage returns the number of bytes the container's root volume currently
 // occupies, used to size the temp file before an export starts. It reports 0
 // when the daemon has no figure to give (a stopped container on some drivers),
