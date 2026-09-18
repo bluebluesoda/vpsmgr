@@ -345,7 +345,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	if err != nil {
 		return fail(err)
 	}
-	if err := m.lx.BackupImport(ctx, u.Name, m.cfg.Incus.Pool, devices, fresh, counting); err != nil {
+	if err := m.lx.BackupImport(ctx, u.Name, m.cfg.Incus.Pool, importDevices(devices, m.cfg.Incus.Bridge), fresh, counting); err != nil {
 		return fail(fmt.Errorf("import backup: %w", err))
 	}
 	// ...and the configuration is then replaced outright, which also clears
@@ -389,7 +389,12 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	m.clearAuthorizedKeys(u.Name)
 
 	// The source's IPv6 stanza is still in the container's network config, and
-	// this host's is appended rather than written, so it has to go first.
+	// this host's is appended rather than written, so it has to go first — and
+	// if the container came from a pool-mode host, its bridged NIC has no DHCP
+	// client at all and needs one before anything else.
+	if err := m.restoreBridgedIPv4(u.Name); err != nil {
+		return fail(fmt.Errorf("restore the container's IPv4 setup: %w", err))
+	}
 	if err := m.stripForeignIPv6(u.Name); err != nil {
 		return fail(fmt.Errorf("clear the source host's ipv6 configuration: %w", err))
 	}
@@ -535,11 +540,18 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 	if u.IP == "" {
 		return nil
 	}
+	// Which NIC carries the private IPv4 depends on the mode: pool mode puts
+	// the public /128 on a routed eth0 and the private address on a bridged
+	// eth1, while prefix mode has the single bridged eth0 do both.
+	nic := "eth0"
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		nic = "eth1"
+	}
 	last := ""
 	for attempt := 0; attempt < 2; attempt++ {
 		deadline := time.Now().Add(40 * time.Second)
 		for {
-			out, err := m.lx.ExecSH(u.Name, "ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}'")
+			out, err := m.lx.ExecSH(u.Name, "ip -4 -o addr show dev "+nic+" 2>/dev/null | awk '{print $4}'")
 			if err != nil {
 				return err
 			}
@@ -561,8 +573,110 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 			}
 		}
 	}
-	return fmt.Errorf("the container came up on %s, not on its assigned %s — its port forwarding will not work until it takes that address",
-		last, u.IP)
+	return fmt.Errorf("%s came up on %s, not on its assigned %s — its port forwarding will not work until it takes that address",
+		nic, last, u.IP)
+}
+
+// restoreBridgedIPv4 gives a container's bridged NIC back the DHCPv4 setup this
+// host's prefix-mode containers have.
+//
+// A container that arrives from a pool-mode host carries the network
+// configuration THAT host wrote for it, and there eth0 is a routed NIC with no
+// IPv4 at all — the private address lives on eth1. So its eth0 has no DHCP
+// client, never asks for the address reserved for it here, and comes up with no
+// IPv4: every port forward points at nothing. The file is rewritten with
+// exactly what the image ships, and the IPv6 step appends this host's addresses
+// on top of it.
+//
+// A container that was already prefix-mode has DHCP=ipv4 and is left alone.
+func (m *Manager) restoreBridgedIPv4(name string) error {
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		return nil
+	}
+	script := `set -e
+if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
+  # RHEL-family (NetworkManager): the pool-mode layout disabled IPv4 on eth0.
+  CONN=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth0" {print $1; exit}')
+  [ -z "$CONN" ] && CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
+  [ -n "$CONN" ] && nmcli con mod "$CONN" ipv4.method auto >/dev/null 2>&1 || true
+  [ -n "$CONN" ] && nmcli con up "$CONN" >/dev/null 2>&1 || true
+else
+  CFG=/etc/systemd/network/eth0.network
+  grep -qs '^DHCP=ipv4$' "$CFG" 2>/dev/null && exit 0
+  mkdir -p /etc/systemd/network
+  cat > "$CFG" <<'EOF'
+[Match]
+Name=eth0
+
+[Network]
+DHCP=ipv4
+
+[DHCPv4]
+UseDomains=true
+UseMTU=true
+
+[DHCP]
+ClientIdentifier=mac
+EOF
+fi
+`
+	_, err := m.lx.ExecSH(name, script)
+	return err
+}
+
+// nicLeftovers are the device options an archive's NIC may carry that this
+// host's own specification does not decide. They are cleared during the
+// import, because Incus validates a device as a whole: half of a bridged NIC
+// left on a routed one fails with "Invalid device option" or with an address
+// from a subnet this host has never heard of.
+//
+// Clearing one of these is a no-op whenever this host's spec does set it (the
+// same-mode case), so the list only ever bites on a NIC whose very kind changed.
+var nicLeftovers = []string{
+	// Addresses, which belong to the host the archive came from.
+	"ipv4.address", "ipv6.address", "ipv6.routes",
+	// We attach NICs by bridge name, never by managed network.
+	"network",
+	// Hardening that only exists on a bridged NIC.
+	"security.ipv4_filtering", "security.ipv6_filtering",
+	"security.port_isolation", "security.mac_filtering",
+	// Per-instance link identity and settings; the fresh hardware address is
+	// supplied separately.
+	"host_name", "hwaddr", "mtu", "vlan",
+}
+
+// importDevices is the device map an archive is overridden with while it is
+// being imported: this host's own devices, plus a neutral entry for every NIC
+// name a vpsmgr container can have.
+//
+// The extras are what let a container move between IPv6 modes. An archive from
+// a pool-mode host carries an eth1 that a prefix-mode host has no use for, and
+// the override can set device keys but never remove a device — so the spare NIC
+// is at least made valid here (bridged, no addresses, nothing to validate
+// against a network it does not belong to) and disappears for good when the
+// configuration is replaced wholesale right afterwards.
+func importDevices(spec map[string]lx.Device, bridge string) map[string]lx.Device {
+	out := make(map[string]lx.Device, len(spec)+2)
+	for name, dev := range spec {
+		clone := make(lx.Device, len(dev))
+		for k, v := range dev {
+			clone[k] = v
+		}
+		out[name] = clone
+	}
+	for _, nic := range []string{"eth0", "eth1"} {
+		dev, ok := out[nic]
+		if !ok {
+			dev = lx.Device{"type": "nic", "nictype": "bridged", "parent": bridge, "name": nic}
+			out[nic] = dev
+		}
+		for _, key := range nicLeftovers {
+			if _, decided := dev[key]; !decided {
+				dev[key] = ""
+			}
+		}
+	}
+	return out
 }
 
 // freshNICAddrs returns a new hardware address for each NIC name a vpsmgr
