@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -201,6 +203,39 @@ func TestSpaceGuardStopsRunawayExport(t *testing.T) {
 	}
 	if _, err := g.Write(make([]byte, 1)); err == nil {
 		t.Fatal("a write past the limit was accepted")
+	}
+}
+
+// TestSweepTransferArchives: an archive left by a process that was killed
+// outright must be picked up by the next run, while a live transfer's archive
+// and unrelated files are left alone.
+func TestSweepTransferArchives(t *testing.T) {
+	dir := t.TempDir()
+
+	// A reaped child's PID is free, so a file naming it looks abandoned.
+	probe := exec.Command("true")
+	if err := probe.Run(); err != nil {
+		t.Fatalf("spawning a probe process: %v", err)
+	}
+	stale := filepath.Join(dir, fmt.Sprintf("vps-transfer-%d-aaaa-bbbb.cc", probe.Process.Pid))
+	live := filepath.Join(dir, fmt.Sprintf("vps-transfer-%d-cccc-dddd.cc", os.Getpid()))
+	other := filepath.Join(dir, "notes.txt")
+	for _, p := range []string{stale, live, other} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sweepTransferArchives(dir)
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("an archive left by a killed transfer was not swept")
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Error("a running transfer's archive was swept")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Error("a file that is not a transfer archive was swept")
 	}
 }
 

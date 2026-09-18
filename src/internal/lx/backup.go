@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -27,9 +28,10 @@ const importTimeout = 6 * time.Hour
 // BackupOptions describes one backup export. InstanceOnly and RootOnly are
 // always set by the caller: a transfer moves the container as it is now, not
 // the source's snapshot history or its dependent volumes.
+//
+// There is deliberately no backup name: a direct stream creates no backup
+// object, and Incus rejects a request that carries one.
 type BackupOptions struct {
-	// Name is the backup name Incus records for the stream.
-	Name string
 	// Compression is "none", "gzip", "zstd" or "" (Incus default).
 	Compression string
 	// Optimized stores a storage-driver native stream instead of a plain
@@ -61,7 +63,6 @@ func (c *Client) InstanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF str
 // is a file-level copy of a live filesystem and can be inconsistent.
 func (c *Client) BackupExport(ctx context.Context, name string, opt BackupOptions, w io.Writer) (int64, error) {
 	body := map[string]any{
-		"name":              opt.Name,
 		"instance_only":     opt.InstanceOnly,
 		"root_only":         opt.RootOnly,
 		"optimized_storage": opt.Optimized,
@@ -93,12 +94,20 @@ func (c *Client) BackupExport(ctx context.Context, name string, opt BackupOption
 
 // BackupImport creates the container from a backup tarball read from r. Incus
 // takes the raw archive as the request body and the target name and pool from
-// headers; the created container carries whatever configuration the archive
-// holds, so the caller replaces it afterwards (see ReplaceConfig).
+// headers.
+//
+// devices, when set, is merged into the archive's device map before the
+// instance is created. That override is not optional in practice: an archive
+// carries the SOURCE host's configuration, and Incus validates it against this
+// host's networks at creation time — a source container on a different IPv6
+// prefix is rejected outright ("Device IP address ... not within network
+// incusbr0 subnet") before any later fix-up could run. It cannot remove a
+// device the archive has and this host does not want, which is why a transfer
+// expects both hosts to use the same IPv6 mode.
 //
 // Cancelling ctx aborts the upload, and the daemon discards the partial
 // instance rather than leaving one behind.
-func (c *Client) BackupImport(ctx context.Context, name, pool string, r io.Reader) error {
+func (c *Client) BackupImport(ctx context.Context, name, pool string, devices map[string]Device, r io.Reader) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/1.0/instances", r)
 	if err != nil {
 		return err
@@ -107,6 +116,9 @@ func (c *Client) BackupImport(ctx context.Context, name, pool string, r io.Reade
 	req.Header.Set("X-Incus-name", name)
 	if pool != "" {
 		req.Header.Set("X-Incus-pool", pool)
+	}
+	if len(devices) > 0 {
+		req.Header.Set("X-Incus-devices", deviceHeader(devices))
 	}
 	resp, err := c.stream.Do(req)
 	if err != nil {
@@ -150,7 +162,7 @@ func (c *Client) ReplaceConfig(name string, config map[string]string, devices ma
 		merged[k] = v
 	}
 	for k, v := range cur.Config {
-		if strings.HasPrefix(k, "volatile.") {
+		if strings.HasPrefix(k, "volatile.") && !perInstanceVolatile(k) {
 			merged[k] = v
 		}
 	}
@@ -167,6 +179,18 @@ func (c *Client) ReplaceConfig(name string, config map[string]string, devices ma
 	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name), body, 2*time.Minute)
 }
 
+// perInstanceVolatile reports whether a volatile.* key describes the instance
+// an archive was taken from rather than the disk it holds: the hardware address
+// its bridge leased it, and the name of the veth pair on the host it ran on.
+//
+// Both belong to the machine the disk came from. Carried over, the new
+// container claims an address that may already be in use here — importing the
+// same archive twice fails outright with "MAC address ... already defined on
+// another NIC" — so they are dropped and Incus issues fresh ones.
+func perInstanceVolatile(key string) bool {
+	return strings.HasSuffix(key, ".hwaddr") || strings.HasSuffix(key, ".host_name")
+}
+
 // DiskUsage returns the number of bytes the container's root volume currently
 // occupies, used to size the temp file before an export starts. It reports 0
 // when the daemon has no figure to give (a stopped container on some drivers),
@@ -181,6 +205,30 @@ func (c *Client) DiskUsage(name string) (int64, error) {
 		return 0, err
 	}
 	return st.Disk["root"].Usage, nil
+}
+
+// deviceHeader renders the X-Incus-devices value: space-separated
+// "<device>,<key>=<value>" entries, in a stable order so a failure is
+// reproducible. A value containing a space would break the format, and none of
+// the device properties this host sets do.
+func deviceHeader(devices map[string]Device) string {
+	names := make([]string, 0, len(devices))
+	for name := range devices {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(devices))
+	for _, name := range names {
+		keys := make([]string, 0, len(devices[name]))
+		for k := range devices[name] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			parts = append(parts, name+","+k+"="+devices[name][k])
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // streamError turns a non-2xx streaming response into an error, reading the
