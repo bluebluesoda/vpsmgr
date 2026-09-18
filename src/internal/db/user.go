@@ -276,6 +276,14 @@ func (d *DB) UpdateUserExpiry(id int64, expiresAt string) error {
 	return err
 }
 
+// UpdateUserIPv6 sets a user's pool-mode IPv6 address, or clears it with "".
+// The column carries a unique index, so an address can only ever belong to one
+// user.
+func (d *DB) UpdateUserIPv6(id int64, addr string) error {
+	_, err := d.sql.Exec(`UPDATE users SET ipv6_address=? WHERE id=?`, nullIfEmpty(addr), id)
+	return err
+}
+
 // UsedIPv6Addresses returns the set of pool-mode IPv6 addresses currently
 // assigned to users, so the manager can pick a free one and the UI can list
 // the free remainder.

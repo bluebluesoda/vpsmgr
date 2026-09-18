@@ -1,14 +1,17 @@
 package mgr
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
+	"vpsmgr/internal/lx"
 	"vpsmgr/internal/su"
 )
 
@@ -236,6 +239,99 @@ func (m *Manager) RemovePoolIPv6(addr string) error {
 	}
 	m.cfg.Net.IPv6Pool = out
 	return cfg.Save(m.cfg)
+}
+
+// AssignPoolIPv6 gives an existing container a pool address it does not have.
+//
+// A pool address is a per-container choice its operator makes, so a container
+// can exist without one — a freshly imported one always does — and this is how
+// it gets one afterwards. The container changes shape for it: the private IPv4
+// moves from the single bridged eth0 to a bridged eth1, and the new address
+// goes on a routed eth0, so it is stopped, reconfigured and started again, and
+// the guest is told where its addresses now live.
+//
+// Handing an address back is deliberately not offered: an address that has been
+// given to a customer stays theirs until the account is deleted.
+func (m *Manager) AssignPoolIPv6(name, addr string) (string, error) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePool {
+		return "", errors.New("this host does not use an IPv6 pool")
+	}
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return "", err
+	}
+	if u.IPv6Address != "" {
+		return "", fmt.Errorf("%s already has %s", u.Name, u.IPv6Address)
+	}
+	picked, err := m.pickPoolIPv6(strings.TrimSpace(addr))
+	if err != nil {
+		return "", err
+	}
+	if picked == "" {
+		return "", errors.New("no free address in the IPv6 pool")
+	}
+	if err := m.db.UpdateUserIPv6(u.ID, picked); err != nil {
+		return "", err
+	}
+	u.IPv6Address = picked
+
+	restore := func(err error) (string, error) {
+		if rerr := m.db.UpdateUserIPv6(u.ID, ""); rerr != nil {
+			fmt.Printf("  ! warn: could not undo the assignment for %s: %v\n", u.Name, rerr)
+		}
+		u.IPv6Address = ""
+		spec, devices := m.instanceConfig(u)
+		_ = m.lx.Stop(u.Name)
+		if rerr := m.lx.ReplaceConfig(u.Name, spec, devices); rerr != nil {
+			fmt.Printf("  ! warn: could not put %s back to how it was: %v\n", u.Name, rerr)
+		}
+		_ = m.lx.Start(u.Name)
+		return "", err
+	}
+
+	spec, devices := m.instanceConfig(u)
+	// The new shape goes in two steps. Incus validates a device it is about to
+	// ADD against the set it is replacing, so adding eth1 already carrying the
+	// IPv4 fails with "already defined on another NIC" — the eth0 that is being
+	// changed still holds it. Adding the NIC bare first means the address only
+	// ever arrives as a change to a device that exists.
+	bare := make(map[string]lx.Device, len(devices))
+	for deviceName, dev := range devices {
+		clone := make(lx.Device, len(dev))
+		for k, v := range dev {
+			clone[k] = v
+		}
+		bare[deviceName] = clone
+	}
+	if dev, ok := bare["eth1"]; ok {
+		delete(dev, "ipv4.address")
+	}
+
+	if err := m.lx.Stop(u.Name); err != nil {
+		return restore(fmt.Errorf("stop container: %w", err))
+	}
+	if err := m.lx.ReplaceConfig(u.Name, spec, bare); err != nil {
+		return restore(fmt.Errorf("reconfigure container: %w", err))
+	}
+	if err := m.lx.ReplaceConfig(u.Name, spec, devices); err != nil {
+		return restore(fmt.Errorf("reconfigure container: %w", err))
+	}
+	if err := m.lx.Start(u.Name); err != nil {
+		return restore(fmt.Errorf("start container: %w", err))
+	}
+	if err := m.lx.WaitReady(u.Name, 180*time.Second); err != nil {
+		return restore(fmt.Errorf("wait for container: %w", err))
+	}
+	if err := m.ConfigureContainerIPv6(u.Name, picked); err != nil {
+		return restore(fmt.Errorf("configure ipv6 in container: %w", err))
+	}
+	if err := m.WireIPv6Pool(u.Name, picked); err != nil {
+		return restore(fmt.Errorf("route the address on the host: %w", err))
+	}
+	return picked, nil
 }
 
 // IPv6Mode returns the effective IPv6 mode (none|prefix|pool) for the panel /

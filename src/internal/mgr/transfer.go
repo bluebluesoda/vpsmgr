@@ -103,6 +103,35 @@ type TransferResult struct {
 	BytesRead int64
 }
 
+// requireSupportedDriver refuses a transfer on a storage driver the feature
+// does not cover.
+//
+// Only zfs is supported. The other two drivers in this project cannot carry a
+// container between hosts the way this works: a btrfs pool would need both
+// hosts to agree on a driver-specific stream, and a dir pool has no snapshots
+// and no quotas behind it at all — it exists as a test-box opt-in. Refusing
+// outright is the honest answer, and it removes any question of a driver
+// mismatch being discovered halfway through a migration.
+func (m *Manager) requireSupportedDriver() error {
+	driver, err := m.lx.PoolDriver(m.cfg.Incus.Pool)
+	if err != nil {
+		return err
+	}
+	if driver != "zfs" {
+		return fmt.Errorf("moving a container needs the zfs storage driver; this host's pool %q uses %q",
+			m.cfg.Incus.Pool, driver)
+	}
+	return nil
+}
+
+// TransferHostSupported reports whether this host can take part in a transfer
+// at all. It is the receiving side's first question, asked before anything is
+// fetched, so a host the feature does not cover says so without touching the
+// network.
+func (m *Manager) TransferHostSupported() error {
+	return m.requireSupportedDriver()
+}
+
 // TransferEstimate returns the number of bytes the container's root disk
 // currently occupies, used to check the temp file will fit before a long export
 // is started, and to tell the far side how much room to find.
@@ -141,6 +170,9 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.requireSupportedDriver(); err != nil {
 		return nil, err
 	}
 	if err := m.requireStopped(u.Name); err != nil {
@@ -219,16 +251,20 @@ func expiresDate(rfc3339 string) string {
 	return rfc3339
 }
 
-// TransferSpaceCheck reports whether this host can take the disk described by
-// meta, by the same rule that guards `vps add`: the pool must not already be
-// 90% full. It is run before the archive is fetched, so a host that cannot take
-// the container says so instead of spending an hour downloading it, and it uses
-// the sending host's own figure for the disk rather than the archive's size,
-// which says nothing about how much will be unpacked.
-func (m *Manager) TransferSpaceCheck(meta []byte) error {
+// TransferPrecheck reports whether this host can take the container described
+// by meta, before a byte of it is fetched: the storage driver has to be one
+// this feature covers, and the pool must not already be 90% full — the same
+// rule that guards `vps add`, applied here so a host that cannot take the
+// container says so instead of spending an hour downloading it. The disk figure
+// comes from the sending host's own measurement, since the archive's size says
+// nothing about how much will be unpacked.
+func (m *Manager) TransferPrecheck(meta []byte) error {
 	var t TransferMeta
 	if err := json.Unmarshal(meta, &t); err != nil {
 		return fmt.Errorf("unreadable transfer metadata: %w", err)
+	}
+	if err := m.requireSupportedDriver(); err != nil {
+		return err
 	}
 	usage, err := m.PoolUsage()
 	if err != nil {
@@ -284,6 +320,9 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	if err := m.TransferTarget(name); err != nil {
 		return nil, err
 	}
+	if err := m.requireSupportedDriver(); err != nil {
+		return nil, err
+	}
 	var meta TransferMeta
 	if err := json.Unmarshal(metaBytes, &meta); err != nil {
 		return nil, fmt.Errorf("unreadable transfer metadata: %w", err)
@@ -291,7 +330,16 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	started := time.Now()
 	counting := &countingReader{r: r}
 
-	created, err := m.Add(name, meta.Account())
+	account := meta.Account()
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		// On a pool-mode host an address is a per-container choice its operator
+		// makes, so an import never takes one: the container arrives as pure
+		// IPv4, using no pool address, and one can be assigned later if the
+		// owner wants it. What the container was given on the host it came from
+		// is irrelevant here.
+		account.IPv6Addr = "none"
+	}
+	created, err := m.Add(name, account)
 	if err != nil {
 		return nil, err
 	}
@@ -392,22 +440,24 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	// this host's is appended rather than written, so it has to go first — and
 	// if the container came from a pool-mode host, its bridged NIC has no DHCP
 	// client at all and needs one before anything else.
-	if err := m.restoreBridgedIPv4(u.Name); err != nil {
+	if err := m.restoreBridgedIPv4(u); err != nil {
 		return fail(fmt.Errorf("restore the container's IPv4 setup: %w", err))
 	}
-	if err := m.stripForeignIPv6(u.Name); err != nil {
+	if err := m.dropSourceIPv6(u); err != nil {
 		return fail(fmt.Errorf("clear the source host's ipv6 configuration: %w", err))
 	}
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
-		if u.IPv6Address != "" {
-			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
-				return fail(fmt.Errorf("config container ipv6: %w", err))
-			}
-			if err := m.WireIPv6Pool(u.Name, u.IPv6Address); err != nil {
-				return fail(fmt.Errorf("wire ipv6 pool: %w", err))
-			}
+	switch {
+	case m.usesTwoNICs(u):
+		if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
+			return fail(fmt.Errorf("config container ipv6: %w", err))
 		}
-	} else {
+		if err := m.WireIPv6Pool(u.Name, u.IPv6Address); err != nil {
+			return fail(fmt.Errorf("wire ipv6 pool: %w", err))
+		}
+	case m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool:
+		// Pool mode, no address handed out: the container is pure IPv4 and
+		// there is nothing to route.
+	default:
 		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
 			return fail(fmt.Errorf("config container ipv6: %w", err))
 		}
@@ -473,40 +523,64 @@ func (m *Manager) applyTransferMeta(u *db.User, meta *TransferMeta) error {
 	return nil
 }
 
-// stripForeignIPv6 removes the IPv6 configuration that the host this container
-// came from left in its networkd file.
+// dropSourceIPv6 removes the IPv6 configuration the host this container came
+// from left inside it, so that what remains is this host's and nothing else.
 //
 // The re-key step appends this host's address, routed block and gateway
-// neighbour, and only checks for its OWN values before appending — which is
-// right for a container that was always here, but a container that arrives
-// from another host already carries that host's address and block. Left alone
-// it comes up with two global addresses, one of them belonging to a network it
-// is not on, and services can bind to the wrong one.
+// neighbour and only checks for its OWN values before appending, so a container
+// that arrives from another host still carries that host's address and block.
+// Left alone it comes up with two global addresses, one of them belonging to a
+// network it is not on, and services can bind to the wrong one. A host with no
+// IPv6 at all has to lose the whole lot instead — including the one-shot unit
+// the source host installed, which would otherwise put its local route back on
+// every boot.
 //
-// Only stanzas whose values are not this host's are dropped; the image's own
-// DHCP setup is kept. Pool mode rewrites the file outright, so it has nothing
-// to strip.
-func (m *Manager) stripForeignIPv6(name string) error {
-	if !m.cfg.IPv6Enabled() || m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+// Only IPv6 stanzas are touched; the image's own DHCP setup is kept. Pool mode
+// rewrites the file outright and has nothing to drop here.
+func (m *Manager) dropSourceIPv6(u *db.User) error {
+	has := m.containerHasIPv6(u)
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool && has {
+		// Pool mode rewrites the guest's network config outright.
 		return nil
 	}
-	ipv6, err := m.IPv6Addr(name)
-	if err != nil || ipv6 == "" {
-		return err
-	}
-	block := ""
-	if b, _ := m.IPv6Block(name); b != nil {
-		block = b.String()
+	keep := "1"
+	ipv6, block, mac := "", "", ""
+	if has {
+		var err error
+		ipv6, err = m.IPv6Addr(u.Name)
+		if err != nil {
+			return err
+		}
+		if b, _ := m.IPv6Block(u.Name); b != nil {
+			block = b.String()
+		}
+		mac = m.bridgeMAC()
+	} else {
+		// No IPv6 here: keep none of it.
+		keep = "0"
 	}
 	script := `set -e
+KEEP=` + strconv.Quote(keep) + `
+if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
+  # RHEL-family keeps its addresses in a NetworkManager profile, not a file.
+  if [ "$KEEP" = 0 ]; then
+    CONN=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth0" {print $1; exit}')
+    [ -z "$CONN" ] && CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
+    if [ -n "$CONN" ]; then
+      nmcli con mod "$CONN" ipv6.method disabled >/dev/null 2>&1 || true
+      nmcli con up "$CONN" >/dev/null 2>&1 || true
+    fi
+  fi
+  exit 0
+fi
 CFG=/etc/systemd/network/eth0.network
-[ -f "$CFG" ] || exit 0
-awk -v keep_addr=` + strconv.Quote(ipv6+"/128") + ` -v keep_block=` + strconv.Quote(block) + ` -v keep_mac=` + strconv.Quote(m.bridgeMAC()) + ` '
+if [ -f "$CFG" ]; then
+  awk -v keep_v6="$KEEP" -v keep_addr=` + strconv.Quote(ipv6+"/128") + ` -v keep_block=` + strconv.Quote(block) + ` -v keep_mac=` + strconv.Quote(mac) + ` '
 function reset() { hdr=""; body=""; addr=""; dest=""; lladdr=""; lcl=0 }
 function keepit() {
-  if (hdr == "[Address]" && addr != "" && addr != keep_addr) return 0
-  if (hdr == "[Route]" && lcl == 1 && dest != "" && dest != keep_block) return 0
-  if (hdr == "[Neighbor]" && lladdr != "" && lladdr != keep_mac) return 0
+  if (hdr == "[Address]" && addr != "") { if (keep_v6 == 0 || addr != keep_addr) return 0 }
+  if (hdr == "[Route]" && dest != "") { if (keep_v6 == 0) return 0; if (lcl == 1 && dest != keep_block) return 0 }
+  if (hdr == "[Neighbor]" && lladdr != "") { if (keep_v6 == 0 || lladdr != keep_mac) return 0 }
   return 1
 }
 function flush() { if (hdr != "" && keepit()) print body; reset() }
@@ -519,9 +593,18 @@ BEGIN { ORS="" }
 /^LinkLayerAddress=/ { lladdr=substr($0,18) }
 END { flush() }
 ' "$CFG" > "$CFG.new"
-mv "$CFG.new" "$CFG"
+  mv "$CFG.new" "$CFG"
+fi
+# The source host's one-shot route unit belongs to the source host.
+rm -f /etc/systemd/system/vpsmgr-ipv6.service /etc/systemd/system/multi-user.target.wants/vpsmgr-ipv6.service
+if [ "$KEEP" = 0 ]; then
+  ip -6 addr flush dev eth0 scope global 2>/dev/null || true
+  ip -6 route flush dev eth0 2>/dev/null || true
+fi
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl restart systemd-networkd >/dev/null 2>&1 || true
 `
-	_, err = m.lx.ExecSH(name, script)
+	_, err := m.lx.ExecSH(u.Name, script)
 	return err
 }
 
@@ -544,7 +627,7 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 	// the public /128 on a routed eth0 and the private address on a bridged
 	// eth1, while prefix mode has the single bridged eth0 do both.
 	nic := "eth0"
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+	if m.usesTwoNICs(u) {
 		nic = "eth1"
 	}
 	last := ""
@@ -577,8 +660,29 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 		nic, last, u.IP)
 }
 
+// usesTwoNICs reports whether this host lays the container out with two NICs:
+// a routed eth0 carrying a public /128 from the pool, and a bridged eth1
+// carrying the private IPv4. Only a pool-mode container that was actually given
+// an address has that shape. Prefix mode, IPv4-only, and a pool-mode container
+// with no address all put both addresses on one bridged eth0.
+func (m *Manager) usesTwoNICs(u *db.User) bool {
+	return m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool && u.IPv6Address != ""
+}
+
+// containerHasIPv6 reports whether this host gives the container a global IPv6
+// address of its own.
+func (m *Manager) containerHasIPv6(u *db.User) bool {
+	if !m.cfg.IPv6Enabled() {
+		return false
+	}
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		return u.IPv6Address != ""
+	}
+	return true
+}
+
 // restoreBridgedIPv4 gives a container's bridged NIC back the DHCPv4 setup this
-// host's prefix-mode containers have.
+// host's containers have.
 //
 // A container that arrives from a pool-mode host carries the network
 // configuration THAT host wrote for it, and there eth0 is a routed NIC with no
@@ -588,9 +692,11 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 // exactly what the image ships, and the IPv6 step appends this host's addresses
 // on top of it.
 //
-// A container that was already prefix-mode has DHCP=ipv4 and is left alone.
-func (m *Manager) restoreBridgedIPv4(name string) error {
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+// A container that already has that setup is left alone.
+func (m *Manager) restoreBridgedIPv4(u *db.User) error {
+	if m.usesTwoNICs(u) {
+		// Its IPv4 is on the second, bridged NIC, which the source cannot have
+		// configured differently.
 		return nil
 	}
 	script := `set -e
@@ -620,7 +726,7 @@ ClientIdentifier=mac
 EOF
 fi
 `
-	_, err := m.lx.ExecSH(name, script)
+	_, err := m.lx.ExecSH(u.Name, script)
 	return err
 }
 

@@ -329,8 +329,12 @@ func transferReceive(args []string) error {
 	ctx, cancel := interruptible()
 	defer cancel()
 
-	// Fail on a bad target now rather than after a long download.
+	// Fail on a bad target, or on a host this feature does not cover, now
+	// rather than after a long download.
 	if err := m.TransferTarget(name); err != nil {
+		return err
+	}
+	if err := m.TransferHostSupported(); err != nil {
 		return err
 	}
 
@@ -342,7 +346,7 @@ func transferReceive(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.TransferSpaceCheck(meta); err != nil {
+	if err := m.TransferPrecheck(meta); err != nil {
 		return err
 	}
 	acct, from, err := mgr.TransferMetaAccount(meta)
