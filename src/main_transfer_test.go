@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,45 +16,84 @@ import (
 	"vpsmgr/internal/mgr"
 )
 
-// startTransfer writes content to a file and serves it, returning the receive
-// command and the pin/checksum it carries. The listener is closed on cleanup.
-func startTransfer(t *testing.T, content []byte) (string, string, string) {
+// transferFixture is a running listener and the digests its URL carries.
+type transferFixture struct {
+	target     string
+	metaURL    string
+	archiveSHA string
+	metaSHA    string
+	pin        string
+}
+
+// startTransfer writes an archive and the account metadata that travels with
+// it, and serves both the way `vps transfer send` does.
+func startTransfer(t *testing.T, content []byte) transferFixture {
 	t.Helper()
 	dir := t.TempDir()
-	file := filepath.Join(dir, "archive.tar.gz")
-	if err := os.WriteFile(file, content, 0o600); err != nil {
+	archive := filepath.Join(dir, "archive.tar.gz")
+	if err := os.WriteFile(archive, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(content)
-	srv, err := mgr.NewTransferServer(file, "127.0.0.1", 0, hex.EncodeToString(sum[:]))
+	meta := []byte(`{"user":"alice","cpu":2,"mem_mb":1024,"disk_gb":8,"disk_used":123,` +
+		`"expires_at":"2030-01-02T15:04:05Z","ssh_keys":[{"name":"laptop","key":"ssh-ed25519 AAAA","active":true}]}`)
+	metaPath := filepath.Join(dir, "meta.json")
+	if err := os.WriteFile(metaPath, meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	archiveSum := sha256.Sum256(content)
+	metaSum := sha256.Sum256(meta)
+	srv, err := mgr.NewTransferServer(mgr.TransferFiles{
+		Archive:    archive,
+		ArchiveSHA: hex.EncodeToString(archiveSum[:]),
+		Meta:       metaPath,
+		MetaSHA:    hex.EncodeToString(metaSum[:]),
+	}, "127.0.0.1", 0)
 	if err != nil {
 		t.Fatalf("NewTransferServer: %v", err)
 	}
 	t.Cleanup(func() { srv.Close() })
 	go func() { _ = srv.Serve(time.Hour, nil) }()
 
-	target, wantSHA, pin, err := parseTransferURL(srv.URL())
+	target, metaURL, wantSHA, wantMeta, pin, err := parseTransferURL(srv.URL())
 	if err != nil {
 		t.Fatalf("parseTransferURL(%q): %v", srv.URL(), err)
 	}
-	if sum := sha256.Sum256(content); wantSHA != hex.EncodeToString(sum[:]) {
-		t.Fatalf("URL checksum = %q, want the file's sha256", wantSHA)
+	if wantSHA != hex.EncodeToString(archiveSum[:]) {
+		t.Fatalf("URL archive checksum = %q, want the file's sha256", wantSHA)
 	}
-	der := srv.Fingerprint()
-	if pin != der {
-		t.Fatalf("URL pin = %q, want the listener's fingerprint %q", pin, der)
+	if wantMeta != hex.EncodeToString(metaSum[:]) {
+		t.Fatalf("URL metadata checksum = %q, want the file's sha256", wantMeta)
 	}
-	return target, wantSHA, pin
+	if !strings.Contains(metaURL, "/m/") {
+		t.Fatalf("metadata URL %q is not on the metadata path", metaURL)
+	}
+	if pin != srv.Fingerprint() {
+		t.Fatalf("URL pin = %q, want the listener's fingerprint %q", pin, srv.Fingerprint())
+	}
+	return transferFixture{target: target, metaURL: metaURL, archiveSHA: wantSHA, metaSHA: wantMeta, pin: pin}
 }
 
 // TestTransferRoundTrip covers the whole receive path against a real listener:
-// certificate pinning, the download, and the checksum.
+// certificate pinning, the account metadata, the download and the checksum.
 func TestTransferRoundTrip(t *testing.T) {
 	content := bytes.Repeat([]byte("vpsmgr transfer payload "), 64*1024)
-	target, wantSHA, pin := startTransfer(t, content)
+	f := startTransfer(t, content)
+
+	meta, err := fetchMeta(t.Context(), f.metaURL, f.pin, f.metaSHA)
+	if err != nil {
+		t.Fatalf("fetchMeta: %v", err)
+	}
+	var parsed mgr.TransferMeta
+	if err := json.Unmarshal(meta, &parsed); err != nil {
+		t.Fatalf("metadata is not readable: %v", err)
+	}
+	if parsed.User != "alice" || parsed.DiskGB != 8 || len(parsed.SSHKeys) != 1 {
+		t.Fatalf("metadata did not survive the trip: %+v", parsed)
+	}
 
 	dest := filepath.Join(t.TempDir(), "got.part")
-	if err := fetchArchive(t.Context(), target, dest, pin, wantSHA); err != nil {
+	if err := fetchArchive(t.Context(), f.target, dest, f.pin, f.archiveSHA); err != nil {
 		t.Fatalf("fetchArchive: %v", err)
 	}
 	got, err := os.ReadFile(dest)
@@ -70,13 +110,13 @@ func TestTransferRoundTrip(t *testing.T) {
 // the checksum must still cover the whole file.
 func TestTransferResume(t *testing.T) {
 	content := bytes.Repeat([]byte("resumed payload "), 64*1024)
-	target, wantSHA, pin := startTransfer(t, content)
+	f := startTransfer(t, content)
 
 	dest := filepath.Join(t.TempDir(), "got.part")
 	if err := os.WriteFile(dest, content[:len(content)/3], 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := fetchArchive(t.Context(), target, dest, pin, wantSHA); err != nil {
+	if err := fetchArchive(t.Context(), f.target, dest, f.pin, f.archiveSHA); err != nil {
 		t.Fatalf("fetchArchive: %v", err)
 	}
 	got, err := os.ReadFile(dest)
@@ -89,45 +129,74 @@ func TestTransferResume(t *testing.T) {
 }
 
 // TestTransferRejectsWrongPin: a peer that does not present the pinned
-// certificate must be refused before the transfer starts.
+// certificate must be refused before anything is trusted, on both files.
 func TestTransferRejectsWrongPin(t *testing.T) {
-	content := []byte("payload")
-	target, wantSHA, _ := startTransfer(t, content)
-
+	f := startTransfer(t, []byte("payload"))
 	other := sha256.Sum256([]byte("some other certificate"))
-	err := fetchArchive(t.Context(), target, filepath.Join(t.TempDir(), "got.part"),
-		hex.EncodeToString(other[:]), wantSHA)
-	if err == nil {
-		t.Fatal("a mismatch on the certificate pin was accepted")
-	}
-	if !strings.Contains(err.Error(), "pin") && !strings.Contains(err.Error(), "certificate") {
-		t.Fatalf("error does not mention the certificate: %v", err)
+	pin := hex.EncodeToString(other[:])
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"metadata", func() error {
+			_, err := fetchMeta(t.Context(), f.metaURL, pin, f.metaSHA)
+			return err
+		}},
+		{"archive", func() error {
+			return fetchArchive(t.Context(), f.target, filepath.Join(t.TempDir(), "got.part"), pin, f.archiveSHA)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil {
+				t.Fatal("a mismatch on the certificate pin was accepted")
+			}
+			if !strings.Contains(err.Error(), "pin") && !strings.Contains(err.Error(), "certificate") {
+				t.Fatalf("error does not mention the certificate: %v", err)
+			}
+		})
 	}
 }
 
-// TestTransferRejectsWrongChecksum: a complete download that does not hash to
-// the expected digest must not be handed to the importer.
+// TestTransferRejectsWrongChecksum: neither file may be handed on when it does
+// not hash to the digest that came with the command. The metadata matters as
+// much as the disk: it carries the account's quota and deadline.
 func TestTransferRejectsWrongChecksum(t *testing.T) {
-	content := []byte("payload")
-	target, _, pin := startTransfer(t, content)
-
+	f := startTransfer(t, []byte("payload"))
 	wrong := sha256.Sum256([]byte("something else"))
-	err := fetchArchive(t.Context(), target, filepath.Join(t.TempDir(), "got.part"),
-		pin, hex.EncodeToString(wrong[:]))
-	if err == nil {
-		t.Fatal("a checksum mismatch was accepted")
-	}
-	if !strings.Contains(err.Error(), "checksum") {
-		t.Fatalf("error does not mention the checksum: %v", err)
+	digest := hex.EncodeToString(wrong[:])
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"metadata", func() error {
+			_, err := fetchMeta(t.Context(), f.metaURL, f.pin, digest)
+			return err
+		}},
+		{"archive", func() error {
+			return fetchArchive(t.Context(), f.target, filepath.Join(t.TempDir(), "got.part"), f.pin, digest)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil {
+				t.Fatal("a checksum mismatch was accepted")
+			}
+			if !strings.Contains(err.Error(), "did not survive") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
 // TestTransferUnknownToken: only the one path the sender printed is served.
 func TestTransferUnknownToken(t *testing.T) {
-	target, wantSHA, pin := startTransfer(t, []byte("payload"))
+	f := startTransfer(t, []byte("payload"))
 
-	u := target[:strings.Index(target, "/d/")] + "/d/00000000-0000-4000-8000-000000000000"
-	err := fetchArchive(t.Context(), u, filepath.Join(t.TempDir(), "got.part"), pin, wantSHA)
+	u := f.target[:strings.Index(f.target, "/d/")] + "/d/00000000-0000-4000-8000-000000000000"
+	err := fetchArchive(t.Context(), u, filepath.Join(t.TempDir(), "got.part"), f.pin, f.archiveSHA)
 	if err == nil {
 		t.Fatal("a request for an unknown token was served")
 	}
@@ -136,26 +205,28 @@ func TestTransferUnknownToken(t *testing.T) {
 	}
 }
 
-// TestParseTransferURL: the digests must travel in the URL, and plain http is
-// never acceptable.
+// TestParseTransferURL: all three digests must travel in the URL, and plain
+// http is never acceptable.
 func TestParseTransferURL(t *testing.T) {
 	sum := sha256.Sum256(nil)
-	digest := hex.EncodeToString(sum[:])
+	d := hex.EncodeToString(sum[:])
+	frag := "#sha256=" + d + "&meta=" + d + "&cert=" + d
 
 	for _, tc := range []struct {
 		name string
 		url  string
 		ok   bool
 	}{
-		{"complete", "https://1.2.3.4:8443/d/tok#sha256=" + digest + "&cert=" + digest, true},
-		{"plain http", "http://1.2.3.4:8443/d/tok#sha256=" + digest + "&cert=" + digest, false},
+		{"complete", "https://1.2.3.4:8443/d/tok" + frag, true},
+		{"plain http", "http://1.2.3.4:8443/d/tok" + frag, false},
 		{"no fragment", "https://1.2.3.4:8443/d/tok", false},
-		{"no pin", "https://1.2.3.4:8443/d/tok#sha256=" + digest, false},
-		{"not a digest", "https://1.2.3.4:8443/d/tok#sha256=zz&cert=" + digest, false},
-		{"wrong path", "https://1.2.3.4:8443/other/tok#sha256=" + digest + "&cert=" + digest, false},
+		{"no pin", "https://1.2.3.4:8443/d/tok#sha256=" + d + "&meta=" + d, false},
+		{"no metadata digest", "https://1.2.3.4:8443/d/tok#sha256=" + d + "&cert=" + d, false},
+		{"not a digest", "https://1.2.3.4:8443/d/tok#sha256=zz&meta=" + d + "&cert=" + d, false},
+		{"wrong path", "https://1.2.3.4:8443/other/tok" + frag, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, err := parseTransferURL(tc.url)
+			_, _, _, _, _, err := parseTransferURL(tc.url)
 			if tc.ok && err != nil {
 				t.Fatalf("rejected a valid URL: %v", err)
 			}
@@ -166,17 +237,60 @@ func TestParseTransferURL(t *testing.T) {
 	}
 }
 
+// TestTransferMetaRoundTrip: what the sending host puts into the metadata is
+// what the receiving host reads back out of it, including the deadline — an
+// account must not gain or lose time by moving.
+func TestTransferMetaRoundTrip(t *testing.T) {
+	meta := mgr.TransferMeta{
+		User:        "alice",
+		CPU:         20,
+		MemMB:       1024,
+		DiskGB:      8,
+		BandwidthGB: 100,
+		ExpiresAt:   "2030-01-02T15:04:05Z",
+		DiskUsed:    400 << 20,
+		InitScript:  "apt-get update",
+		SSHKeys:     []mgr.MetaKey{{Name: "laptop", Key: "ssh-ed25519 AAAA", Active: true}},
+		StickyNotes: "envelope",
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct, user, err := mgr.TransferMetaAccount(raw)
+	if err != nil {
+		t.Fatalf("TransferMetaAccount: %v", err)
+	}
+	if user != "alice" || acct.CPU != 20 || acct.MemMB != 1024 || acct.DiskGB != 8 || acct.BandwidthGB != 100 {
+		t.Fatalf("account did not survive the round trip: %+v (%s)", acct, user)
+	}
+
+	var back mgr.TransferMeta
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.ExpiresAt != meta.ExpiresAt || back.InitScript != meta.InitScript ||
+		back.StickyNotes != meta.StickyNotes || len(back.SSHKeys) != 1 {
+		t.Fatalf("the account's own data did not survive the round trip: %+v", back)
+	}
+}
+
 // TestTransferServerIdleExit: with nobody connected the listener gives up on
 // its own and releases the port, which is what stops a forgotten `send` from
 // leaving an archive on the network indefinitely.
 func TestTransferServerIdleExit(t *testing.T) {
 	dir := t.TempDir()
-	file := filepath.Join(dir, "archive.tar")
-	if err := os.WriteFile(file, []byte("payload"), 0o600); err != nil {
+	archive := filepath.Join(dir, "archive.tar")
+	if err := os.WriteFile(archive, []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte("payload"))
-	srv, err := mgr.NewTransferServer(file, "127.0.0.1", 0, hex.EncodeToString(sum[:]))
+	meta := filepath.Join(dir, "meta.json")
+	if err := os.WriteFile(meta, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := mgr.NewTransferServer(mgr.TransferFiles{
+		Archive: archive, ArchiveSHA: "00", Meta: meta, MetaSHA: "00",
+	}, "127.0.0.1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +320,9 @@ func TestSpaceGuardStopsRunawayExport(t *testing.T) {
 	}
 }
 
-// TestSweepTransferArchives: an archive left by a process that was killed
-// outright must be picked up by the next run, while a live transfer's archive
-// and unrelated files are left alone.
+// TestSweepTransferArchives: a file left by a process that was killed outright
+// must be picked up by the next run, while a live transfer's files and
+// unrelated ones are left alone.
 func TestSweepTransferArchives(t *testing.T) {
 	dir := t.TempDir()
 
@@ -229,13 +343,13 @@ func TestSweepTransferArchives(t *testing.T) {
 	sweepTransferArchives(dir)
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Error("an archive left by a killed transfer was not swept")
+		t.Error("a file left by a killed transfer was not swept")
 	}
 	if _, err := os.Stat(live); err != nil {
-		t.Error("a running transfer's archive was swept")
+		t.Error("a running transfer's file was swept")
 	}
 	if _, err := os.Stat(other); err != nil {
-		t.Error("a file that is not a transfer archive was swept")
+		t.Error("a file that is not a transfer file was swept")
 	}
 }
 

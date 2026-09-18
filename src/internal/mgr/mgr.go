@@ -262,8 +262,12 @@ func (m *Manager) imageName() (string, error) {
 // rootPassScript sets the container root password via chpasswd. The password
 // is always generated from [a-zA-Z0-9] (pw.Generate) — no user-supplied value
 // ever reaches this string, so the single-quoted interpolation cannot break
-// out of the shell command.
+// out of the shell command. An empty password produces nothing, which leaves
+// the stored one in place.
 func rootPassScript(pass string) string {
+	if pass == "" {
+		return ""
+	}
 	return fmt.Sprintf("printf 'root:%s\\n' | chpasswd\n", pass)
 }
 
@@ -283,6 +287,10 @@ func randomHostname() string {
 // the container a random hostname (never the username). A prebuilt managed
 // image (any `vpsmgr/*` alias, Debian or RHEL-family) only needs a light setup;
 // otherwise sshd is installed on the fly (Debian fallback only).
+//
+// An empty pass leaves the root password alone, which is what an imported
+// container wants: its password is on the disk it brought with it and its owner
+// already knows it.
 func (m *Manager) Provision(name, image, pass string) error {
 	host := randomHostname()
 	// hostSetup: apply the hostname live + persist it, and stop cloud-init

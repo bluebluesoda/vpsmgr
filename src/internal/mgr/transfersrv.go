@@ -52,12 +52,21 @@ type TransferStats struct {
 	BytesPerSecond int64
 }
 
-// TransferServer serves a single exported tarball to whoever holds the token.
+// TransferFiles are the two artefacts a send publishes: the container's disk,
+// and the small JSON describing the account it belongs to.
+type TransferFiles struct {
+	Archive    string
+	ArchiveSHA string
+	Meta       string
+	MetaSHA    string
+}
+
+// TransferServer serves one exported container to whoever holds the token.
 type TransferServer struct {
-	filePath string
-	token    string
-	url      string
-	finger   string
+	files  TransferFiles
+	token  string
+	url    string
+	finger string
 
 	ln  net.Listener
 	srv *http.Server
@@ -77,8 +86,11 @@ type TransferServer struct {
 // of its certificate. host is the address the peer should dial (the panel's
 // public address).
 //
-// The caller owns filePath and is responsible for deleting it.
-func NewTransferServer(filePath, host string, port int, sha string) (*TransferServer, error) {
+// The two files are served from the one token, at /d/ (the disk) and /m/ (the
+// account metadata, which the receiver fetches first so it can check it has
+// room before pulling gigabytes). The caller owns both files and is responsible
+// for deleting them.
+func NewTransferServer(files TransferFiles, host string, port int) (*TransferServer, error) {
 	if net.ParseIP(host) == nil {
 		return nil, fmt.Errorf("cannot build a transfer address from %q", host)
 	}
@@ -103,19 +115,21 @@ func NewTransferServer(filePath, host string, port int, sha string) (*TransferSe
 	sum := sha256.Sum256(der)
 	finger := hex.EncodeToString(sum[:])
 	s := &TransferServer{
-		filePath: filePath,
-		token:    token,
-		// Both digests ride in the fragment: HTTP clients never send a
-		// fragment, so the listener is not told the checksum of what it is
+		files: files,
+		token: token,
+		// All three digests ride in the fragment: HTTP clients never send a
+		// fragment, so the listener is not told the checksums of what it is
 		// serving, nor the fingerprint of its own certificate.
-		url:          fmt.Sprintf("https://%s:%d/d/%s#sha256=%s&cert=%s", host, actual, token, sha, finger),
+		url: fmt.Sprintf("https://%s:%d/d/%s#sha256=%s&meta=%s&cert=%s",
+			host, actual, token, files.ArchiveSHA, files.MetaSHA, finger),
 		finger:       finger,
 		ln:           ln,
 		conns:        map[net.Conn]struct{}{},
 		lastProgress: time.Now(),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/d/", s.handle)
+	mux.HandleFunc("/d/", s.handle(s.files.Archive, "/d/"))
+	mux.HandleFunc("/m/", s.handle(s.files.Meta, "/m/"))
 	s.srv = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -182,30 +196,34 @@ func (s *TransferServer) Close() error {
 	return s.srv.Close()
 }
 
-func (s *TransferServer) handle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// handle serves one of the published files, only at the path its prefix names
+// and only to a request carrying the token.
+func (s *TransferServer) handle(path, prefix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.URL.Path), []byte(prefix+s.token)) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			http.Error(w, "transfer file is gone", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			http.Error(w, "transfer file is unreadable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		// ServeContent handles HEAD, Range and If-Range from the file itself,
+		// which is what lets an interrupted download resume where it stopped.
+		http.ServeContent(w, r, "", st.ModTime(), &countingFile{f: f, s: s})
 	}
-	if subtle.ConstantTimeCompare([]byte(r.URL.Path), []byte("/d/"+s.token)) != 1 {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(s.filePath)
-	if err != nil {
-		http.Error(w, "transfer file is gone", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		http.Error(w, "transfer file is unreadable", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	// ServeContent handles HEAD, Range and If-Range from the file itself, which
-	// is what lets an interrupted download resume where it stopped.
-	http.ServeContent(w, r, "", st.ModTime(), &countingFile{f: f, s: s})
 }
 
 func (s *TransferServer) connState(c net.Conn, st http.ConnState) {

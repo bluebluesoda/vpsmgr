@@ -59,7 +59,7 @@ func cmdTransfer(args []string) error {
 
 var errTransferUsage = errors.New(`usage:
   vps transfer send <user> [--optimized] [--compression none|gzip|zstd] [--idle 5m] [--port N]
-  vps transfer receive <url> <user> [--cpu N] [--mem N] [--disk N] [--bandwidth N] [--days N]
+  vps transfer receive <url> <user>
 
 The container must be stopped before a send, and is left stopped afterwards.
 Receiving creates the account, so <user> must not exist on the receiving host
@@ -207,20 +207,44 @@ func transferSend(args []string) error {
 	}
 	fmt.Printf("exported %s in %s\n", mgr.HumanBytes(manifest.Bytes), manifest.Elapsed.Round(time.Second))
 
+	// The account metadata goes next to the archive and is served from the same
+	// listener, so the receiving host can read it — and check it has room —
+	// before pulling the disk down.
+	metaPath, err := transferArchivePath(dir, "json")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("  ! warn: could not remove %s: %v\n", metaPath, err)
+		}
+	}()
+	if err := os.WriteFile(metaPath, manifest.Meta, 0o600); err != nil {
+		return err
+	}
+
 	host := c.DisplayIP()
-	srv, err := mgr.NewTransferServer(path, host, port, manifest.SHA256)
+	srv, err := mgr.NewTransferServer(mgr.TransferFiles{
+		Archive:    path,
+		ArchiveSHA: manifest.SHA256,
+		Meta:       metaPath,
+		MetaSHA:    manifest.MetaSHA,
+	}, host, port)
 	if err != nil {
 		return fmt.Errorf("%w (check panel.public_ip — it is the address the other host will dial)", err)
 	}
 	defer srv.Close()
 
+	acct, _, _ := mgr.TransferMetaAccount(manifest.Meta)
 	fmt.Printf("sha256 %s\n", manifest.SHA256)
 	fmt.Printf("the container stays stopped here; start it again whenever you like\n\n")
 	fmt.Printf("on the other machine, run:\n\n")
-	fmt.Printf("  vps transfer receive '%s' <user>%s\n\n", srv.URL(), receiveFlags(manifest.Account))
+	fmt.Printf("  vps transfer receive '%s' <user>\n\n", srv.URL())
 	fmt.Printf("(<user> is the name to create there; this host's %q can only be reused once its own\n", name)
 	fmt.Printf(" account is gone from that machine.)\n")
-	fmt.Printf("the flags carry this account's quota; drop them to take the other host's defaults.\n")
+	fmt.Printf("the account travels with it — %s, its ssh keys, notes and init script — so nothing\n",
+		mgr.MachineSpecs(acct.CPU, acct.MemMB, acct.DiskGB))
+	fmt.Printf("has to be retyped there. The disk needs about %s of room.\n", mgr.HumanBytes(manifest.DiskUsed))
 	fmt.Printf("listening on port %d — the archive is deleted when this command exits.\n", srv.Port())
 	fmt.Printf("it stops on its own after %s with nobody connected.\n", idle)
 
@@ -263,20 +287,6 @@ func interruptible() (context.Context, func()) {
 	return ctx, cancel
 }
 
-// receiveFlags renders the account settings as the flags the receive command
-// takes, so the operator does not have to retype the quota from memory.
-func receiveFlags(a mgr.AddOptions) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, " --cpu %s --mem %d --disk %d", mgr.FormatCPU(a.CPU), a.MemMB, a.DiskGB)
-	if a.BandwidthGB > 0 {
-		fmt.Fprintf(&b, " --bandwidth %d", a.BandwidthGB)
-	}
-	if a.Days > 0 {
-		fmt.Fprintf(&b, " --days %d", a.Days)
-	}
-	return b.String()
-}
-
 // transferTick prints one line a second while the listener waits. The output is
 // not just cosmetic: it is what keeps an idle SSH session (or a NAT mapping)
 // from being dropped during a long transfer.
@@ -299,55 +309,13 @@ func transferReceive(args []string) error {
 	name := strings.ToLower(args[1])
 	fs := flag.NewFlagSet("transfer receive", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cpuS, memS, diskS, bandwidthS string
-	var days int
-	fs.StringVar(&cpuS, "cpu", "", "")
-	fs.StringVar(&memS, "mem", "", "")
-	fs.StringVar(&diskS, "disk", "", "")
-	fs.StringVar(&bandwidthS, "bandwidth", "", "")
-	fs.IntVar(&days, "days", 0, "")
 	if err := fs.Parse(args[2:]); err != nil {
 		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	// The account is created the way `vps add` creates one. The sending host
-	// prints the flags that reproduce its own quota, so the default only shows
-	// up when the command is typed by hand.
-	account := mgr.AddOptions{CPU: 10, MemMB: 1024, DiskGB: 10}
-	provided := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
-	if provided["cpu"] {
-		cpu, err := mgr.ParseCPU(cpuS)
-		if err != nil {
-			return err
-		}
-		account.CPU = cpu
-	}
-	if provided["mem"] {
-		mem, err := parseMemStrict(memS)
-		if err != nil {
-			return err
-		}
-		account.MemMB = mem
-	}
-	if provided["disk"] {
-		disk, err := parseDiskStrict(diskS)
-		if err != nil {
-			return err
-		}
-		account.DiskGB = disk
-	}
-	if provided["bandwidth"] {
-		bw, err := mgr.ParseBandwidthGB(bandwidthS)
-		if err != nil {
-			return err
-		}
-		account.BandwidthGB = bw
-	}
-	account.Days = days
-	target, wantSHA, pin, err := parseTransferURL(rawURL)
+	target, metaURL, wantSHA, wantMeta, pin, err := parseTransferURL(rawURL)
 	if err != nil {
 		return err
 	}
@@ -364,6 +332,27 @@ func transferReceive(args []string) error {
 	// Fail on a bad target now rather than after a long download.
 	if err := m.TransferTarget(name); err != nil {
 		return err
+	}
+
+	// The account metadata is tiny and comes first: it says what will be
+	// created and how much room the disk needs, so a host that cannot take the
+	// container can say so before pulling gigabytes through the wire.
+	fmt.Printf("fetching from %s\n", target)
+	meta, err := fetchMeta(ctx, metaURL, pin, wantMeta)
+	if err != nil {
+		return err
+	}
+	if err := m.TransferSpaceCheck(meta); err != nil {
+		return err
+	}
+	acct, from, err := mgr.TransferMetaAccount(meta)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("this will create %s as %s, replacing its IP, ports and IPv6 with this host's own\n",
+		name, mgr.MachineSpecs(acct.CPU, acct.MemMB, acct.DiskGB))
+	if from != "" && from != name {
+		fmt.Printf("(it was %q on the sending host)\n", from)
 	}
 
 	dir, err := os.Getwd()
@@ -393,7 +382,7 @@ func transferReceive(args []string) error {
 		return err
 	}
 	fmt.Printf("importing into %s (this creates the account)…\n", name)
-	res, err := m.TransferImport(ctx, name, archive, mgr.TransferOptions{Actor: transferActor(), Account: account})
+	res, err := m.TransferImport(ctx, name, archive, meta, mgr.TransferOptions{Actor: transferActor()})
 	archive.Close()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -407,41 +396,90 @@ func transferReceive(args []string) error {
 	fmt.Printf("  ip:        %s\n", res.IP)
 	fmt.Printf("  ssh:       ssh -p %d root@%s\n", res.SSHPort, res.IP)
 	fmt.Printf("  ports:     %s\n", res.Ports)
-	fmt.Printf("  root pw:   %s\n", res.RootPass)
+	fmt.Printf("  root pw:   unchanged (it came with the disk)\n")
 	if res.PanelPass != "" {
 		fmt.Printf("  panel pw:  %s  (shown once)\n", res.PanelPass)
 	}
-	fmt.Printf("\nthis host's own settings apply now. The source's domains did not come along:\n")
-	fmt.Printf("add them here and point their DNS at this host before retiring the other one.\n")
+	fmt.Printf("\nthe account came across with its quota, keys, notes and init script; what did not\n")
+	fmt.Printf("are the source host's domains and snapshots. Point the DNS here and add the domains\n")
+	fmt.Printf("before retiring the other machine.\n")
 	return nil
 }
 
 // parseTransferURL splits the receive URL into what to fetch and what to verify
-// against. Both digests travel in the fragment, which HTTP clients never send
-// to the server: the certificate pin and the archive checksum stay on the
-// operator's command line, and the listener never learns them.
-func parseTransferURL(raw string) (target, wantSHA, pin string, err error) {
+// against. The digests travel in the fragment, which HTTP clients never send to
+// the server: the certificate pin and both checksums stay on the operator's
+// command line, and the listener never learns them.
+func parseTransferURL(raw string) (target, metaURL, wantSHA, wantMeta, pin string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", "", err
 	}
 	if u.Scheme != "https" {
-		return "", "", "", fmt.Errorf("refusing %q: a transfer must be https", raw)
+		return "", "", "", "", "", fmt.Errorf("refusing %q: a transfer must be https", raw)
 	}
 	if u.Host == "" || !strings.HasPrefix(u.Path, "/d/") {
-		return "", "", "", errors.New("this is not a vps transfer URL")
+		return "", "", "", "", "", errors.New("this is not a vps transfer URL")
 	}
 	frag, err := url.ParseQuery(u.Fragment)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", "", err
 	}
-	wantSHA, pin = frag.Get("sha256"), frag.Get("cert")
-	if !isHexDigest(wantSHA) || !isHexDigest(pin) {
-		return "", "", "", errors.New("the URL is missing its #sha256=…&cert=… part — copy the whole command from the sending host")
+	wantSHA, wantMeta, pin = frag.Get("sha256"), frag.Get("meta"), frag.Get("cert")
+	if !isHexDigest(wantSHA) || !isHexDigest(wantMeta) || !isHexDigest(pin) {
+		return "", "", "", "", "", errors.New("the URL is missing its #sha256=…&meta=…&cert=… part — copy the whole command from the sending host")
 	}
 	u.Fragment, u.RawFragment = "", ""
-	return u.String(), wantSHA, pin, nil
+	// The account metadata is served from the same token on its own path.
+	m := *u
+	m.Path = strings.Replace(u.Path, "/d/", "/m/", 1)
+	return u.String(), m.String(), wantSHA, wantMeta, pin, nil
 }
+
+// fetchMeta downloads the small account metadata into memory and checks it
+// against the digest that came with the command.
+func fetchMeta(ctx context.Context, url, pin, wantSHA string) ([]byte, error) {
+	client := &http.Client{Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify:    true,
+			VerifyPeerCertificate: pinVerifier(pin),
+		},
+	}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("the sending host answered %s for the account details", resp.Status)
+	}
+	// The metadata is small by construction (a quota, some keys, notes); a cap
+	// keeps a wrong URL from buffering something enormous.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTransferMetaBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxTransferMetaBytes {
+		return nil, errors.New("the account details are implausibly large")
+	}
+	sum := sha256.Sum256(body)
+	if got := hex.EncodeToString(sum[:]); got != wantSHA {
+		return nil, fmt.Errorf("the account details did not survive the trip (got %s, expected %s)", got, wantSHA)
+	}
+	return body, nil
+}
+
+// maxTransferMetaBytes bounds the account metadata. The items it carries are
+// each capped by the panel (init script, sticky notes), so this is generous
+// headroom rather than a limit anyone should meet.
+const maxTransferMetaBytes = 1 << 20
 
 func isHexDigest(s string) bool {
 	if len(s) != sha256.Size*2 {
