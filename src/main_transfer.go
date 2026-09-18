@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,11 +59,12 @@ func cmdTransfer(args []string) error {
 
 var errTransferUsage = errors.New(`usage:
   vps transfer send <user> [--optimized] [--compression none|gzip|zstd] [--idle 5m] [--port N]
-  vps transfer receive <url> <user>
+  vps transfer receive <url> <user> [--cpu N] [--mem N] [--disk N] [--bandwidth N] [--days N]
 
 The container must be stopped before a send, and is left stopped afterwards.
-Both halves must run as root, and the archive is written to (and read from) the
-directory the command is started in.`)
+Receiving creates the account, so <user> must not exist on the receiving host
+yet. Both halves must run as root, and the archive is written to (and read
+from) the directory the command is started in.`)
 
 // transferActor is what the audit log records as the operator.
 func transferActor() string {
@@ -147,6 +150,7 @@ func transferSend(args []string) error {
 	if err != nil {
 		return err
 	}
+	sweepTransferArchives(dir)
 	estimate, err := m.TransferEstimate(name)
 	if err != nil {
 		return err
@@ -213,8 +217,10 @@ func transferSend(args []string) error {
 	fmt.Printf("sha256 %s\n", manifest.SHA256)
 	fmt.Printf("the container stays stopped here; start it again whenever you like\n\n")
 	fmt.Printf("on the other machine, run:\n\n")
-	fmt.Printf("  vps transfer receive '%s' <user>\n\n", srv.URL())
-	fmt.Printf("(<user> is the container it replaces there; it need not be %q.)\n", name)
+	fmt.Printf("  vps transfer receive '%s' <user>%s\n\n", srv.URL(), receiveFlags(manifest.Account))
+	fmt.Printf("(<user> is the name to create there; this host's %q can only be reused once its own\n", name)
+	fmt.Printf(" account is gone from that machine.)\n")
+	fmt.Printf("the flags carry this account's quota; drop them to take the other host's defaults.\n")
 	fmt.Printf("listening on port %d — the archive is deleted when this command exits.\n", srv.Port())
 	fmt.Printf("it stops on its own after %s with nobody connected.\n", idle)
 
@@ -257,6 +263,20 @@ func interruptible() (context.Context, func()) {
 	return ctx, cancel
 }
 
+// receiveFlags renders the account settings as the flags the receive command
+// takes, so the operator does not have to retype the quota from memory.
+func receiveFlags(a mgr.AddOptions) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, " --cpu %s --mem %d --disk %d", mgr.FormatCPU(a.CPU), a.MemMB, a.DiskGB)
+	if a.BandwidthGB > 0 {
+		fmt.Fprintf(&b, " --bandwidth %d", a.BandwidthGB)
+	}
+	if a.Days > 0 {
+		fmt.Fprintf(&b, " --days %d", a.Days)
+	}
+	return b.String()
+}
+
 // transferTick prints one line a second while the listener waits. The output is
 // not just cosmetic: it is what keeps an idle SSH session (or a NAT mapping)
 // from being dropped during a long transfer.
@@ -279,15 +299,54 @@ func transferReceive(args []string) error {
 	name := strings.ToLower(args[1])
 	fs := flag.NewFlagSet("transfer receive", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	var cpuS, memS, diskS, bandwidthS string
+	var days int
+	fs.StringVar(&cpuS, "cpu", "", "")
+	fs.StringVar(&memS, "mem", "", "")
+	fs.StringVar(&diskS, "disk", "", "")
+	fs.StringVar(&bandwidthS, "bandwidth", "", "")
+	fs.IntVar(&days, "days", 0, "")
 	if err := fs.Parse(args[2:]); err != nil {
 		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	if err := mgr.ValidateExistingName(name); err != nil {
-		return err
+	// The account is created the way `vps add` creates one. The sending host
+	// prints the flags that reproduce its own quota, so the default only shows
+	// up when the command is typed by hand.
+	account := mgr.AddOptions{CPU: 10, MemMB: 1024, DiskGB: 10}
+	provided := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	if provided["cpu"] {
+		cpu, err := mgr.ParseCPU(cpuS)
+		if err != nil {
+			return err
+		}
+		account.CPU = cpu
 	}
+	if provided["mem"] {
+		mem, err := parseMemStrict(memS)
+		if err != nil {
+			return err
+		}
+		account.MemMB = mem
+	}
+	if provided["disk"] {
+		disk, err := parseDiskStrict(diskS)
+		if err != nil {
+			return err
+		}
+		account.DiskGB = disk
+	}
+	if provided["bandwidth"] {
+		bw, err := mgr.ParseBandwidthGB(bandwidthS)
+		if err != nil {
+			return err
+		}
+		account.BandwidthGB = bw
+	}
+	account.Days = days
 	target, wantSHA, pin, err := parseTransferURL(rawURL)
 	if err != nil {
 		return err
@@ -303,7 +362,7 @@ func transferReceive(args []string) error {
 	defer cancel()
 
 	// Fail on a bad target now rather than after a long download.
-	if _, err := m.TransferTarget(name); err != nil {
+	if err := m.TransferTarget(name); err != nil {
 		return err
 	}
 
@@ -311,6 +370,7 @@ func transferReceive(args []string) error {
 	if err != nil {
 		return err
 	}
+	sweepTransferArchives(dir)
 	path, err := transferArchivePath(dir, "part")
 	if err != nil {
 		return err
@@ -332,22 +392,25 @@ func transferReceive(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("importing into %s (this replaces its container)…\n", name)
-	res, err := m.TransferImport(ctx, name, archive, mgr.TransferOptions{Actor: transferActor()})
+	fmt.Printf("importing into %s (this creates the account)…\n", name)
+	res, err := m.TransferImport(ctx, name, archive, mgr.TransferOptions{Actor: transferActor(), Account: account})
 	archive.Close()
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("interrupted — %s may be left in a half-imported state; check it with: vps list %s", name, name)
+			return fmt.Errorf("interrupted — %s was removed again; nothing was left behind", name)
 		}
 		return err
 	}
 
 	fmt.Printf("\n%s is up after %s, with %s of data from the other host\n",
 		res.User, res.Elapsed.Round(time.Second), mgr.HumanBytes(res.BytesRead))
-	fmt.Printf("  ip:       %s\n", res.IP)
-	fmt.Printf("  ssh:      ssh -p %d root@%s\n", res.SSHPort, res.IP)
-	fmt.Printf("  ports:    %s\n", res.Ports)
-	fmt.Printf("  root pw:  %s\n", res.RootPass)
+	fmt.Printf("  ip:        %s\n", res.IP)
+	fmt.Printf("  ssh:       ssh -p %d root@%s\n", res.SSHPort, res.IP)
+	fmt.Printf("  ports:     %s\n", res.Ports)
+	fmt.Printf("  root pw:   %s\n", res.RootPass)
+	if res.PanelPass != "" {
+		fmt.Printf("  panel pw:  %s  (shown once)\n", res.PanelPass)
+	}
 	fmt.Printf("\nthis host's own settings apply now. The source's domains did not come along:\n")
 	fmt.Printf("add them here and point their DNS at this host before retiring the other one.\n")
 	return nil
@@ -560,8 +623,11 @@ func pinVerifier(pin string) func([][]byte, [][]*x509.Certificate) error {
 	}
 }
 
-// transferArchivePath names the archive after a random UUID, so two transfers
-// started in one directory cannot collide and an interrupted one is obvious.
+// transferArchivePath names the archive after the owning process and a random
+// UUID. The PID is what lets a later run recognise an archive whose owner was
+// killed outright — SIGKILL, or the machine going down — because that is the
+// one exit no cleanup code can run on. The UUID keeps two transfers started in
+// one directory apart.
 func transferArchivePath(dir, ext string) (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -569,7 +635,51 @@ func transferArchivePath(dir, ext string) (string, error) {
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%s/vps-transfer-%x-%x-%x-%x-%x.%s", dir, b[0:4], b[4:6], b[6:8], b[8:10], b[10:16], ext), nil
+	return fmt.Sprintf("%s/vps-transfer-%d-%x-%x-%x-%x-%x.%s",
+		dir, os.Getpid(), b[0:4], b[4:6], b[6:8], b[8:10], b[10:16], ext), nil
+}
+
+// sweepTransferArchives removes transfer files that a previous run left in dir
+// after being killed without a chance to clean up. The archive is a copy of a
+// user's whole disk, so leaving one lying around is not acceptable.
+//
+// A file whose PID still belongs to a running process is somebody's live
+// transfer and is left alone. If a PID has been reused by an unrelated process
+// the file is kept too — the sweep errs towards keeping, never towards deleting
+// something in use.
+func sweepTransferArchives(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), "vps-transfer-")
+		if !ok {
+			continue
+		}
+		dash := strings.IndexByte(rest, '-')
+		if dash <= 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(rest[:dash])
+		if err != nil || processAlive(pid) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if err := os.Remove(path); err == nil {
+			fmt.Printf("removed %s — left behind by a transfer that was killed\n", path)
+		}
+	}
+}
+
+// processAlive reports whether pid names a process this host can signal. EPERM
+// means it exists but belongs to someone else, which still counts as alive.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // freeBytes reports the space available in dir.

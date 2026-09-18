@@ -2,11 +2,12 @@ package mgr
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"vpsmgr/internal/cfg"
@@ -22,13 +23,17 @@ import (
 // exports the stopped container to a single backup tarball, serves it from a
 // temporary listener, and the receiving host imports it over that listener.
 //
-// Only the disk travels. Domains, SSH keys, quotas, expiry, bandwidth and
-// resource history stay behind on the source: they are per-host configuration
-// owned by that host's panel DB, and the two hosts deliberately keep separate
-// sets (their admin keys are not the same). After the import the receiving host
-// re-homes the container: the archive carries the SOURCE host's instance
-// configuration, so this host's own spec — its IP, its ports, its quota — is
-// written over it before the container is ever started.
+// Receiving is creating an account: the target name must be free, and the
+// import builds it the way `vps add` would — same allocation code, same
+// firewall rules, same panel row — then replaces the disk of the container it
+// just created with the transferred one. Nothing that already exists on the
+// receiving host is touched, so a failure anywhere is undone by deleting what
+// was created, and the machine is exactly as it was.
+//
+// Domains, SSH keys, sticky notes and bandwidth history stay behind on the
+// source: they are per-host configuration owned by that host's panel DB, and
+// the two hosts deliberately keep separate sets (their admin keys are not the
+// same). The account's quota does travel — the receive command carries it.
 
 // TransferOptions carries the operator's choices for one transfer.
 type TransferOptions struct {
@@ -41,21 +46,26 @@ type TransferOptions struct {
 	Compression string
 	// Actor is recorded in the audit log (the operator running the command).
 	Actor string
+	// Account is how the receiving host sizes the account it creates.
+	Account AddOptions
 }
 
-// TransferManifest describes the artefact an export produced, which is what the
-// receiving side needs in order to verify the download.
+// TransferManifest describes the artefact an export produced, and the account
+// settings the receiving host should recreate, so the printed receive command
+// carries both.
 type TransferManifest struct {
 	User    string
 	Bytes   int64
 	SHA256  string
 	Elapsed time.Duration
+	Account AddOptions
 }
 
 // TransferResult describes a completed import, so the CLI can print the
-// container's new connection details (which are this host's, not the source's).
+// container's connection details (which are this host's, not the source's).
 type TransferResult struct {
 	User      string
+	PanelPass string
 	RootPass  string
 	IP        string
 	SSHPort   int
@@ -106,7 +116,6 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 	started := time.Now()
 	sum := sha256.New()
 	n, err := m.lx.BackupExport(ctx, u.Name, lx.BackupOptions{
-		Name:         "vpsmgr-transfer",
 		Compression:  opt.Compression,
 		Optimized:    opt.Optimized,
 		InstanceOnly: true, // the container as it is now, not its snapshot history
@@ -121,176 +130,154 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 		Bytes:   n,
 		SHA256:  hex.EncodeToString(sum.Sum(nil)),
 		Elapsed: time.Since(started),
+		Account: accountFor(u),
 	}, nil
 }
 
-// TransferTarget resolves a receive target on this host, so the operator learns
-// about a typo or a missing account before waiting out a long download rather
-// than after it. The import re-checks all of it: it must not depend on having
-// been called through here.
-func (m *Manager) TransferTarget(name string) (*db.User, error) {
-	if err := ValidateExistingName(name); err != nil {
-		return nil, err
+// accountFor is the account a transfer recreates on the far side: the quota the
+// container has here, expressed as the flags `vps add` takes.
+func accountFor(u *db.User) AddOptions {
+	opt := AddOptions{
+		CPU:         u.CPU,
+		MemMB:       u.MemMB,
+		DiskGB:      u.DiskGB,
+		BandwidthGB: u.BandwidthQuotaGB,
+	}
+	if u.ExpiresAt != "" {
+		if left := daysUntil(u.ExpiresAt); left > 0 {
+			opt.Days = left
+		}
+	}
+	return opt
+}
+
+// daysUntil rounds an expiry deadline up to whole days, so a transfer never
+// shortens the account it recreates.
+func daysUntil(rfc3339 string) int {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return 0
+	}
+	d := time.Until(t)
+	if d <= 0 {
+		return 0
+	}
+	return int((d + 24*time.Hour - 1) / (24 * time.Hour))
+}
+
+// TransferTarget checks the receiving name is usable, so the operator learns
+// about a typo — or about a name that is already taken — before waiting out a
+// long download rather than after it. The import re-checks it: it must not
+// depend on having been called through here.
+func (m *Manager) TransferTarget(name string) error {
+	name = strings.ToLower(name)
+	if err := ValidateName(name); err != nil {
+		return err
 	}
 	if g := ParseUserGroup(name); g.Child {
-		return nil, fmt.Errorf("%s is part of user group %q — transfer the group's containers one at a time", name, g.Parent)
+		return fmt.Errorf("%s is part of a user group — transfer the group's containers one at a time", name)
 	}
-	u, err := m.db.GetUserByName(name)
-	if err != nil {
-		return nil, fmt.Errorf("no such user on this host (%v); create it first with: vps add %s", err, name)
+	if _, err := m.db.GetUserByName(name); err == nil {
+		return fmt.Errorf("%s already exists on this host, and a transfer creates a new account; delete it first with: vps del %s", name, name)
 	}
-	return u, nil
+	return nil
 }
 
-// TransferImport replaces the user's container with the contents of a backup
-// tarball read from r, re-homed onto this host's configuration, and returns the
-// new connection details.
+// TransferImport creates the account from a backup tarball read from r and
+// returns its connection details.
 //
-// The old container is never destroyed before the new one exists: it is renamed
-// aside and deleted only once the replacement has been provisioned and started,
-// so a failure at any point can put it back. The container keeps running when
-// the command returns — this is the live copy now.
+// The account is created first, exactly as `vps add` would create it — so its
+// IP, port block, IPv6 assignment, firewall rules and panel row all come from
+// the same code path as any other container — and the disk of the container
+// that produced is then replaced by the transferred one. Nothing that existed
+// before this call is modified, so any failure is undone by deleting what was
+// created.
 func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, opt TransferOptions) (*TransferResult, error) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
-
-	u, err := m.TransferTarget(name)
-	if err != nil {
+	// No opMu here: Add and Del take it themselves, and this runs the two of
+	// them in sequence.
+	if err := m.TransferTarget(name); err != nil {
 		return nil, err
 	}
-
-	// Whether the container being replaced is running: if it is, put it back up
-	// when anything fails.
-	wasRunning := false
-	if st, err := m.lx.State(u.Name); err == nil {
-		wasRunning = st == "Running"
-	}
-
-	if err := m.db.UpdateUserStatus(u.ID, db.StatusReinstalling); err != nil {
-		return nil, fmt.Errorf("mark reinstalling: %w", err)
-	}
-
 	started := time.Now()
 	counting := &countingReader{r: r}
-	tmp, err := tempCloneName(u.Name)
-	if err != nil {
-		return m.importFailed(u, wasRunning, err)
-	}
-	if err := m.lx.BackupImport(ctx, tmp, m.cfg.Incus.Pool, counting); err != nil {
-		return m.importFailed(u, wasRunning, fmt.Errorf("import backup: %w", err))
-	}
-	// The archive carries the source host's configuration; replace it with ours
-	// before the container can ever run here (own IP, own quota, own devices).
-	spec, devices := m.instanceConfig(u)
-	if err := m.lx.ReplaceConfig(tmp, spec, devices); err != nil {
-		_ = m.lx.Delete(tmp)
-		return m.importFailed(u, wasRunning, fmt.Errorf("apply local configuration: %w", err))
-	}
-	if err := m.ensureZfsRollbackVolume(tmp); err != nil {
-		_ = m.lx.Delete(tmp)
-		return m.importFailed(u, wasRunning, fmt.Errorf("zfs snapshot rollback setup: %w", err))
-	}
 
-	// Swap: park the old container under a temporary name (its disk survives),
-	// then bring the imported one into place.
-	if wasRunning {
-		if err := m.lx.Stop(u.Name); err != nil {
-			_ = m.lx.Delete(tmp)
-			return m.importFailed(u, wasRunning, fmt.Errorf("stop old container: %w", err))
-		}
-	}
-	aside, err := asideName(u.Name)
-	if err != nil {
-		_ = m.lx.Delete(tmp)
-		return m.importFailed(u, wasRunning, err)
-	}
-	if err := m.lx.RenameInstance(u.Name, aside); err != nil {
-		_ = m.lx.Delete(tmp)
-		return m.importFailed(u, wasRunning, fmt.Errorf("move old container aside: %w", err))
-	}
-	if err := m.lx.RenameInstance(tmp, u.Name); err != nil {
-		_ = m.lx.RenameInstance(aside, u.Name)
-		_ = m.lx.Delete(tmp)
-		return m.importFailed(u, wasRunning, fmt.Errorf("rename imported container into place: %w", err))
-	}
-	// The replaced container takes its snapshots (and any share over them) with
-	// it when it is deleted below.
-	_ = m.db.DeleteSnapshotShare(u.ID)
-
-	pass, err := m.finishImport(u, aside, wasRunning)
+	created, err := m.Add(name, opt.Account)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.lx.Delete(aside); err != nil {
-		fmt.Printf("  ! warn: could not remove the replaced container %s: %v\n", aside, err)
-	}
-	if err := m.db.UpdateUserStatus(u.ID, db.StatusReady); err != nil {
-		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
-		return nil, fmt.Errorf("db: mark user ready: %w", err)
-	}
-	m.limitMu.Lock()
-	delete(m.throttled, u.Name)
-	m.limitMu.Unlock()
-	_ = m.db.AddAuditLog(opt.Actor, "transfer.import."+u.Name)
+	u := created.User
 
-	return &TransferResult{
-		User:      u.Name,
-		RootPass:  pass,
-		IP:        u.IP,
-		SSHPort:   u.SSHPort,
-		Ports:     UserPorts(u.StartPort, cfg.PortsPerUser),
-		Elapsed:   time.Since(started),
-		BytesRead: counting.n,
-	}, nil
-}
-
-// finishImport starts the freshly imported container and rebuilds everything
-// that must not be inherited from the source host: a fresh machine-id and SSH
-// host keys (otherwise both hosts would present the same identity), the target
-// user's own authorized_keys (the archive carries the source's), the root
-// password, the hostname and the IPv6 wiring.
-//
-// Every failure rolls the swap back: the replacement is deleted and the old
-// container returns to its name, so the user is never left with nothing.
-func (m *Manager) finishImport(u *db.User, aside string, wasRunning bool) (string, error) {
-	fail := func(err error) (string, error) {
-		_ = m.UnwireIPv6(u.Name)
-		_ = m.lx.Delete(u.Name)
-		if rerr := m.lx.RenameInstance(aside, u.Name); rerr != nil {
-			m.db.UpdateUserStatus(u.ID, db.StatusFailed)
-			return "", fmt.Errorf("%w (and the previous container could not be restored: %v — it is parked as %s)", err, rerr, aside)
+	// From here the whole account — container, firewall rules, DB row — exists
+	// and belongs to this import, so every failure path below removes it and
+	// leaves the host as it was.
+	fail := func(err error) (*TransferResult, error) {
+		if derr := m.Del(u.Name); derr != nil {
+			fmt.Printf("  ! warn: could not remove the half-built account %s: %v\n", u.Name, derr)
 		}
-		if wasRunning {
-			_ = m.lx.Start(u.Name)
-		}
-		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
-		return "", err
+		return nil, err
 	}
 
+	// The container Add just made has to go before the transfer's disk is
+	// imported in its place. Deleting it is not merely tidiness: Incus serves a
+	// container its static IPv4 from a DHCP reservation that the current lease
+	// holds until the instance is gone, so a replacement that appears while the
+	// first container still exists is handed a dynamic address from the pool —
+	// and then nothing can reach it, because the whole hosting setup (panel
+	// records, DNAT rules, what the user was told) names the static one.
+	if err := m.lx.Stop(u.Name); err != nil {
+		return fail(fmt.Errorf("stop the new container: %w", err))
+	}
+	if err := m.lx.Delete(u.Name); err != nil {
+		return fail(fmt.Errorf("remove the new container: %w", err))
+	}
+
+	// The archive carries the source host's devices, which Incus validates
+	// against this host's networks as it creates the instance, so this host's
+	// own devices have to go in as part of the import rather than after it.
+	spec, devices := m.instanceConfig(u)
+	if err := m.lx.BackupImport(ctx, u.Name, m.cfg.Incus.Pool, devices, counting); err != nil {
+		return fail(fmt.Errorf("import backup: %w", err))
+	}
+	// ...and the configuration is then replaced outright, which also clears
+	// whatever device keys the source had that this host's spec does not set.
+	if err := m.lx.ReplaceConfig(u.Name, spec, devices); err != nil {
+		return fail(fmt.Errorf("apply local configuration: %w", err))
+	}
+	if err := m.ensureZfsRollbackVolume(u.Name); err != nil {
+		return fail(fmt.Errorf("zfs snapshot rollback setup: %w", err))
+	}
 	if err := m.lx.Start(u.Name); err != nil {
 		return fail(fmt.Errorf("start imported container: %w", err))
 	}
 	if err := m.lx.WaitReady(u.Name, 180*time.Second); err != nil {
 		return fail(fmt.Errorf("wait for container: %w", err))
 	}
+
+	// The transferred disk still carries the source's root password, hostname,
+	// machine-id and SSH host keys. Rebuilding all of them is what makes the
+	// container this host's own rather than a copy of the other one: a shared
+	// machine-id makes dnsmasq drop DHCPv6 leases, and shared host keys would
+	// let two machines claim one identity to every client.
 	pass := pw.Generate(20)
 	// image only picks the provisioning path; the rootfs came from another
 	// vpsmgr host, so it is always one of the managed images.
 	if err := m.Provision(u.Name, m.cfg.Incus.Image, pass); err != nil {
 		return fail(fmt.Errorf("provision container: %w", err))
 	}
-	// The container brings the source's machine-id (a duplicate DUID makes
-	// dnsmasq drop DHCPv6 leases) and the source's SSH host keys (which would
-	// make two hosts claim the same identity to every client).
 	if err := m.regenerateMachineID(u.Name); err != nil {
 		return fail(fmt.Errorf("regenerate machine-id: %w", err))
 	}
 	if err := m.regenerateSSHHostKeys(u.Name); err != nil {
 		return fail(fmt.Errorf("regenerate ssh host keys: %w", err))
 	}
-	// ...and the source's authorized_keys: clear them before writing this
-	// host's own, or the source could still log in.
+	// ...and the source's authorized_keys, or the source could still log in.
 	m.clearAuthorizedKeys(u.Name)
+
+	// The source's IPv6 stanza is still in the container's network config, and
+	// this host's is appended rather than written, so it has to go first.
+	if err := m.stripForeignIPv6(u.Name); err != nil {
+		return fail(fmt.Errorf("clear the source host's ipv6 configuration: %w", err))
+	}
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		if u.IPv6Address != "" {
 			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
@@ -308,40 +295,118 @@ func (m *Manager) finishImport(u *db.User, aside string, wasRunning bool) (strin
 			return fail(fmt.Errorf("wire ipv6: %w", err))
 		}
 	}
-	m.applyUserKeys(u.Name)
-	return pass, nil
-}
-
-// importFailed records the failure and returns the error unchanged. The old
-// container is still under its own name whenever this is called (the swap
-// either never started or was already rolled back), so there is nothing to
-// restore here — only the running state we took away.
-func (m *Manager) importFailed(u *db.User, wasRunning bool, err error) (*TransferResult, error) {
-	m.db.UpdateUserStatus(u.ID, db.StatusFailed)
-	if wasRunning {
-		_ = m.lx.Start(u.Name)
+	if err := m.ensureStaticIPv4(u); err != nil {
+		return fail(err)
 	}
-	return nil, err
+	m.applyUserKeys(u.Name)
+
+	m.limitMu.Lock()
+	delete(m.throttled, u.Name)
+	m.limitMu.Unlock()
+	_ = m.db.AddAuditLog(opt.Actor, "transfer.import."+u.Name)
+
+	return &TransferResult{
+		User:      u.Name,
+		PanelPass: created.Password,
+		RootPass:  pass,
+		IP:        u.IP,
+		SSHPort:   u.SSHPort,
+		Ports:     UserPorts(u.StartPort, cfg.PortsPerUser),
+		Elapsed:   time.Since(started),
+		BytesRead: counting.n,
+	}, nil
 }
 
-// instanceConfig is the container specification this host would give the user
-// today: its own static IPv4, IPv6 assignment, NIC layout and quota. Writing it
-// over an imported container is what stops the source's network configuration
-// from following the disk here.
-func (m *Manager) instanceConfig(u *db.User) (map[string]string, map[string]lx.Device) {
-	poolMode := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
-	ipv6, block := "", ""
-	if !poolMode {
-		ipv6, _ = m.IPv6Addr(u.Name)
-		if b, _ := m.IPv6Block(u.Name); b != nil {
-			block = b.String()
+// stripForeignIPv6 removes the IPv6 configuration that the host this container
+// came from left in its networkd file.
+//
+// The re-key step appends this host's address, routed block and gateway
+// neighbour, and only checks for its OWN values before appending — which is
+// right for a container that was always here, but a container that arrives
+// from another host already carries that host's address and block. Left alone
+// it comes up with two global addresses, one of them belonging to a network it
+// is not on, and services can bind to the wrong one.
+//
+// Only stanzas whose values are not this host's are dropped; the image's own
+// DHCP setup is kept. Pool mode rewrites the file outright, so it has nothing
+// to strip.
+func (m *Manager) stripForeignIPv6(name string) error {
+	if !m.cfg.IPv6Enabled() || m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+		return nil
+	}
+	ipv6, err := m.IPv6Addr(name)
+	if err != nil || ipv6 == "" {
+		return err
+	}
+	block := ""
+	if b, _ := m.IPv6Block(name); b != nil {
+		block = b.String()
+	}
+	script := `set -e
+CFG=/etc/systemd/network/eth0.network
+[ -f "$CFG" ] || exit 0
+awk -v keep_addr=` + strconv.Quote(ipv6+"/128") + ` -v keep_block=` + strconv.Quote(block) + ` -v keep_mac=` + strconv.Quote(m.bridgeMAC()) + ` '
+function reset() { hdr=""; body=""; addr=""; dest=""; lladdr=""; lcl=0 }
+function keepit() {
+  if (hdr == "[Address]" && addr != "" && addr != keep_addr) return 0
+  if (hdr == "[Route]" && lcl == 1 && dest != "" && dest != keep_block) return 0
+  if (hdr == "[Neighbor]" && lladdr != "" && lladdr != keep_mac) return 0
+  return 1
+}
+function flush() { if (hdr != "" && keepit()) print body; reset() }
+BEGIN { ORS="" }
+/^\[/ { flush(); hdr=$0 }
+{ body = body $0 "\n" }
+/^Address=/ && hdr == "[Address]" { addr=substr($0,9) }
+/^Destination=/ { dest=substr($0,13) }
+/^Type=local/ { lcl=1 }
+/^LinkLayerAddress=/ { lladdr=substr($0,18) }
+END { flush() }
+' "$CFG" > "$CFG.new"
+mv "$CFG.new" "$CFG"
+`
+	_, err = m.lx.ExecSH(name, script)
+	return err
+}
+
+// ensureStaticIPv4 checks that the container actually holds the IPv4 address its
+// whole hosting setup is built around: the panel's records, the host's DNAT
+// rules and the user's own notes all name it, so a container that ends up on
+// another address is unreachable. Better to say so than to hand over a machine
+// nobody can connect to.
+func (m *Manager) ensureStaticIPv4(u *db.User) error {
+	if u.IP == "" {
+		return nil
+	}
+	out, err := m.lx.ExecSH(u.Name, "ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}'")
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), u.IP+"/") {
+			return nil
 		}
 	}
-	poolAddr := ""
+	return fmt.Errorf("the container came up on %s, not on its assigned %s — its port forwarding will not work until it takes that address",
+		strings.Join(strings.Fields(out), " "), u.IP)
+}
+
+// instanceConfig is the container specification this host gives the user: its
+// own static IPv4, IPv6 assignment, NIC layout and quota. Writing it over an
+// imported container is what stops the source's network configuration from
+// following the disk here.
+func (m *Manager) instanceConfig(u *db.User) (map[string]string, map[string]lx.Device) {
+	poolMode := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
+	ipv6, block, poolAddr := "", "", ""
 	if poolMode {
 		// Only pool mode keeps the address on the routed NIC, and only when
 		// the user actually has one.
 		poolAddr = u.IPv6Address
+	} else {
+		ipv6, _ = m.IPv6Addr(u.Name)
+		if b, _ := m.IPv6Block(u.Name); b != nil {
+			block = b.String()
+		}
 	}
 	return m.lx.InstanceSpec(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.IP,
 		ipv6, block, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB)
@@ -371,17 +436,6 @@ func (m *Manager) requireStopped(name string) error {
 func (m *Manager) regenerateSSHHostKeys(name string) error {
 	_, err := m.lx.ExecSH(name, "rm -f /etc/ssh/ssh_host_* && ssh-keygen -A")
 	return err
-}
-
-// asideName is the transient name the replaced container is parked under during
-// the swap. Like tempCloneName it never ends in a bare number, so it is never
-// mistaken for a user group's child account.
-func asideName(name string) (string, error) {
-	b := make([]byte, 2)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s-old-%04x", name, b), nil
 }
 
 // countingReader counts the bytes a transfer actually read from the network, so
