@@ -567,7 +567,11 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
     CONN=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth0" {print $1; exit}')
     [ -z "$CONN" ] && CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
     if [ -n "$CONN" ]; then
-      nmcli con mod "$CONN" ipv6.method disabled >/dev/null 2>&1 || true
+      # The address and the method have to be cleared together: NetworkManager
+      # refuses a method of "manual" with no address left, and refuses an
+      # address under a method of "disabled", so only the final state, set in
+      # one request, is accepted.
+      nmcli con mod "$CONN" ipv6.method disabled ipv6.addresses "" ipv6.gateway "" >/dev/null 2>&1 || true
       nmcli con up "$CONN" >/dev/null 2>&1 || true
     fi
   fi
