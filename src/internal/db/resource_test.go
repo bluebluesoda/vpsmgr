@@ -1,6 +1,63 @@
 package db
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// A sample dated in the future (a boot with a skewed RTC) must be stored — the
+// sampler cannot tell it apart from a legitimate one — but must never be served
+// to readers, or a single row freezes the panels until wall-clock catches up.
+func TestFutureSamplesAreStoredButNotRead(t *testing.T) {
+	d, err := Open(t.TempDir() + "/future.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	past := (now - 3600) / 60 * 60
+	future := (now + 8*3600) / 60 * 60
+
+	row := func(minute, cpu int64) ResourceSample {
+		return ResourceSample{UserID: u.ID, SampleMinute: minute, State: 1,
+			BootTime: 100, CPUSecondsNS: minute * 1e9, CPUPercentX10: cpu,
+			MemoryMiB: 128, DiskUsedMiB: 20}
+	}
+	if err := d.RecordResourceSamples([]ResourceSample{row(past, 10), row(future, 20)}, nil, "2026-08", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored int
+	if err := d.sql.QueryRow(`SELECT COUNT(*) FROM resource_samples`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != 2 {
+		t.Fatalf("stored rows = %d, want 2 (both samples must be persisted)", stored)
+	}
+
+	latest, err := d.LatestResourceSamples()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := latest[u.ID].SampleMinute; got != past {
+		t.Fatalf("latest sample = %d, want %d (future row must be ignored)", got, past)
+	}
+	if got := latest[u.ID].CPUPercentX10; got != 10 {
+		t.Fatalf("latest cpu = %d, want 10", got)
+	}
+
+	history, err := d.ResourceHistory(u.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].SampleMinute != past {
+		t.Fatalf("history = %+v, want only the past sample %d", history, past)
+	}
+}
 
 func TestRecordResourceSamplesAndRetention(t *testing.T) {
 	d, err := Open(t.TempDir() + "/resource.db")

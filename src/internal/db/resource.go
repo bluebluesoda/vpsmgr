@@ -132,7 +132,10 @@ func (d *DB) RecordResourceSamples(samples []ResourceSample, observations []Band
 	return tx.Commit()
 }
 
-// LatestResourceSamples returns the newest sample for every user.
+// LatestResourceSamples returns the newest sample for every user. Future-dated
+// samples are ignored: a boot with a skewed RTC can leave one mis-dated row
+// that would otherwise win MAX() for hours and freeze every panel on that stale
+// snapshot, so the sampler keeps writing while the dashboards never move.
 func (d *DB) LatestResourceSamples() (map[int64]ResourceSample, error) {
 	rows, err := d.sql.Query(`
 		SELECT s.user_id, s.sample_minute, s.state, s.boot_time,
@@ -142,7 +145,9 @@ func (d *DB) LatestResourceSamples() (map[int64]ResourceSample, error) {
 		FROM resource_samples s
 		JOIN (
 			SELECT user_id, MAX(sample_minute) AS sample_minute
-			FROM resource_samples GROUP BY user_id
+			FROM resource_samples
+			WHERE sample_minute <= CAST(strftime('%s','now') AS INTEGER)
+			GROUP BY user_id
 		) latest ON latest.user_id=s.user_id AND latest.sample_minute=s.sample_minute`)
 	if err != nil {
 		return nil, err
@@ -217,7 +222,9 @@ func (d *DB) RecentResourceSamples(since int64) ([]ResourceSample, error) {
 	return out, rows.Err()
 }
 
-// ResourceHistory returns samples for a future resource chart.
+// ResourceHistory returns samples for a future resource chart. Future-dated
+// samples are excluded for the same reason as LatestResourceSamples: one
+// mis-dated row must not become the last point of an otherwise sane chart.
 func (d *DB) ResourceHistory(userID, since int64) ([]ResourceSample, error) {
 	rows, err := d.sql.Query(`
 		SELECT user_id, sample_minute, state, boot_time,
@@ -226,6 +233,7 @@ func (d *DB) ResourceHistory(userID, since int64) ([]ResourceSample, error) {
 		       disk_read_bytes_total, disk_write_bytes_total
 		FROM resource_samples
 		WHERE user_id=? AND sample_minute >= ?
+		  AND sample_minute <= CAST(strftime('%s','now') AS INTEGER)
 		ORDER BY sample_minute`, userID, since)
 	if err != nil {
 		return nil, err
