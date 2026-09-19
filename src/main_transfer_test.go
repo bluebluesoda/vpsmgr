@@ -406,29 +406,57 @@ func TestTransferURLFormatFields(t *testing.T) {
 	}
 }
 
-// An --optimized stream may only be imported into a pool running the driver it
-// was produced on; everything else is refused before anything is fetched.
-func TestOptimizedCompatibility(t *testing.T) {
+// The two supported export modes. The default is the storage-driver native
+// stream; --portable is the tar. There is deliberately no way to ask for a
+// native stream with a second compression pass layered on it.
+func TestTransferFormat(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		url  transferURL
-		mine string
-		ok   bool
+		name          string
+		optimized     bool
+		portable      bool
+		wantOptimized bool
+		wantComp      string
+		wantExt       string
+		wantErr       bool
 	}{
-		{"same driver", transferURL{optimized: true, driver: "zfs"}, "zfs", true},
-		{"different driver", transferURL{optimized: true, driver: "zfs"}, "btrfs", false},
-		{"driver not stated", transferURL{optimized: true}, "zfs", false},
-		{"plain tar ignores the driver", transferURL{compression: "zstd"}, "btrfs", true},
-		{"plain tar without a driver", transferURL{}, "zfs", true},
+		{name: "default is the native stream", wantOptimized: true, wantComp: "none", wantExt: "tar"},
+		{name: "explicit optimized is the same thing", optimized: true, wantOptimized: true, wantComp: "none", wantExt: "tar"},
+		{name: "portable is a zstd tar", portable: true, wantComp: "zstd", wantExt: "tar.zst"},
+		{name: "both modes at once", optimized: true, portable: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkOptimizedCompat(tc.url, tc.mine)
-			if tc.ok && err != nil {
-				t.Fatalf("refused a compatible stream: %v", err)
+			optimized, compression, ext, err := transferFormat(tc.optimized, tc.portable)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("accepted %+v", tc)
+				}
+				return
 			}
-			if !tc.ok && err == nil {
-				t.Fatal("accepted a stream this host cannot restore")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if optimized != tc.wantOptimized || compression != tc.wantComp || ext != tc.wantExt {
+				t.Errorf("got optimized=%v compression=%q ext=%q, want %v/%q/%q",
+					optimized, compression, ext, tc.wantOptimized, tc.wantComp, tc.wantExt)
 			}
 		})
+	}
+}
+
+// A receiving host refuses an optimized stream only when it knows the sending
+// driver is different. When the command does not say, the transfer proceeds:
+// an older sending build mentions nothing, and Incus is the better judge.
+func TestOptimizedCompatibilityToleratesSilence(t *testing.T) {
+	if err := checkOptimizedCompat(transferURL{optimized: true}, "zfs"); err != nil {
+		t.Errorf("refused an optimized stream whose sender stayed silent: %v", err)
+	}
+	if err := checkOptimizedCompat(transferURL{optimized: true, driver: "zfs"}, "zfs"); err != nil {
+		t.Errorf("refused a matching driver: %v", err)
+	}
+	if err := checkOptimizedCompat(transferURL{optimized: true, driver: "zfs"}, "btrfs"); err == nil {
+		t.Error("accepted an optimized stream from a different driver")
+	}
+	if err := checkOptimizedCompat(transferURL{}, "btrfs"); err != nil {
+		t.Errorf("a plain tar was refused: %v", err)
 	}
 }
