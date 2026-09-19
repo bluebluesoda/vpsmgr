@@ -295,3 +295,59 @@ func TestPoolContainerScript(t *testing.T) {
 		t.Errorf("expected empty script for empty address, got %q", s)
 	}
 }
+
+// An index of 0 is the block the bridge gateway sits in, so it must never reach
+// a container. A row carrying it — a V4-only or pool-mode account on a prefix
+// host, since 0 is what "no block" looks like there — yields no block and no
+// address instead of handing the container the gateway's own address.
+func TestIPv6IndexZeroIsNotABlock(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": 0})
+	block, err := m.IPv6Block("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block != nil {
+		t.Errorf("IPv6Block with index 0 = %v, want nil", block)
+	}
+	addr, err := m.IPv6Addr("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "" {
+		t.Errorf("IPv6Addr with index 0 = %q, want no address", addr)
+	}
+
+	// ...and block 0 is indeed where the gateway lives, which is why it is
+	// refused rather than served.
+	n, err := m.cfg.IPv6Network()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := m.bridgeGateway(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero, err := m.ipv6BlockIdx(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gwIP := net.ParseIP(gw); gwIP == nil || !zero.Contains(gwIP) {
+		t.Errorf("block 0 (%v) does not contain the gateway %s — the guard would be guarding nothing", zero, gw)
+	}
+}
+
+// New accounts never get index 0 either: the picker rejects any index whose
+// block holds the gateway, so this holds on an empty database too (where
+// nothing else is excluded).
+func TestPickIPv6IndexSkipsGatewayBlock(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", nil)
+	for i := 0; i < 200; i++ {
+		idx, err := m.pickIPv6Index()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if idx == 0 {
+			t.Fatalf("pickIPv6Index handed out 0, the bridge gateway's block")
+		}
+	}
+}
