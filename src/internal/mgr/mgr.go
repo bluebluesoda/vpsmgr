@@ -348,7 +348,7 @@ type AddOptions struct {
 	// IPv6Addr is the pool-mode address to assign ("" = auto-pick the first
 	// free pool address; "none" = create a V4-only container without IPv6).
 	// Ignored unless the config is in pool mode (prefix mode always assigns
-	// the deterministic derived address).
+	// the address built from the account's stored block index).
 	IPv6Addr string
 	// Days is the initial quota validity in days (0 or negative = permanent).
 	Days int
@@ -445,13 +445,15 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, err
 	}
 	// IPv6 assignment depends on the mode:
-	//   - prefix: deterministic /112-derived address (existing behavior)
+	//   - prefix: the address built from a fresh random /112 block index
 	//   - pool:   explicit choice, first free pool address, or "" when the
 	//             pool is exhausted / the caller opted out with "none"
 	//   - none:   no IPv6 at all
 	poolAddr := ""
-	ipv6 := "" // eth0 ipv6.address handed to Incus (prefix mode only)
+	ipv6 := ""          // eth0 ipv6.address handed to Incus (prefix mode only)
+	var ipv6Index int64 // stored /112 block index (prefix mode only)
 	blockStr := ""
+	var block *net.IPNet // the block those produce (prefix mode only)
 	switch m.cfg.IPv6ModeEffective() {
 	case cfg.IPv6ModePool:
 		if opt.IPv6Addr == "none" {
@@ -468,13 +470,21 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		// container binds its /128 itself (ConfigureContainerIPv6) and the host
 		// routes it (WireIPv6Pool).
 	default:
-		ipv6, _ = m.IPv6Addr(name)
-		block, _ := m.IPv6Block(name)
+		// A random block index, stored with the account: an address must not
+		// spell out its owner's name (see docs/ipv6.md).
+		picked, err := m.pickIPv6Index()
+		if err != nil {
+			return nil, err
+		}
+		ipv6Index = picked
+		b, err := m.ipv6BlockIdx(picked)
+		if err != nil {
+			return nil, err
+		}
+		block = b
 		if block != nil {
 			blockStr = block.String()
-		}
-		if err := m.checkIPv6BlockCollision(name, block); err != nil {
-			return nil, err
+			ipv6 = addHostOffset(block.IP, 1).String()
 		}
 	}
 	// Defend against orphan containers: a crashed create (or an out-of-band
@@ -588,16 +598,16 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		// bring the guest's /128 + local /112 up FIRST, then publish the NDP
 		// rule. Publishing last means an outside client's first SYN never
 		// races the guest still half-configured during `vps add`.
-		if err := m.ConfigureContainerIPv6(name, ""); err != nil {
+		if err := m.ConfigureContainerIPv6(name, ipv6); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(name); err != nil {
+		if err := m.WireIPv6(name, block); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ExpiryFromDays(opt.Days))
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ipv6Index, ExpiryFromDays(opt.Days))
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -627,41 +637,6 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		result.Password = ""
 	}
 	return result, nil
-}
-
-// checkIPv6BlockCollision refuses a new container if its deterministic /112
-// block already belongs to another user, or if the block would contain the
-// bridge gateway address (the container could then bind the gateway and break
-// routing for everyone). No-op when IPv6 is disabled.
-func (m *Manager) checkIPv6BlockCollision(name string, block *net.IPNet) error {
-	if block == nil {
-		return nil
-	}
-	users, err := m.db.ListUsers()
-	if err != nil {
-		return err
-	}
-	blockStr := block.IP.String()
-	for _, u := range users {
-		if u.Name == name {
-			continue
-		}
-		b, err := m.IPv6Block(u.Name)
-		if err != nil {
-			return err
-		}
-		if b != nil && b.IP.String() == blockStr {
-			return fmt.Errorf("ipv6 block %s already assigned to user %q (hash collision); choose another name", block.String(), u.Name)
-		}
-	}
-	if n, err := m.cfg.IPv6Network(); err == nil {
-		if gw, err := m.bridgeGateway(n); err == nil {
-			if gwIP := net.ParseIP(gw); gwIP != nil && block.Contains(gwIP) {
-				return fmt.Errorf("ipv6 block %s would contain the bridge gateway %s; choose another name", block.String(), gw)
-			}
-		}
-	}
-	return nil
 }
 
 // checkIncusConflict refuses to create a container whose name or static IPv4 is
@@ -713,7 +688,7 @@ func (m *Manager) resultForState(u *db.User, pass, state string) *Result {
 	}
 	up, down := m.BandwidthFor(u.ID)
 	// IPv6 address: pool mode shows the DB-stored assignment; prefix mode
-	// derives the deterministic address on the fly.
+	// builds it from the block index stored with the account.
 	ipv6 := ""
 	block := ""
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
@@ -1471,15 +1446,16 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
 	// IPv6: pool mode reuses the DB-stored assignment (the address belongs to
-	// the user for life), bound inside the container; prefix mode re-derives
-	// the deterministic address on the eth0 device.
+	// the user for life), bound inside the container; prefix mode rebuilds the
+	// address from the block index stored with the account.
 	ipv6 := ""
 	blockStr := ""
+	var block *net.IPNet
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		// NOT set on the Incus eth0 device (rejected: outside bridge subnet).
 	} else {
 		ipv6, _ = m.IPv6Addr(u.Name)
-		block, _ := m.IPv6Block(u.Name)
+		block, _ = m.IPv6Block(u.Name)
 		if block != nil {
 			blockStr = block.String()
 		}
@@ -1513,11 +1489,11 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	} else {
 		// Configure the guest's IPv6 first, then publish the NDP rule, so the
 		// outside world only learns the /112 once the container is ready.
-		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
+		if err := m.ConfigureContainerIPv6(u.Name, ipv6); err != nil {
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(u.Name); err != nil {
+		if err := m.WireIPv6(u.Name, block); err != nil {
 			rollback()
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}

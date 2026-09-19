@@ -85,6 +85,12 @@ func TestMigrateUpgradesLegacyDatabase(t *testing.T) {
 	if u.Status != StatusReady {
 		t.Errorf("legacy user status = %q, want %q", u.Status, StatusReady)
 	}
+	// v19 seeds the block index with the value the old username-derived scheme
+	// gave "alice" (sha256("alice")[:4] = 0x2bd806c9), so her address does not
+	// move when the value stops being derived.
+	if want := int64(0x2bd806c9); u.IPv6Index != want {
+		t.Errorf("legacy user ipv6 index = %#x, want %#x", u.IPv6Index, want)
+	}
 	applied, err := d.appliedMigrations()
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +171,7 @@ func TestUserStatusRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating, "", "")
+	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating, "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

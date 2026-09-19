@@ -5,7 +5,7 @@ import "testing"
 func TestUserExpiryRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	const exp = "2030-01-02T03:04:05Z"
-	u, err := d.CreateUserFull("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, "", exp)
+	u, err := d.CreateUserFull("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, "", 0, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
