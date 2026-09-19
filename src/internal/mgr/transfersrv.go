@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,7 +92,12 @@ type TransferServer struct {
 // room before pulling gigabytes). The caller owns both files and is responsible
 // for deleting them.
 func NewTransferServer(files TransferFiles, host string, port int) (*TransferServer, error) {
-	if net.ParseIP(host) == nil {
+	// The host is whatever the operator advertises as this machine's address
+	// (panel.display_ip, falling back to public_ip): usually an IPv4 literal,
+	// but a DNS name dials exactly the same. The peer pins the certificate by
+	// its fingerprint rather than checking a hostname, so the only requirement
+	// is that the host survives being embedded in a URL.
+	if host == "" || strings.ContainsAny(host, " \t/?#@:") {
 		return nil, fmt.Errorf("cannot build a transfer address from %q", host)
 	}
 	certPEM, keyPEM, der, err := cert.SelfSigned(host)
