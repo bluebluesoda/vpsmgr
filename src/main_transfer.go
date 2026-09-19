@@ -58,9 +58,40 @@ func cmdTransfer(args []string) error {
 	}
 }
 
+// transferFormat decides how an export is stored. There are two supported
+// ways and no others, so that a transfer cannot be quietly three-quarters
+// optimized:
+//
+//   - the default is the storage-driver native stream (zfs send), written as
+//     the pool stores it — nothing is decompressed and recompressed, because
+//     the pool has already compressed those blocks and a second pass would
+//     cost CPU to save almost nothing;
+//   - --portable is a tar of the files, zstd-compressed: slower to produce and
+//     larger, but any pool driver can restore it and an older receiving build
+//     understands it.
+func transferFormat(optimized, portable bool) (bool, string, string, error) {
+	if optimized && portable {
+		return false, "", "", errors.New("--optimized and --portable are two different transfers — pick one")
+	}
+	if portable {
+		return false, "zstd", "tar.zst", nil
+	}
+	return true, "none", "tar", nil
+}
+
 var errTransferUsage = errors.New(`usage:
-  vps transfer send <user> [--optimized] [--compression none|zstd] [--idle 5m] [--port N]
+  vps transfer send <user> [--portable] [--idle 5m] [--port N]
   vps transfer receive <url> <user>
+
+An export is stored one of two ways:
+
+  default      the storage-driver native stream (zfs send), written as the pool
+               stores it: nothing is decompressed and recompressed. Fastest and
+               cheapest to produce, but only a host running the same pool driver
+               can restore it.
+  --portable   a tar of the files, zstd-compressed. Slower to produce, but any
+               pool driver can restore it and an older receiving build
+               understands it.
 
 The container must be stopped before a send, and is left stopped afterwards.
 Receiving creates the account, so <user> must not exist on the receiving host
@@ -105,12 +136,13 @@ func transferSend(args []string) error {
 	name := strings.ToLower(args[0])
 	fs := flag.NewFlagSet("transfer send", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var optimized bool
-	var compression string
+	var optimized, portable bool
 	var idle time.Duration
 	var port int
+	// --optimized is the default; it stays accepted so commands written
+	// against 1.10.x keep working.
 	fs.BoolVar(&optimized, "optimized", false, "")
-	fs.StringVar(&compression, "compression", "zstd", "")
+	fs.BoolVar(&portable, "portable", false, "")
 	fs.DurationVar(&idle, "idle", 5*time.Minute, "")
 	fs.IntVar(&port, "port", 0, "")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -122,14 +154,14 @@ func transferSend(args []string) error {
 	if err := mgr.ValidateExistingName(name); err != nil {
 		return err
 	}
-	ext, ok := map[string]string{"none": "tar", "gzip": "tar.gz", "zstd": "tar.zst"}[compression]
-	if !ok {
-		return fmt.Errorf("unknown compression %q (none or zstd)", compression)
+	optimized, compression, ext, err := transferFormat(optimized, portable)
+	if err != nil {
+		return err
 	}
 	if optimized {
-		fmt.Println("note: --optimized stores a storage-driver native stream; the other host")
-		fmt.Println("      must run the same pool driver (zfs with zfs) and cannot import")
-		fmt.Println("      optimized streams into a different driver")
+		fmt.Println("exporting as an optimized storage-driver stream (the other host must run the same pool driver)")
+	} else {
+		fmt.Printf("exporting as a portable %s tar\n", compression)
 	}
 
 	c, m, closeDB, err := transferManager()
@@ -207,7 +239,7 @@ func transferSend(args []string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	fmt.Printf("exported %s in %s\n", mgr.HumanBytes(manifest.Bytes), manifest.Elapsed.Round(time.Second))
+	fmt.Printf("vpsmgr %s exported %s in %s\n", ver.Version, mgr.HumanBytes(manifest.Bytes), manifest.Elapsed.Round(time.Second))
 
 	// The account metadata goes next to the archive and is served from the same
 	// listener, so the receiving host can read it — and check it has room —
@@ -243,13 +275,6 @@ func transferSend(args []string) error {
 
 	acct, _, _ := mgr.TransferMetaAccount(manifest.Meta)
 	fmt.Printf("sha256 %s\n", manifest.SHA256)
-	fmt.Printf("vpsmgr %s on this host", ver.Version)
-	if manifest.Optimized {
-		fmt.Printf(", optimized storage stream")
-	} else if manifest.Compression != "" {
-		fmt.Printf(", %s compression", manifest.Compression)
-	}
-	fmt.Println()
 	fmt.Printf("the container stays stopped here; start it again whenever you like\n\n")
 	fmt.Printf("on the other machine, run:\n\n")
 	fmt.Printf("  vps transfer receive '%s' <user>\n\n", srv.URL())
@@ -350,9 +375,9 @@ func transferReceive(args []string) error {
 	if err := m.TransferHostSupported(); err != nil {
 		return err
 	}
-	// An optimized archive is storage-driver specific, and the stream is not
-	// self-describing, so this is checked before anything is fetched — long
-	// before Incus would fail partway through an import.
+	// An optimized archive is storage-driver specific and the stream says
+	// nothing about itself, so the driver travels in the URL and is compared
+	// here — before the metadata fetch, let alone a multi-gigabyte download.
 	if link.optimized {
 		mine, err := m.PoolDriver()
 		if err != nil {
@@ -472,14 +497,15 @@ func (u transferURL) describe() string {
 // unpacked into a btrfs or dir pool — and it says nothing about itself, so the
 // sending host's driver travels in the URL and is compared here, before a
 // single byte is fetched.
+// When the sending host said which driver it used and it differs, that is
+// certain knowledge and the transfer is refused. When it said nothing — an
+// older sender, or a hand-written URL — the stream is given the benefit of the
+// doubt and left to Incus, which reports the mismatch itself if there is one.
 func checkOptimizedCompat(u transferURL, myDriver string) error {
-	if !u.optimized {
+	if !u.optimized || u.driver == "" {
 		return nil
 	}
-	if u.driver == "" {
-		return errors.New("this is an --optimized transfer but the command does not say which pool driver the archive came from — copy the whole command from the sending host")
-	}
-	if u.driver != myDriver {
+	if u.driver != myDriver && u.driver != "" {
 		return fmt.Errorf("this host's pool runs %s but the archive is an --optimized stream from a %s pool, and such a stream can only be imported into a %s pool — re-export on the sending host without --optimized",
 			myDriver, u.driver, u.driver)
 	}
