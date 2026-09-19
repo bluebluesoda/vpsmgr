@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"net/url"
 	"os"
@@ -56,7 +58,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 18
+const schemaVersion = 19
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -307,6 +309,78 @@ var migrations = []struct {
 			ON CONFLICT(key) DO NOTHING`,
 		`DELETE FROM settings WHERE key = 'traefik'`,
 	}},
+	// v19: a container's prefix-mode /112 is no longer derived from its
+	// username but stored, and new accounts get a random one.
+	//
+	// Deriving it made the suffix of an address a global constant for a given
+	// name — sha256("alice") is the same 32 bits on every host running this
+	// panel — so an address identified its owner to anyone who knew the scheme
+	// and could enumerate names. That is exactly what the random container
+	// hostname exists to prevent.
+	//
+	// Accounts that already exist are seeded with the value they have been
+	// using, so no address changes and no container has to be touched; only
+	// accounts created from now on are random. NULL means "no index", which is
+	// every pool-mode account (it stores a whole /128 instead) and is why the
+	// unique index tolerates many of them.
+	//
+	// The seeded set cannot collide: the old code refused to create a name
+	// whose block collided with an existing one, or whose block would have
+	// contained the bridge gateway, so what is being written here was already
+	// unique.
+	{19, []string{
+		`ALTER TABLE users ADD COLUMN ipv6_index INTEGER`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6_index ON users(ipv6_index)`,
+	}},
+}
+
+// migrationSteps are the Go-side halves of a migration whose data cannot be
+// expressed in SQL: v19 seeds its new column by hashing each username. Each
+// runs inside the migration's own transaction, before the version is recorded,
+// so a failure leaves the version unrecorded and the step is retried.
+var migrationSteps = map[int]func(*sql.Tx) error{
+	19: seedIPv6Indexes,
+}
+
+// seedIPv6Indexes is v19's data step: fill the new column for every account
+// that predates it with the block index its address has been derived from.
+func seedIPv6Indexes(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, name FROM users WHERE ipv6_index IS NULL`)
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		id   int64
+		name string
+	}
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.name); err != nil {
+			rows.Close()
+			return err
+		}
+		todo = append(todo, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range todo {
+		if _, err := tx.Exec(`UPDATE users SET ipv6_index=? WHERE id=?`, legacyIPv6Index(p.name), p.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// legacyIPv6Index is the 32-bit block index the pre-v19 code derived from a
+// username: the first four bytes of its sha256. Nothing derives an index any
+// more — this exists only to seed accounts that predate the column, so that
+// their addresses do not move.
+func legacyIPv6Index(name string) int64 {
+	h := sha256.Sum256([]byte(name))
+	return int64(binary.BigEndian.Uint32(h[:4]))
 }
 
 // sqliteStr quotes a string literal for SQLite by doubling any single quote.
@@ -361,6 +435,12 @@ func (d *DB) migrate() error {
 		}
 		for _, s := range m.stmts {
 			if _, err := tx.Exec(s); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migrate v%d: %w", m.version, err)
+			}
+		}
+		if step := migrationSteps[m.version]; step != nil {
+			if err := step(tx); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("migrate v%d: %w", m.version, err)
 			}

@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// rewindToV17 opens a fresh database, removes every v18+ migration marker and
-// the two settings keys this migration deals with, and returns the path so the
-// caller can seed the v17-era rows and then re-open (which applies v18).
+// rewindToV17 opens a fresh database, removes every v18+ migration marker,
+// undoes the structural change those later migrations made, and clears the two
+// settings keys this migration deals with. It returns the path so the caller
+// can seed the v17-era rows and then re-open (which applies v18 onwards).
 func rewindToV17(t *testing.T, rows map[string]string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "pre-v18.db")
@@ -16,6 +17,16 @@ func rewindToV17(t *testing.T, rows map[string]string) string {
 		t.Fatal(err)
 	}
 	if _, err := d.sql.Exec(`DELETE FROM schema_migrations WHERE version >= 18`); err != nil {
+		t.Fatal(err)
+	}
+	// Un-apply v19, which added users.ipv6_index. Unlike v18's statements an
+	// ALTER is not idempotent, so a marker-only rewind would fail on the second
+	// run with "duplicate column name". A migration added after this helper must
+	// be undone here too.
+	if _, err := d.sql.Exec(`DROP INDEX IF EXISTS idx_users_ipv6_index`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sql.Exec(`ALTER TABLE users DROP COLUMN ipv6_index`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.sql.Exec(`DELETE FROM settings WHERE key IN ('traefik','haproxy')`); err != nil {

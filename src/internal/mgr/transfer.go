@@ -461,7 +461,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
 			return fail(fmt.Errorf("config container ipv6: %w", err))
 		}
-		if err := m.WireIPv6(u.Name); err != nil {
+		if err := m.WireIPv6(u.Name, nil); err != nil {
 			return fail(fmt.Errorf("wire ipv6: %w", err))
 		}
 	}

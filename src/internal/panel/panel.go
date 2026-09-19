@@ -465,7 +465,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 				d.IPv6 = u.IPv6Address
 			}
 		} else {
-			if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no incus call
+			if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // from the account row, no incus call
 				d.IPv6 = ipv6
 			}
 			if b, _ := s.mgr.IPv6Block(u.Name); b != nil {

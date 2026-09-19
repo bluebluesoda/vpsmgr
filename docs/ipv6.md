@@ -3,7 +3,7 @@
 Two modes, chosen at install:
 
 - **Prefix mode** (classic): no NAT, each container owns a global /112 block
-  derived deterministically from its username inside a provider-routed prefix.
+  cut from the provider-routed prefix for its account (see below).
 - **Pool mode**: no routable whole prefix, but the host has multiple global
   addresses on its NIC (the "discrete whitelist" providers). Each container is
   assigned one address from a confirmed pool; the host keeps the first address
@@ -15,23 +15,36 @@ Optional, **no NAT**: each container owns a global /112 block and the outside
 can reach any address it binds directly. Enabled by setting
 `net.ipv6_subnet` (asked at install; see [configuration.md](configuration.md)).
 
-## Deterministic per-container /112 block
+## Per-container /112 block
 
-A block is **computed on the fly from the username** — never stored, never
-queried, stable across reinstalls:
+A block is built from a **32-bit index stored with the account** (`users.
+ipv6_index`), stable across reinstalls and independent of the username:
 
 ```
-block = [configured prefix][32-bit sha256(username)][16 host bits]
-                            bits 80-111            bits 112-127
+block = [configured prefix][32-bit index][16 host bits]
+                            bits 80-111    bits 112-127
 ```
 
-- Example (`2602:fada:6::/64`, user `alice`): block
+- The index is **random**, picked when the account is created (and retried
+  internally if the value is somehow taken — the `UNIQUE` index on the column is
+  the backstop). It used to be `sha256(username)[0:4]`, which made the suffix of
+  every address a global constant for a given name: the same `alice` produced
+  the same block on every host running the panel, so an address identified its
+  owner to anyone who knew the scheme and could enumerate names. Accounts that
+  predate the column were seeded with the value they had been using, so their
+  addresses never moved.
+- Example (`2602:fada:6::/64`, index `0x2bd806c9`): block
   `2602:fada:6::2bd8:6c9:0/112`, primary address `2602:fada:6::2bd8:6c9:1`.
-- The primary address is **byte-identical to the pre-/112 scheme**, so
-  upgrading never changes an existing container's address.
-- Because the 32-bit hash space is small, `vps add` refuses a name whose
-  block collides with an existing user (hash collision) or would contain the
-  bridge gateway address.
+- The primary address is **byte-identical to the pre-/112 scheme** for an
+  account seeded with its old value, so upgrading never changes an existing
+  container's address.
+- The block index is per-host: it is **not** carried across machines by
+  `vps transfer`, because the receiving host numbers its own containers from its
+  own prefix anyway. Deleting an account and creating one with the same name
+  yields a fresh random index.
+- A block never contains the bridge gateway address: an index whose block does
+  is skipped when picking (the gateway lives in the all-zero block, which is why
+  `0` also means "no index" — every pool-mode and V4-only account).
 
 ## Supported prefixes
 
@@ -39,7 +52,7 @@ block = [configured prefix][32-bit sha256(username)][16 host bits]
 
 | Prefix | Bridge uses | Notes |
 |---|---|---|
-| `/48` `/56` `/60` | **first /64 of the prefix** | Incus's dnsmasq rejects non-/64 networks, and every deterministic block falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
+| `/48` `/56` `/60` | **first /64 of the prefix** | Incus's dnsmasq rejects non-/64 networks, and every block falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
 | `/64` | the /64 itself | |
 | `/80` | the /80 itself | Common provider slice (e.g. AWS ENI /80). |
 
@@ -78,7 +91,7 @@ For each container:
 - The primary `/128` is **bound statically** inside the container (a networkd
   `[Address]` section on Debian, a boot-time service on RHEL) — it does not
   depend on DHCPv6. This matters on reinstall: Incus's dnsmasq keeps the deleted
-  container's DHCPv6 lease for the deterministic address for up to an hour, so
+  container's DHCPv6 lease for its primary address for up to an hour, so
   DHCPv6 would hand the recreated container a *dynamic* address instead, which
   falls outside the routed /112 and is dropped by `ipv6_filtering`. Binding the
   /128 directly makes IPv6 survive reinstalls.

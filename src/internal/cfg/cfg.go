@@ -797,9 +797,9 @@ func (c *Config) IPv6Network() (*net.IPNet, error) {
 		return nil, fmt.Errorf("invalid ipv6_subnet %q: must be a global (public) prefix", s)
 	}
 	ones, _ := n.Mask.Size()
-	// The deterministic per-container address uses the low 48 host bits (a
-	// 32-bit username hash + a fixed 0001 last block), so the prefix needs at
-	// least that many host bits: any prefix /80 or shorter works.
+	// A container's /112 block covers the low 48 bits (a 32-bit block index
+	// + the container's own 16 host bits), so the prefix needs at least that
+	// many host bits: any prefix /80 or shorter works.
 	if ones > 80 {
 		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /80 or shorter (got /%d)", s, ones)
 	}
