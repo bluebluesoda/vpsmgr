@@ -231,7 +231,7 @@ func transferSend(args []string) error {
 		MetaSHA:    manifest.MetaSHA,
 	}, host, port)
 	if err != nil {
-		return fmt.Errorf("%w (check panel.public_ip — it is the address the other host will dial)", err)
+		return fmt.Errorf("%w (the address comes from panel.display_ip, falling back to panel.public_ip — it is what the other host will dial)", err)
 	}
 	defer srv.Close()
 
