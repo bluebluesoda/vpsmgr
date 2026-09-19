@@ -691,6 +691,21 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	// A pool address is offered on this form only for a container that has none:
+	// an address, once handed to a customer, is theirs until the account is
+	// deleted, so this can give one but never take one away. "keep" is the
+	// no-op choice, "auto" the first free address.
+	if sel := strings.TrimSpace(r.FormValue("ipv6")); sel != "" && sel != "keep" {
+		want := sel
+		if sel == "auto" {
+			want = ""
+		}
+		if _, err := s.mgr.AssignPoolIPv6(name, want); err != nil {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+			return
+		}
+		_ = s.db.AddAuditLog("000+"+name, "ipv6.assign")
+	}
 	_ = s.db.AddAuditLog("000+"+name, "quota.update")
 	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
 }

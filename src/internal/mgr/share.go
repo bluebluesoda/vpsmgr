@@ -326,7 +326,7 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(u.Name); err != nil {
+		if err := m.WireIPv6(u.Name, nil); err != nil {
 			rollback()
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}

@@ -180,6 +180,10 @@ func main() {
 		err = cmdIP6(os.Args[2:])
 	case "config":
 		err = cmdConfig(os.Args[2:])
+	case "transfer":
+		// Cross-machine move of one container's disk. Root-only, no panel
+		// entry: it puts a user's disk on the network for a peer to fetch.
+		err = cmdTransfer(os.Args[2:])
 	case "version":
 		fmt.Println(ver.Version)
 		return
@@ -205,6 +209,8 @@ usage:
   vps del <name>
   vps panel-url                    print panel address
   vps config list|set|help         inspect/change config.yaml (per-field validated edits)
+  vps transfer send <user>         export a stopped container and serve it to another host
+  vps transfer receive <url> <user>  fetch such an export and replace that user's container with it
   vps version
 system:
   vps install | serve | ipv6-reapply | ipv6-proxy

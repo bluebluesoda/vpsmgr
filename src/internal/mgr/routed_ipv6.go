@@ -27,8 +27,8 @@ func (e *RoutedIPv6Error) Unwrap() error { return e.Err }
 
 // ipv6ContainerScript returns a shell script that configures a container's
 // IPv6 so peers are reached through the host instead of direct L2 neighbour
-// discovery (which port isolation blocks), and applies the deterministic
-// primary /128:
+// discovery (which port isolation blocks), and applies the account's primary
+// /128 (given as ipv6; an empty address is a no-op):
 //
 //   - Debian (systemd-networkd): rebuild [IPv6AcceptRA] with
 //     UseOnLinkPrefix=false + UseRoutePrefix=false + UseAutonomousPrefix=false
@@ -45,11 +45,7 @@ func (e *RoutedIPv6Error) Unwrap() error { return e.Err }
 //     and re-applies the profile on every boot. No daemons, no waiting.
 //
 // Both end by flushing stale on-link / redirect routes for the parent prefix.
-func (m *Manager) ipv6ContainerScript(name string) (string, error) {
-	ipv6, err := m.IPv6Addr(name)
-	if err != nil {
-		return "", err
-	}
+func (m *Manager) ipv6ContainerScript(ipv6 string) (string, error) {
 	if ipv6 == "" {
 		return "", nil
 	}
@@ -314,27 +310,35 @@ fi
 // ConfigureContainerIPv6 applies the host-routed IPv6 setup to one container
 // (its stack decides the mechanism). Called on add/reinstall for new
 // containers and by EnsureRoutedIPv6 for existing ones. No-op when IPv6 is
-// disabled or the container has no address. In pool mode the address comes
-// from the DB (the container binds its single /128 itself; the host routes it
-// via WireIPv6Pool); poolAddr passes the just-assigned address when the DB
-// row does not exist yet (Add creates the row after the container).
-func (m *Manager) ConfigureContainerIPv6(name, poolAddr string) error {
+// disabled or the container has no address.
+//
+// addr is the container's address: the pool-mode /128, or the prefix-mode
+// primary address. A caller that already knows it passes it — Add launches the
+// container before creating its account row, so the address comes from the
+// block index it just picked. An empty addr is read from the account's row.
+func (m *Manager) ConfigureContainerIPv6(name, addr string) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
-	var script string
-	var err error
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
-		if poolAddr == "" {
+	pool := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
+	if addr == "" {
+		var err error
+		if pool {
 			u, uerr := m.db.GetUserByName(name)
 			if uerr != nil {
 				return uerr
 			}
-			poolAddr = u.IPv6Address
+			addr = u.IPv6Address
+		} else if addr, err = m.IPv6Addr(name); err != nil {
+			return err
 		}
-		script, err = m.ipv6ContainerScriptFor(poolAddr, "")
+	}
+	var script string
+	var err error
+	if pool {
+		script, err = m.ipv6ContainerScriptFor(addr, "")
 	} else {
-		script, err = m.ipv6ContainerScript(name)
+		script, err = m.ipv6ContainerScript(addr)
 	}
 	if err != nil || script == "" {
 		return err
