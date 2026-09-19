@@ -39,7 +39,12 @@ type TransferOptions struct {
 	// pool running the same driver, so it is opt-in and the receiving side
 	// fails loudly if the driver does not match.
 	Optimized bool
-	// Compression is "none", "gzip", "zstd" or "" for the Incus default.
+	// Compression is "none" or "zstd". "none" exports the raw Incus backup
+	// stream: tar-based transfers carry LZ4-compressed ZFS blocks, while
+	// optimized transfers carry the zfs send stream (also compressed).
+	// Both are unreadable outside Incus and can only be imported back
+	// into a pool that uses the same driver, so they are opt-in and not
+	// the default.
 	Compression string
 	// Actor is recorded in the audit log (the operator running the command).
 	Actor string
