@@ -58,7 +58,7 @@ func cmdTransfer(args []string) error {
 }
 
 var errTransferUsage = errors.New(`usage:
-  vps transfer send <user> [--optimized] [--compression none|gzip|zstd] [--idle 5m] [--port N]
+  vps transfer send <user> [--optimized] [--compression none|zstd] [--idle 5m] [--port N]
   vps transfer receive <url> <user>
 
 The container must be stopped before a send, and is left stopped afterwards.
@@ -123,11 +123,12 @@ func transferSend(args []string) error {
 	}
 	ext, ok := map[string]string{"none": "tar", "gzip": "tar.gz", "zstd": "tar.zst"}[compression]
 	if !ok {
-		return fmt.Errorf("unknown compression %q (none, gzip or zstd)", compression)
+		return fmt.Errorf("unknown compression %q (none or zstd)", compression)
 	}
 	if optimized {
-		fmt.Println("note: --optimized stores a storage-driver native stream; the other host can")
-		fmt.Println("      only restore it into a pool using the same driver (zfs with zfs).")
+		fmt.Println("note: --optimized stores a storage-driver native stream; the other host")
+		fmt.Println("      must run the same pool driver (zfs with zfs) and cannot import")
+		fmt.Println("      optimized streams into a different driver")
 	}
 
 	c, m, closeDB, err := transferManager()

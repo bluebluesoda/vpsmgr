@@ -62,6 +62,13 @@ func (c *Client) InstanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF str
 //
 // The caller must have stopped the container: a backup of a running container
 // is a file-level copy of a live filesystem and can be inconsistent.
+//
+// Compression is applied by Incus itself when it is set; the result is no
+// longer a plain tar, so the caller must not try to untar it afterward.
+//
+// Optimized stores a storage-driver native stream instead of a plain
+// tarball. It is far faster but the file can only be restored into a pool
+// using the same driver (zfs to zfs, btrfs to btrfs), so it is opt-in.
 func (c *Client) BackupExport(ctx context.Context, name string, opt BackupOptions, w io.Writer) (int64, error) {
 	body := map[string]any{
 		"instance_only":     opt.InstanceOnly,
