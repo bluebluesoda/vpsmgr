@@ -1,9 +1,10 @@
 package mgr
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -24,12 +25,13 @@ import (
 //   /64 slice of it, because Incus's dnsmasq rejects non-/64 networks and every
 //   deterministic container address falls in that /64 anyway.
 //
-//   Each container owns a DETERMINISTIC /112 block derived from its username
-//   (sha256 → 32-bit block index at bits 80-111 + 16 host bits), so the block
-//   is stable across reinstalls and never stored or queried. The block's
-//   primary address (block + ::1) is byte-identical to the address of the old
-//   single-/128 scheme, so upgrading never changes an existing container's
-//   address.
+//   Each container owns a /112 block cut from the prefix for its account: a
+//   random 32-bit block index at bits 80-111 plus 16 host bits, stored in
+//   users.ipv6_index, so the block is stable across reinstalls but does not
+//   spell out the username. The block's primary address (block + ::1) is
+//   byte-identical to the address of the old single-/128 scheme for accounts
+//   that predate the column, so upgrading never changes an existing
+//   container's address.
 //
 //   Per container:
 //     - the eth0 device sets ipv6.address=<block>::1 (primary) and
@@ -44,28 +46,18 @@ import (
 //   vpsmgr renders /etc/ndppd.conf (one rule per container) and restarts the
 //   daemon on add/del/reapply; RewireAllIPv6 rebuilds it from the DB at boot
 //   and on `vps install`, so rules survive reboots. No NAT, no nftables
-//   changes, no DB schema changes.
-
-// ipv6Suffix returns the low 48 host bits of a container's primary IPv6 (the
-// 32-bit username hash followed by a fixed 0001 last block). Kept for
-// tests/diagnostics; IPv6Addr writes the same bits directly into the address.
-func ipv6Suffix(name string) string {
-	h := sha256.Sum256([]byte(name))
-	v := binary.BigEndian.Uint32(h[:4])
-	return fmt.Sprintf("%x:%04x:1", v>>16, v&0xffff)
-}
+//   changes.
 
 // blockBits is the length of the routed prefix each container owns.
 const blockBits = 112
 
-// IPv6Block computes the deterministic /112 block a container owns, derived
-// from the configured prefix + username. Never queries Incus and never stores
-// it. The block index (32-bit username hash) lands at bits 80-111 for every
-// supported prefix <= /80; the trailing 16 bits are the container's host
-// space.
-func (m *Manager) IPv6Block(name string) (*net.IPNet, error) {
-	if !m.cfg.IPv6Enabled() {
-		return nil, nil
+// ipv6BlockIdx builds the /112 block for a stored 32-bit index. The index
+// lands at bits 80-111 for every supported prefix <= /80, so the same code
+// serves a /64 provider prefix and an /80 slice; the trailing 16 bits are the
+// container's own host space. Pure — no Incus, no database.
+func (m *Manager) ipv6BlockIdx(idx int64) (*net.IPNet, error) {
+	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+		return nil, nil // only prefix mode gives a container a block
 	}
 	n, err := m.cfg.IPv6Network()
 	if err != nil {
@@ -73,9 +65,80 @@ func (m *Manager) IPv6Block(name string) (*net.IPNet, error) {
 	}
 	block := make(net.IP, 16)
 	copy(block, n.IP.To16())
-	h := sha256.Sum256([]byte(name))
-	copy(block[10:14], h[:4])
+	binary.BigEndian.PutUint32(block[10:14], uint32(idx))
 	return &net.IPNet{IP: block, Mask: net.CIDRMask(blockBits, 128)}, nil
+}
+
+// IPv6Block returns the /112 block a container owns: the index stored with its
+// account, placed inside the configured prefix.
+//
+// The index is random and stored rather than derived from the username. A
+// derived one made the suffix of an address a global constant for a given name
+// — every host running this panel would give "alice" the same block — so an
+// address identified its owner to anyone who knew the scheme. Accounts that
+// predate the column were seeded with the value they had been using, which is
+// what keeps their addresses stable.
+func (m *Manager) IPv6Block(name string) (*net.IPNet, error) {
+	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+		return nil, nil // no block — and no reason to touch the database
+	}
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return nil, err
+	}
+	if u.IPv6Index == 0 {
+		// No block: a pool-mode or V4-only account stores its address
+		// elsewhere (or has none), and 0 is the block the bridge gateway lives
+		// in, which is never handed to a container. Serving that block here
+		// would put the gateway address on the container.
+		return nil, nil
+	}
+	return m.ipv6BlockIdx(u.IPv6Index)
+}
+
+// pickIPv6Index chooses a random 32-bit block index that no account holds and
+// whose block does not contain the bridge gateway — a container owning that
+// block could bind the gateway address and break routing for everyone. The
+// unique index on the column is the backstop; this loop is what keeps a
+// collision from reaching it, which is how a name can never be refused for a
+// reason as opaque as "your address is taken".
+func (m *Manager) pickIPv6Index() (int64, error) {
+	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+		return 0, nil // this host hands out no blocks
+	}
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return 0, err
+	}
+	used := make(map[uint32]bool, len(users))
+	for _, u := range users {
+		used[uint32(u.IPv6Index)] = true
+	}
+	var gwIP net.IP
+	if n, err := m.cfg.IPv6Network(); err == nil {
+		if gw, err := m.bridgeGateway(n); err == nil {
+			gwIP = net.ParseIP(gw)
+		}
+	}
+	for attempt := 0; attempt < 64; attempt++ {
+		n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 32))
+		if err != nil {
+			return 0, err
+		}
+		idx := uint32(n.Int64())
+		if used[idx] {
+			continue
+		}
+		block, err := m.ipv6BlockIdx(int64(idx))
+		if err != nil {
+			return 0, err
+		}
+		if block != nil && gwIP != nil && block.Contains(gwIP) {
+			continue
+		}
+		return int64(idx), nil
+	}
+	return 0, fmt.Errorf("could not find a free IPv6 block index after 64 tries")
 }
 
 // IPv6Addr returns the container's primary global address — its /112 block
@@ -301,12 +364,14 @@ const ndppdConfLink = "/etc/ndppd.conf"
 
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
 // under a `proxy <ext_if>` section, so the in-tree NDP responder knows which
-// /112 blocks to answer for on the external link. `add` / `drop` let a single
-// user be added or removed without racing the DB transaction in Add/Del.
+// /112 blocks to answer for on the external link. `extraBlock` adds a /112
+// whose account row does not exist yet (Add wires the container before writing
+// its row, so it passes the block it just picked) and `drop` leaves one user
+// out by name (its row still exists while Del unwires the container).
 // Empty when IPv6 is disabled or no container has a block. The format is kept
 // ndppd-compatible (each rule line is a bare `rule <cidr> {`), even though the
 // daemon is no longer used in prefix mode.
-func (m *Manager) ndppdConf(add, drop string) (string, error) {
+func (m *Manager) ndppdConf(extraBlock, drop string) (string, error) {
 	if !m.cfg.IPv6Enabled() {
 		return "", nil
 	}
@@ -314,37 +379,35 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 	if ext == "" {
 		return "", fmt.Errorf("no external interface for ndppd")
 	}
-	names := map[string]bool{}
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return "", err
 	}
+	blocks := make([]string, 0, len(users)+1)
 	for _, u := range users {
-		names[u.Name] = true
-	}
-	if drop != "" {
-		delete(names, drop)
-	}
-	if add != "" {
-		names[add] = true
-	}
-	if len(names) == 0 {
-		return "", nil
-	}
-	sorted := make([]string, 0, len(names))
-	for n := range names {
-		sorted = append(sorted, n)
-	}
-	sort.Strings(sorted)
-	var b strings.Builder
-	b.WriteString(cfg.GeneratedBanner)
-	fmt.Fprintf(&b, "proxy %s {\n", ext)
-	for _, n := range sorted {
-		block, err := m.IPv6Block(n)
+		if u.Name == drop {
+			continue
+		}
+		block, err := m.IPv6Block(u.Name)
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block.String(), m.cfg.Incus.Bridge)
+		if block != nil {
+			blocks = append(blocks, block.String())
+		}
+	}
+	if extraBlock != "" {
+		blocks = append(blocks, extraBlock)
+	}
+	if len(blocks) == 0 {
+		return "", nil
+	}
+	sort.Strings(blocks)
+	var b strings.Builder
+	b.WriteString(cfg.GeneratedBanner)
+	fmt.Fprintf(&b, "proxy %s {\n", ext)
+	for _, block := range blocks {
+		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block, m.cfg.Incus.Bridge)
 	}
 	b.WriteString("}\n")
 	return b.String(), nil
@@ -359,8 +422,8 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 // root-owned old file (rename checks the parent dir, not the target). When no
 // container has IPv6 routing the file is removed, so a stale rule can never
 // misroute.
-func (m *Manager) writeNDPPD(add, drop string) error {
-	conf, err := m.ndppdConf(add, drop)
+func (m *Manager) writeNDPPD(extraBlock, drop string) error {
+	conf, err := m.ndppdConf(extraBlock, drop)
 	if err != nil {
 		return err
 	}
@@ -398,13 +461,25 @@ func (m *Manager) writeNDPPD(add, drop string) error {
 }
 
 // WireIPv6 registers a container's /112 with the NDP proxy so its addresses
-// are reachable from the internet. The block is computed from the username (no
-// waiting); the Incus device already routes the /112 to the container.
-func (m *Manager) WireIPv6(name string) error {
+// are reachable from the internet. block is the container's /112, which Add
+// passes explicitly (it wires the container before its account row exists);
+// with nil the block is read from the account's stored index. The Incus device
+// already routes the /112 to the container.
+func (m *Manager) WireIPv6(name string, block *net.IPNet) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
-	return m.writeNDPPD(name, "")
+	if block == nil {
+		b, err := m.IPv6Block(name)
+		if err != nil {
+			return err
+		}
+		block = b
+	}
+	if block == nil {
+		return nil
+	}
+	return m.writeNDPPD(block.String(), "")
 }
 
 // UnwireIPv6 removes a container's /112 from the NDP proxy. Returns the error

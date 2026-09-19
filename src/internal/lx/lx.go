@@ -30,6 +30,13 @@ type Client struct {
 	socket string
 	http   *http.Client
 
+	// stream is http without the overall request deadline, used by the backup
+	// export/import transfer. A container rootfs is arbitrarily large, so the
+	// 60s cap http carries would abort any real transfer mid-stream. It shares
+	// the same Transport (and so the same Unix-socket dialer and connection
+	// pool); only the total request timeout differs.
+	stream *http.Client
+
 	// swapRatio is the per-container swap allowance as a multiple of the
 	// memory limit (limits.memory.swap = limits.memory * swapRatio).
 	// Incus 7 on cgroup v2 writes memory.swap.max=0 unless limits.memory.swap
@@ -63,6 +70,7 @@ func New(socket string, swapRatio float64) *Client {
 		base:      "http://unix",
 		socket:    socket,
 		http:      &http.Client{Transport: t, Timeout: 60 * time.Second},
+		stream:    &http.Client{Transport: t},
 		swapRatio: swapRatio,
 		devLocks:  map[string]*sync.Mutex{},
 	}
@@ -212,10 +220,12 @@ func (c *Client) wait(opPath string, timeout time.Duration) error {
 // ---- API payload shapes (subset of the Incus API) ----
 
 type instance struct {
-	Name    string            `json:"name"`
-	Status  string            `json:"status"`
-	Config  map[string]string `json:"config"`
-	Devices map[string]device `json:"devices"`
+	Name         string            `json:"name"`
+	Status       string            `json:"status"`
+	Architecture string            `json:"architecture"`
+	Profiles     []string          `json:"profiles"`
+	Config       map[string]string `json:"config"`
+	Devices      map[string]device `json:"devices"`
 }
 
 type device map[string]string

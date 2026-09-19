@@ -21,7 +21,7 @@ func TestAdminExpiredUserLocked(t *testing.T) {
 	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
 
 	u, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0,
-		db.StatusReady, "", "2000-01-01T00:00:00Z")
+		db.StatusReady, "", 0, "2000-01-01T00:00:00Z")
 	if err != nil {
 		t.Fatal(err)
 	}

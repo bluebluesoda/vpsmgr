@@ -26,6 +26,12 @@ type User struct {
 	// BandwidthQuotaGB is the monthly bandwidth quota (upload + download) in GiB.
 	// 0 means unlimited.
 	BandwidthQuotaGB int
+	// IPv6Index is the prefix-mode /112 block this user's address is built
+	// from: a random 32-bit value chosen when the account is created (0 for
+	// none, i.e. pool mode and V4-only containers). Stored rather than derived
+	// from the name, so an address does not spell out its owner. Released on
+	// delete.
+	IPv6Index int64
 	// IPv6Address is the pool-mode IPv6 /128 assigned to this user ("" when
 	// none, e.g. prefix mode or a V4-only container). Released on delete.
 	IPv6Address string
@@ -59,10 +65,11 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 // state — the "half-created user" failure mode of the original design.
 // status is the initial lifecycle state (StatusCreating during Add, the
 // default otherwise). ipv6Address is the pool-mode /128 assigned to the user
-// ("" for none); written in the same transaction so the address reservation
-// and the user row can never disagree. expiresAt is the quota deadline
-// (RFC3339 UTC, "" = permanent).
-func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address, expiresAt string) (*User, error) {
+// ("" for none) and ipv6Index the prefix-mode /112 block index (0 for none);
+// both are written in the same transaction so a reservation and the user row
+// can never disagree. expiresAt is the quota deadline (RFC3339 UTC, "" =
+// permanent).
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, expiresAt string) (*User, error) {
 	if status == "" {
 		status = StatusReady
 	}
@@ -73,11 +80,11 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	defer tx.Rollback()
 
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, ExpiresAt: expiresAt}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, IPv6Index: ipv6Index, ExpiresAt: expiresAt}
 	r, err := tx.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, expires_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), u.ExpiresAt)
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, expires_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), nullIfZero(u.IPv6Index), u.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -186,30 +193,32 @@ func (d *DB) UsedStartPorts() (map[int]bool, error) {
 func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	var ipv6 sql.NullString
+	var ipv6Index sql.NullInt64
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &u.Color, &u.ExpiresAt)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
 	u.IPv6Address = ipv6.String
+	u.IPv6Index = ipv6Index.Int64
 	return u, nil
 }
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -219,11 +228,13 @@ func (d *DB) ListUsers() ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		var ipv6 sql.NullString
+		var ipv6Index sql.NullInt64
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &u.Color, &u.ExpiresAt); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt); err != nil {
 			return nil, err
 		}
 		u.IPv6Address = ipv6.String
+		u.IPv6Index = ipv6Index.Int64
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -273,6 +284,24 @@ func (d *DB) UpdateUserColor(id int64, color string) error {
 // permanent).
 func (d *DB) UpdateUserExpiry(id int64, expiresAt string) error {
 	_, err := d.sql.Exec(`UPDATE users SET expires_at=? WHERE id=?`, expiresAt, id)
+	return err
+}
+
+// nullIfZero turns 0 into NULL, so a column carrying a UNIQUE index can hold
+// many "not set" rows (SQLite treats NULLs as distinct from each other). Used
+// for the IPv6 columns, where 0 means "this account does not use that mode".
+func nullIfZero(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// UpdateUserIPv6 sets a user's pool-mode IPv6 address, or clears it with "".
+// The column carries a unique index, so an address can only ever belong to one
+// user.
+func (d *DB) UpdateUserIPv6(id int64, addr string) error {
+	_, err := d.sql.Exec(`UPDATE users SET ipv6_address=? WHERE id=?`, nullIfEmpty(addr), id)
 	return err
 }
 

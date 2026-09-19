@@ -1,6 +1,7 @@
 package mgr
 
 import (
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -10,36 +11,69 @@ import (
 	"vpsmgr/internal/db"
 )
 
-func TestIPv6Suffix(t *testing.T) {
-	want := "2bd8:06c9:1"
-	if got := ipv6Suffix("alice"); got != want {
-		t.Errorf("ipv6Suffix(alice) = %q, want %q", got, want)
+// legacyAlice is the block index the old username-derived scheme gave "alice"
+// (sha256("alice")[:4] = 0x2bd806c9): the documented example, and what the v19
+// migration seeds for an existing account of that name. Tests that assert an
+// address value use it, so they keep asserting the address that scheme has
+// always produced.
+const legacyAlice = 0x2bd806c9
+
+// ipv6TestManager returns a manager with prefix-mode IPv6 on subnet and a
+// database holding one account per given name, each with the block index given.
+func ipv6TestManager(t *testing.T, subnet string, users map[string]int64) *Manager {
+	t.Helper()
+	c := cfg.Default()
+	c.Net.IPv6Subnet = subnet
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { d.Close() })
+	i := 0
+	for name, index := range users {
+		i++
+		if _, err := d.CreateUserFull(name, "h", fmt.Sprintf("10.42.0.%d", i+1), i, 30000+i, 10000+i*100,
+			1, 1024, 10, 0, db.StatusReady, "", index, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &Manager{cfg: c, db: d}
 }
 
-func TestIPv6Addr(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2602:fada:6::/64"
-	m := &Manager{cfg: c}
+// The block and the primary address come from the index stored with the
+// account, not from its name — which is the point of storing it: the suffix of
+// an address must not spell out who owns it.
+func TestIPv6AddrFollowsStoredIndex(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": legacyAlice})
 	addr, err := m.IPv6Addr("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2602:fada:6::2bd8:6c9:1"
-	if addr != want {
+	// An account seeded with the legacy value keeps the address it has always
+	// had: 2602:fada:6::<hash>:1.
+	if want := "2602:fada:6::2bd8:6c9:1"; addr != want {
 		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
+	}
+
+	// The same name on another host, with a different stored index, gets a
+	// different address — no cross-host fingerprint.
+	other := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": 1})
+	otherAddr, err := other.IPv6Addr("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherAddr == addr {
+		t.Errorf("two hosts gave %q the same address for the same name", otherAddr)
 	}
 }
 
-// A computed address must always fall inside the configured subnet, for any
-// supported prefix length (/64 down to /48, plus /80 provider slices). The
-// 32-bit username hash + fixed 0001 block only touch the low 48 bits, which
-// are host bits for every prefix <= /80.
+// An address must always fall inside the configured subnet, for any supported
+// prefix length (/64 down to /48, plus /80 provider slices). The 32-bit index
+// and the 16 host bits only touch the low 48 bits, which are host bits for
+// every prefix <= /80.
 func TestIPv6AddrWithinSubnet(t *testing.T) {
 	for _, sub := range []string{"2602:fada:6::/48", "2602:fada:6::/56", "2602:fada:6::/60", "2602:fada:6::/64", "2406:da14:1dd2:a807:753a::/80"} {
-		c := cfg.Default()
-		c.Net.IPv6Subnet = sub
-		m := &Manager{cfg: c}
+		m := ipv6TestManager(t, sub, map[string]int64{"alice": legacyAlice})
 		addr, err := m.IPv6Addr("alice")
 		if err != nil {
 			t.Fatalf("%s: %v", sub, err)
@@ -55,18 +89,79 @@ func TestIPv6AddrWithinSubnet(t *testing.T) {
 }
 
 // A /80 provider slice must keep ALL prefix bits (e.g. the 753a hextet) — only
-// the low 48 host bits may come from the username hash + the fixed 0001 block.
+// the low 48 bits may come from the index and the host space.
 func TestIPv6Addr80(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2406:da14:1dd2:a807:753a::/80"
-	m := &Manager{cfg: c}
+	m := ipv6TestManager(t, "2406:da14:1dd2:a807:753a::/80", map[string]int64{"alice": legacyAlice})
 	addr, err := m.IPv6Addr("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2406:da14:1dd2:a807:753a:2bd8:6c9:1"
-	if addr != want {
+	if want := "2406:da14:1dd2:a807:753a:2bd8:6c9:1"; addr != want {
 		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
+	}
+}
+
+// A block is a /112 with its host bits clear, inside the configured subnet, and
+// distinct indexes are distinct blocks.
+func TestIPv6Block(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": legacyAlice})
+	b, err := m.IPv6Block("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b == nil {
+		t.Fatal("nil block")
+	}
+	ones, _ := b.Mask.Size()
+	if ones != 112 {
+		t.Errorf("block mask = %d, want 112", ones)
+	}
+	if b.IP.To16()[14] != 0 || b.IP.To16()[15] != 0 {
+		t.Errorf("block host bits not zero: %s", b.IP)
+	}
+	if got := addHostOffset(b.IP, 1).String(); got != "2602:fada:6::2bd8:6c9:1" {
+		t.Errorf("block+1 = %s, want 2602:fada:6::2bd8:6c9:1", got)
+	}
+	_, ipnet, err := net.ParseCIDR("2602:fada:6::/64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ipnet.Contains(b.IP) {
+		t.Errorf("block %s outside subnet", b.String())
+	}
+	other, err := m.ipv6BlockIdx(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.IP.String() == b.IP.String() {
+		t.Errorf("two indexes share block %s", b)
+	}
+}
+
+// pickIPv6Index must never hand out an index another account holds, and never
+// one whose block contains the bridge gateway (index 0 is that block, which is
+// also why 0 means "no index").
+func TestPickIPv6Index(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": 0, "bob": 7})
+	_, ipnet, err := net.ParseCIDR("2602:fada:6::/64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 32; i++ {
+		got, err := m.pickIPv6Index()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == 0 || got == 7 {
+			t.Fatalf("pickIPv6Index returned %d, which is taken or the gateway's block", got)
+		}
+		block, err := m.ipv6BlockIdx(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ipnet.Contains(block.IP) {
+			t.Fatalf("picked block %s is outside the subnet", block)
+		}
 	}
 }
 
@@ -92,7 +187,7 @@ func TestAddHostOffset(t *testing.T) {
 }
 
 // The bridge is always >= /64: Incus's dnsmasq rejects non-/64 networks, and
-// all deterministic container addresses live in the first /64 of the prefix.
+// all container addresses live in the first /64 of the prefix.
 func TestBridgePrefixLen(t *testing.T) {
 	cases := []struct{ ones, want int }{
 		{48, 64}, {56, 64}, {60, 64}, {64, 64}, {80, 80},
@@ -104,60 +199,21 @@ func TestBridgePrefixLen(t *testing.T) {
 	}
 }
 
-// The primary address is byte-identical across the old single-/128 scheme and
-// the /112 block scheme: the 32-bit username hash at bits 80-111 plus a fixed
-// 0001 host block. This is what lets the upgrade keep every existing container
-// address.
-func TestIPv6Block(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2602:fada:6::/64"
-	m := &Manager{cfg: c}
-	b, err := m.IPv6Block("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b == nil {
-		t.Fatal("nil block")
-	}
-	ones, _ := b.Mask.Size()
-	if ones != 112 {
-		t.Errorf("block mask = %d, want 112", ones)
-	}
-	// Host bits are zero — the block is a network address, not a host one.
-	if b.IP.To16()[14] != 0 || b.IP.To16()[15] != 0 {
-		t.Errorf("block host bits not zero: %s", b.IP)
-	}
-	// primary = block + 1, which is exactly what IPv6Addr reports.
-	if got := addHostOffset(b.IP, 1).String(); got != "2602:fada:6::2bd8:6c9:1" {
-		t.Errorf("block+1 = %s, want 2602:fada:6::2bd8:6c9:1", got)
-	}
-	// The block must live inside the configured subnet.
-	_, ipnet, err := net.ParseCIDR(c.Net.IPv6Subnet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ipnet.Contains(b.IP) {
-		t.Errorf("block %s outside subnet", b.String())
-	}
-	// Two distinct names must not share a block.
-	if b2, _ := m.IPv6Block("bob"); b2 != nil && b2.IP.String() == b.IP.String() {
-		t.Errorf("alice and bob share block %s", b)
-	}
-}
-
 // The generated container script must: keep the parent prefix off-link, forbid
-// SLAAC, statically bind the deterministic /128, turn DHCPv6 off, strip the
-// mangled residue buggy older versions wrote, and flush stale on-link routes.
+// SLAAC, statically bind the account's /128, turn DHCPv6 off, strip the mangled
+// residue buggy older versions wrote, and flush stale on-link routes.
 func TestIPv6ContainerScript(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2602:fada:6::/64"
-	m := &Manager{cfg: c}
-	script, err := m.ipv6ContainerScript("alice")
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": legacyAlice})
+	addr, err := m.IPv6Addr("alice") // the account's stored block index
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := m.ipv6ContainerScript(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"2602:fada:6::2bd8:6c9:1",             // deterministic primary
+		"2602:fada:6::2bd8:6c9:1",             // the account's primary address
 		"UseOnLinkPrefix=false",               // peers via the host, not L2
 		"UseRoutePrefix=false",                // parent prefix never a route
 		"UseAutonomousPrefix=false",           // no SLAAC address outside the /112
@@ -169,7 +225,7 @@ func TestIPv6ContainerScript(t *testing.T) {
 		"2602:fada:6*",                        // stale on-link route flush
 		"ip -6 route flush cache",
 		"ipv6.method manual",                         // RHEL: NM owns the IPv6 stack
-		"ipv6.addresses 2602:fada:6::2bd8:6c9:1/128", // deterministic /128
+		"ipv6.addresses 2602:fada:6::2bd8:6c9:1/128", // the account's /128
 		"ipv6.gateway fe80::1",                       // bridge's fixed link-local gateway
 	} {
 		if !strings.Contains(script, want) {
@@ -184,53 +240,23 @@ func TestIPv6ContainerScript(t *testing.T) {
 	}
 }
 
-func TestIPv6ContainerScriptDisabled(t *testing.T) {
+// With IPv6 disabled the whole flow is a no-op — it must not reach for a
+// container (or the database) at all.
+func TestConfigureContainerIPv6Disabled(t *testing.T) {
 	c := cfg.Default() // IPv6 disabled by default
 	m := &Manager{cfg: c}
-	script, err := m.ipv6ContainerScript("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if script != "" {
-		t.Errorf("expected empty script when IPv6 disabled, got %q", script)
+	if err := m.ConfigureContainerIPv6("alice", ""); err != nil {
+		t.Errorf("expected a no-op when IPv6 is disabled, got %v", err)
 	}
 }
 
-// checkIPv6BlockCollision must refuse a new container whose deterministic
-// block is already taken by another user, skip the user itself, and be a no-op
-// for a nil block (IPv6 disabled).
-func TestCheckIPv6BlockCollision(t *testing.T) {
+// An account with no address (V4-only) yields no script in either mode.
+func TestIPv6ContainerScriptNoAddress(t *testing.T) {
 	c := cfg.Default()
 	c.Net.IPv6Subnet = "2602:fada:6::/64"
-	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	if _, err := d.CreateUser("alice", "x", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
-		t.Fatal(err)
-	}
-	m := &Manager{cfg: c, db: d}
-	aliceBlock, err := m.IPv6Block("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A different name claiming alice's block must be refused.
-	if err := m.checkIPv6BlockCollision("bob", aliceBlock); err == nil || !strings.Contains(err.Error(), "alice") {
-		t.Errorf("expected collision error naming alice, got %v", err)
-	}
-	// Re-adding the same name is always fine (self is skipped).
-	if err := m.checkIPv6BlockCollision("alice", aliceBlock); err != nil {
-		t.Errorf("self should be skipped: %v", err)
-	}
-	// A fresh name with its own block passes.
-	bobBlock, _ := m.IPv6Block("bob")
-	if err := m.checkIPv6BlockCollision("bob", bobBlock); err != nil {
-		t.Errorf("fresh block should pass: %v", err)
-	}
-	// nil block (IPv6 disabled) -> no-op.
-	if err := m.checkIPv6BlockCollision("bob", nil); err != nil {
-		t.Errorf("nil block should be a no-op: %v", err)
+	m := &Manager{cfg: c}
+	if s, err := m.ipv6ContainerScript(""); err != nil || s != "" {
+		t.Errorf(`ipv6ContainerScript("") = %q, %v; want "", nil`, s, err)
 	}
 }
 
@@ -267,5 +293,61 @@ func TestPoolContainerScript(t *testing.T) {
 	// ipv6ContainerScriptFor, the pool script's only caller.
 	if s, _ := m.ipv6ContainerScriptFor("", ""); s != "" {
 		t.Errorf("expected empty script for empty address, got %q", s)
+	}
+}
+
+// An index of 0 is the block the bridge gateway sits in, so it must never reach
+// a container. A row carrying it — a V4-only or pool-mode account on a prefix
+// host, since 0 is what "no block" looks like there — yields no block and no
+// address instead of handing the container the gateway's own address.
+func TestIPv6IndexZeroIsNotABlock(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", map[string]int64{"alice": 0})
+	block, err := m.IPv6Block("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block != nil {
+		t.Errorf("IPv6Block with index 0 = %v, want nil", block)
+	}
+	addr, err := m.IPv6Addr("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "" {
+		t.Errorf("IPv6Addr with index 0 = %q, want no address", addr)
+	}
+
+	// ...and block 0 is indeed where the gateway lives, which is why it is
+	// refused rather than served.
+	n, err := m.cfg.IPv6Network()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := m.bridgeGateway(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero, err := m.ipv6BlockIdx(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gwIP := net.ParseIP(gw); gwIP == nil || !zero.Contains(gwIP) {
+		t.Errorf("block 0 (%v) does not contain the gateway %s — the guard would be guarding nothing", zero, gw)
+	}
+}
+
+// New accounts never get index 0 either: the picker rejects any index whose
+// block holds the gateway, so this holds on an empty database too (where
+// nothing else is excluded).
+func TestPickIPv6IndexSkipsGatewayBlock(t *testing.T) {
+	m := ipv6TestManager(t, "2602:fada:6::/64", nil)
+	for i := 0; i < 200; i++ {
+		idx, err := m.pickIPv6Index()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if idx == 0 {
+			t.Fatalf("pickIPv6Index handed out 0, the bridge gateway's block")
+		}
 	}
 }

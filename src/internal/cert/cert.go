@@ -22,9 +22,25 @@ func Ensure(certPath, keyPath, ip string) error {
 			return nil
 		}
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, keyPEM, _, err := SelfSigned(ip)
 	if err != nil {
 		return err
+	}
+	os.MkdirAll(filepath.Dir(certPath), 0o755)
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(keyPath, keyPEM, 0o600)
+}
+
+// SelfSigned returns a fresh 10-year self-signed certificate for ip as a
+// PEM-encoded certificate/key pair, plus the DER of the leaf — the value a peer
+// pins. It never touches the disk, so a process that needs a throwaway identity
+// (the temporary transfer listener) leaves nothing behind.
+func SelfSigned(ip string) (certPEM, keyPEM, der []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	cn := ip
@@ -43,19 +59,15 @@ func Ensure(certPath, keyPath, ip string) error {
 	if parsed := net.ParseIP(ip); parsed != nil {
 		tmpl.IPAddresses = []net.IP{parsed}
 	}
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	der, err = x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
-	os.MkdirAll(filepath.Dir(certPath), 0o755)
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	kb, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb})
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return err
-	}
-	return os.WriteFile(keyPath, keyPEM, 0o600)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}),
+		der, nil
 }
