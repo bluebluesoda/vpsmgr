@@ -158,10 +158,9 @@ func transferSend(args []string) error {
 	if err != nil {
 		return err
 	}
+	what := "a portable zstd tar"
 	if optimized {
-		fmt.Println("exporting as an optimized storage-driver stream (the other host must run the same pool driver)")
-	} else {
-		fmt.Printf("exporting as a portable %s tar\n", compression)
+		what = "an optimized storage-driver stream"
 	}
 
 	c, m, closeDB, err := transferManager()
@@ -215,7 +214,7 @@ func transferSend(args []string) error {
 		}
 	}()
 
-	fmt.Printf("exporting %s (up to %s)…\n", path, mgr.HumanBytes(estimate))
+	fmt.Printf("exporting as %s (up to %s)…\n", what, mgr.HumanBytes(estimate))
 	counter := &countingWriter{w: f}
 	stop := printTicker(time.Second, func() {
 		fmt.Printf("\r\033[K  exporting… %s", mgr.HumanBytes(counter.n.Load()))
@@ -274,17 +273,17 @@ func transferSend(args []string) error {
 	defer srv.Close()
 
 	acct, _, _ := mgr.TransferMetaAccount(manifest.Meta)
-	fmt.Printf("sha256 %s\n", manifest.SHA256)
-	fmt.Printf("the container stays stopped here; start it again whenever you like\n\n")
+	restore := "any pool driver can restore it"
+	if optimized {
+		restore = "the other host must run the same pool driver"
+	}
+	fmt.Printf("\nsha256 %s\n", manifest.SHA256)
 	fmt.Printf("on the other machine, run:\n\n")
 	fmt.Printf("  vps transfer receive '%s' <user>\n\n", srv.URL())
-	fmt.Printf("(<user> is the name to create there; this host's %q can only be reused once its own\n", name)
-	fmt.Printf(" account is gone from that machine.)\n")
-	fmt.Printf("the account travels with it — %s, its ssh keys, notes and init script — so nothing\n",
+	fmt.Printf("<user> must not exist there yet. It brings %s, keys, notes and init script,\n",
 		mgr.MachineSpecs(acct.CPU, acct.MemMB, acct.DiskGB))
-	fmt.Printf("has to be retyped there. The disk needs about %s of room.\n", mgr.HumanBytes(manifest.DiskUsed))
-	fmt.Printf("listening on port %d — the archive is deleted when this command exits.\n", srv.Port())
-	fmt.Printf("it stops on its own after %s with nobody connected.\n", idle)
+	fmt.Printf("and needs about %s of room; %s.\n", mgr.HumanBytes(manifest.DiskUsed), restore)
+	fmt.Printf("listening on port %d up to %s — Ctrl-C removes the archive.\n", srv.Port(), idle)
 
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(idle, transferTick(idle)) }()
@@ -403,11 +402,12 @@ func transferReceive(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("this will create %s as %s, replacing its IP, ports and IPv6 with this host's own\n",
-		name, mgr.MachineSpecs(acct.CPU, acct.MemMB, acct.DiskGB))
+	origin := ""
 	if from != "" && from != name {
-		fmt.Printf("(it was %q on the sending host)\n", from)
+		origin = fmt.Sprintf(" (it was %q there)", from)
 	}
+	fmt.Printf("creating %s as %s, with this host's own IP, ports and IPv6%s\n",
+		name, mgr.MachineSpecs(acct.CPU, acct.MemMB, acct.DiskGB), origin)
 
 	dir, err := os.Getwd()
 	if err != nil {
@@ -425,12 +425,10 @@ func transferReceive(args []string) error {
 		}
 	}()
 
-	fmt.Printf("fetching from %s\n", link.target)
 	if err := fetchArchive(ctx, link.target, path, link.pin, link.wantSHA); err != nil {
 		return err
 	}
-	fmt.Println("checksum verified")
-	fmt.Printf("note: %s\n", link.describe())
+	fmt.Printf("checksum verified — %s\n", link.describe())
 
 	archive, err := os.Open(path)
 	if err != nil {
@@ -455,9 +453,8 @@ func transferReceive(args []string) error {
 	if res.PanelPass != "" {
 		fmt.Printf("  panel pw:  %s  (shown once)\n", res.PanelPass)
 	}
-	fmt.Printf("\nthe account came across with its quota, keys, notes and init script; what did not\n")
-	fmt.Printf("are the source host's domains and snapshots. Point the DNS here and add the domains\n")
-	fmt.Printf("before retiring the other machine.\n")
+	fmt.Printf("\nquota, keys, notes and init script came across; the source host's domains and\n")
+	fmt.Printf("snapshots did not — point the DNS here and add the domains before retiring it.\n")
 	return nil
 }
 
