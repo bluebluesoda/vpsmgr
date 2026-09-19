@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -60,6 +61,14 @@ type TransferFiles struct {
 	ArchiveSHA string
 	Meta       string
 	MetaSHA    string
+	// Compression and Optimized describe the archive's format, and Version
+	// is the sending panel's build: all three ride in the URL fragment so
+	// the receiving host knows what it is about to import (and from which
+	// build) before it pulls anything down.
+	Compression string
+	Optimized   bool
+	Version     string
+	Driver      string
 }
 
 // TransferServer serves one exported container to whoever holds the token.
@@ -120,14 +129,27 @@ func NewTransferServer(files TransferFiles, host string, port int) (*TransferSer
 	actual := ln.Addr().(*net.TCPAddr).Port
 	sum := sha256.Sum256(der)
 	finger := hex.EncodeToString(sum[:])
+	// Everything after the '#' stays on the operator's command line: HTTP
+	// clients never send a fragment, so the listener is not told the checksums
+	// of what it is serving, nor the fingerprint of its own certificate, nor
+	// what the receiving host has worked out about the format.
+	link := fmt.Sprintf("https://%s:%d/d/%s#sha256=%s&meta=%s&cert=%s",
+		host, actual, token, files.ArchiveSHA, files.MetaSHA, finger)
+	if files.Optimized {
+		link += "&optimized=1"
+	} else if files.Compression != "" {
+		link += "&compression=" + files.Compression
+	}
+	if files.Version != "" {
+		link += "&v=" + url.QueryEscape(files.Version)
+	}
+	if files.Driver != "" {
+		link += "&driver=" + url.QueryEscape(files.Driver)
+	}
 	s := &TransferServer{
-		files: files,
-		token: token,
-		// All three digests ride in the fragment: HTTP clients never send a
-		// fragment, so the listener is not told the checksums of what it is
-		// serving, nor the fingerprint of its own certificate.
-		url: fmt.Sprintf("https://%s:%d/d/%s#sha256=%s&meta=%s&cert=%s",
-			host, actual, token, files.ArchiveSHA, files.MetaSHA, finger),
+		files:        files,
+		token:        token,
+		url:          link,
 		finger:       finger,
 		ln:           ln,
 		conns:        map[net.Conn]struct{}{},
