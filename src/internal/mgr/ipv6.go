@@ -86,6 +86,13 @@ func (m *Manager) IPv6Block(name string) (*net.IPNet, error) {
 	if err != nil {
 		return nil, err
 	}
+	if u.IPv6Index == 0 {
+		// No block: a pool-mode or V4-only account stores its address
+		// elsewhere (or has none), and 0 is the block the bridge gateway lives
+		// in, which is never handed to a container. Serving that block here
+		// would put the gateway address on the container.
+		return nil, nil
+	}
 	return m.ipv6BlockIdx(u.IPv6Index)
 }
 

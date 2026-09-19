@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,10 +65,19 @@ func TestMigrateUpgradesLegacyDatabase(t *testing.T) {
 			t.Fatalf("create legacy schema: %v", err)
 		}
 	}
-	if _, err := db.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
-		 VALUES('alice','h',1,'10.115.0.2',30001,10000,1,1024,10,'2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed legacy user: %v", err)
+	for _, u := range []struct {
+		name, ip string
+		idx, ssh int
+	}{
+		{"alice", "10.115.0.2", 1, 30001},
+		{"bob", "10.115.0.3", 2, 30002},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
+			 VALUES(?, 'h', ?, ?, ?, ?, 1, 1024, 10, '2026-01-01T00:00:00Z')`,
+			u.name, u.idx, u.ip, u.ssh, 10000+u.idx); err != nil {
+			t.Fatalf("seed legacy user %s: %v", u.name, err)
+		}
 	}
 	db.Close()
 
@@ -85,11 +95,17 @@ func TestMigrateUpgradesLegacyDatabase(t *testing.T) {
 	if u.Status != StatusReady {
 		t.Errorf("legacy user status = %q, want %q", u.Status, StatusReady)
 	}
-	// v19 seeds the block index with the value the old username-derived scheme
-	// gave "alice" (sha256("alice")[:4] = 0x2bd806c9), so her address does not
-	// move when the value stops being derived.
-	if want := int64(0x2bd806c9); u.IPv6Index != want {
-		t.Errorf("legacy user ipv6 index = %#x, want %#x", u.IPv6Index, want)
+	// v19 seeds the block index of every account with the value the old
+	// username-derived scheme gave it (sha256(name)[:4]), so no address moves
+	// when the value stops being derived.
+	for name, want := range map[string]int64{"alice": 0x2bd806c9, "bob": 0x81b637d8} {
+		got, err := d.GetUserByName(name)
+		if err != nil {
+			t.Fatalf("legacy user %s lost: %v", name, err)
+		}
+		if got.IPv6Index != want {
+			t.Errorf("%s ipv6 index = %#x, want %#x", name, got.IPv6Index, want)
+		}
 	}
 	applied, err := d.appliedMigrations()
 	if err != nil {
@@ -195,4 +211,113 @@ func TestUserStatusRoundTrip(t *testing.T) {
 	if got.Status != StatusFailed {
 		t.Errorf("status after fail = %q, want failed", got.Status)
 	}
+}
+
+// TestMigrateStepFailureRollsBack: v19 adds a column and then seeds it from Go
+// code, both inside the migration's transaction. If the seeding fails, nothing
+// may be left behind — no column, no index, no version row — so the next start
+// retries the migration from a clean v18 schema instead of finding half of it
+// applied (which would fail forever with "duplicate column name").
+func TestMigrateStepFailureRollsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stepfail.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", "h", "10.115.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	// Back to the v18 state, schema included.
+	for _, s := range []string{
+		`DELETE FROM schema_migrations WHERE version = 19`,
+		`DROP INDEX IF EXISTS idx_users_ipv6_index`,
+		`ALTER TABLE users DROP COLUMN ipv6_index`,
+	} {
+		if _, err := d.sql.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.Close()
+
+	boom := errors.New("seeding failed")
+	orig := migrationSteps[19]
+	migrationSteps[19] = func(*sql.Tx) error { return boom }
+	defer func() { migrationSteps[19] = orig }()
+
+	if _, err := Open(path); !errors.Is(err, boom) {
+		t.Fatalf("Open with a failing v19 step: %v, want %v", err, boom)
+	}
+
+	// The schema is exactly as it was: nothing half-applied, data intact.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	for _, col := range []string{"ipv6_index"} {
+		if hasColumn(t, raw, "users", col) {
+			t.Errorf("column %s survived the rollback", col)
+		}
+	}
+	var n int
+	if err := raw.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 19`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("v19 recorded despite the failure")
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM users`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("users = %d, want 1 (the rollback lost data)", n)
+	}
+
+	// With the step restored the migration runs again and completes.
+	migrationSteps[19] = orig
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("retry after a rolled-back attempt: %v", err)
+	}
+	defer d2.Close()
+	u, err := d2.GetUserByName("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(0x2bd806c9); u.IPv6Index != want {
+		t.Errorf("index after retry = %#x, want %#x", u.IPv6Index, want)
+	}
+	// The same check that said "absent" before the retry says "present" now, so
+	// its verdict above was not vacuous.
+	if !hasColumn(t, raw, "users", "ipv6_index") {
+		t.Errorf("column still missing after the migration succeeded")
+	}
+}
+
+// hasColumn reports whether a table has a column — used to assert a
+// migration's structural effect, or its absence after a rollback.
+func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
 }
