@@ -109,7 +109,7 @@ func transferSend(args []string) error {
 	var idle time.Duration
 	var port int
 	fs.BoolVar(&optimized, "optimized", false, "")
-	fs.StringVar(&compression, "compression", "gzip", "")
+	fs.StringVar(&compression, "compression", "zstd", "")
 	fs.DurationVar(&idle, "idle", 5*time.Minute, "")
 	fs.IntVar(&port, "port", 0, "")
 	if err := fs.Parse(args[1:]); err != nil {
