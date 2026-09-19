@@ -27,6 +27,7 @@ import (
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/mgr"
+	"vpsmgr/internal/ver"
 )
 
 // cmdTransfer moves one container's root disk from this host to another vpsmgr
@@ -226,10 +227,14 @@ func transferSend(args []string) error {
 
 	host := c.DisplayIP()
 	srv, err := mgr.NewTransferServer(mgr.TransferFiles{
-		Archive:    path,
-		ArchiveSHA: manifest.SHA256,
-		Meta:       metaPath,
-		MetaSHA:    manifest.MetaSHA,
+		Archive:     path,
+		ArchiveSHA:  manifest.SHA256,
+		Meta:        metaPath,
+		MetaSHA:     manifest.MetaSHA,
+		Compression: manifest.Compression,
+		Optimized:   manifest.Optimized,
+		Version:     ver.Version,
+		Driver:      manifest.Driver,
 	}, host, port)
 	if err != nil {
 		return fmt.Errorf("%w (the address comes from panel.display_ip, falling back to panel.public_ip — it is what the other host will dial)", err)
@@ -238,6 +243,13 @@ func transferSend(args []string) error {
 
 	acct, _, _ := mgr.TransferMetaAccount(manifest.Meta)
 	fmt.Printf("sha256 %s\n", manifest.SHA256)
+	fmt.Printf("vpsmgr %s on this host", ver.Version)
+	if manifest.Optimized {
+		fmt.Printf(", optimized storage stream")
+	} else if manifest.Compression != "" {
+		fmt.Printf(", %s compression", manifest.Compression)
+	}
+	fmt.Println()
 	fmt.Printf("the container stays stopped here; start it again whenever you like\n\n")
 	fmt.Printf("on the other machine, run:\n\n")
 	fmt.Printf("  vps transfer receive '%s' <user>\n\n", srv.URL())
@@ -316,7 +328,7 @@ func transferReceive(args []string) error {
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	target, metaURL, wantSHA, wantMeta, pin, err := parseTransferURL(rawURL)
+	link, err := parseTransferURL(rawURL)
 	if err != nil {
 		return err
 	}
@@ -338,12 +350,24 @@ func transferReceive(args []string) error {
 	if err := m.TransferHostSupported(); err != nil {
 		return err
 	}
+	// An optimized archive is storage-driver specific, and the stream is not
+	// self-describing, so this is checked before anything is fetched — long
+	// before Incus would fail partway through an import.
+	if link.optimized {
+		mine, err := m.PoolDriver()
+		if err != nil {
+			return err
+		}
+		if err := checkOptimizedCompat(link, mine); err != nil {
+			return err
+		}
+	}
 
 	// The account metadata is tiny and comes first: it says what will be
 	// created and how much room the disk needs, so a host that cannot take the
 	// container can say so before pulling gigabytes through the wire.
-	fmt.Printf("fetching from %s\n", target)
-	meta, err := fetchMeta(ctx, metaURL, pin, wantMeta)
+	fmt.Printf("fetching from %s\n", link.target)
+	meta, err := fetchMeta(ctx, link.metaURL, link.pin, link.wantMeta)
 	if err != nil {
 		return err
 	}
@@ -376,11 +400,12 @@ func transferReceive(args []string) error {
 		}
 	}()
 
-	fmt.Printf("fetching from %s\n", target)
-	if err := fetchArchive(ctx, target, path, pin, wantSHA); err != nil {
+	fmt.Printf("fetching from %s\n", link.target)
+	if err := fetchArchive(ctx, link.target, path, link.pin, link.wantSHA); err != nil {
 		return err
 	}
 	fmt.Println("checksum verified")
+	fmt.Printf("note: %s\n", link.describe())
 
 	archive, err := os.Open(path)
 	if err != nil {
@@ -411,34 +436,94 @@ func transferReceive(args []string) error {
 	return nil
 }
 
+// transferURL is a parsed receive command: where to fetch the two files, what
+// to verify them against, and what the sending host reported about the archive
+// it produced.
+type transferURL struct {
+	target      string
+	metaURL     string
+	wantSHA     string
+	wantMeta    string
+	pin         string
+	compression string
+	version     string
+	driver      string
+	optimized   bool
+}
+
+// describe names the archive and the build that produced it, so the operator
+// can see what is about to be imported before it starts.
+func (u transferURL) describe() string {
+	what := "a portable tar archive"
+	switch {
+	case u.optimized:
+		what = "an --optimized storage-driver stream (" + u.driver + ")"
+	case u.compression != "":
+		what = "a tar archive with " + u.compression + " compression"
+	}
+	if u.version == "" {
+		return "exported by an older build, as " + what
+	}
+	return "exported by vpsmgr " + u.version + ", as " + what
+}
+
+// checkOptimizedCompat refuses an --optimized archive this host cannot restore.
+// Such a stream is storage-driver specific — a zfs send stream cannot be
+// unpacked into a btrfs or dir pool — and it says nothing about itself, so the
+// sending host's driver travels in the URL and is compared here, before a
+// single byte is fetched.
+func checkOptimizedCompat(u transferURL, myDriver string) error {
+	if !u.optimized {
+		return nil
+	}
+	if u.driver == "" {
+		return errors.New("this is an --optimized transfer but the command does not say which pool driver the archive came from — copy the whole command from the sending host")
+	}
+	if u.driver != myDriver {
+		return fmt.Errorf("this host's pool runs %s but the archive is an --optimized stream from a %s pool, and such a stream can only be imported into a %s pool — re-export on the sending host without --optimized",
+			myDriver, u.driver, u.driver)
+	}
+	return nil
+}
+
 // parseTransferURL splits the receive URL into what to fetch and what to verify
-// against. The digests travel in the fragment, which HTTP clients never send to
-// the server: the certificate pin and both checksums stay on the operator's
-// command line, and the listener never learns them.
-func parseTransferURL(raw string) (target, metaURL, wantSHA, wantMeta, pin string, err error) {
+// against. Everything after the '#' is for this side only: HTTP clients never
+// send a fragment, so the certificate pin, both checksums and the description
+// of the archive stay on the operator's command line, and the listener never
+// learns them.
+//
+// compression, optimized, driver and v are additions: a command printed by an
+// older build has none of them (the zero values mean "not stated"), and one
+// from a newer build carries extras that an older receiver ignores, so the
+// halves keep working across versions.
+func parseTransferURL(raw string) (transferURL, error) {
+	var out transferURL
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", "", "", "", "", err
+		return out, err
 	}
 	if u.Scheme != "https" {
-		return "", "", "", "", "", fmt.Errorf("refusing %q: a transfer must be https", raw)
+		return out, fmt.Errorf("refusing %q: a transfer must be https", raw)
 	}
 	if u.Host == "" || !strings.HasPrefix(u.Path, "/d/") {
-		return "", "", "", "", "", errors.New("this is not a vps transfer URL")
+		return out, errors.New("this is not a vps transfer URL")
 	}
 	frag, err := url.ParseQuery(u.Fragment)
 	if err != nil {
-		return "", "", "", "", "", err
+		return out, err
 	}
-	wantSHA, wantMeta, pin = frag.Get("sha256"), frag.Get("meta"), frag.Get("cert")
-	if !isHexDigest(wantSHA) || !isHexDigest(wantMeta) || !isHexDigest(pin) {
-		return "", "", "", "", "", errors.New("the URL is missing its #sha256=…&meta=…&cert=… part — copy the whole command from the sending host")
+	out.wantSHA, out.wantMeta, out.pin = frag.Get("sha256"), frag.Get("meta"), frag.Get("cert")
+	out.compression, out.version, out.driver = frag.Get("compression"), frag.Get("v"), frag.Get("driver")
+	out.optimized = frag.Get("optimized") == "1"
+	if !isHexDigest(out.wantSHA) || !isHexDigest(out.wantMeta) || !isHexDigest(out.pin) {
+		return out, errors.New("the URL is missing its #sha256=…&meta=…&cert=… part — copy the whole command from the sending host")
 	}
 	u.Fragment, u.RawFragment = "", ""
 	// The account metadata is served from the same token on its own path.
 	m := *u
 	m.Path = strings.Replace(u.Path, "/d/", "/m/", 1)
-	return u.String(), m.String(), wantSHA, wantMeta, pin, nil
+	out.target, out.metaURL = u.String(), m.String()
+	return out, nil
 }
 
 // fetchMeta downloads the small account metadata into memory and checks it

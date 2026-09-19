@@ -87,13 +87,16 @@ func (t *TransferMeta) Account() AddOptions {
 // TransferManifest describes the artefact an export produced, so the receiving
 // side can verify both files it is served.
 type TransferManifest struct {
-	User     string
-	Bytes    int64
-	SHA256   string
-	Meta     []byte
-	MetaSHA  string
-	DiskUsed int64
-	Elapsed  time.Duration
+	User        string
+	Bytes       int64
+	SHA256      string
+	Compression string
+	Optimized   bool
+	Meta        []byte
+	MetaSHA     string
+	DiskUsed    int64
+	Driver      string
+	Elapsed     time.Duration
 }
 
 // TransferResult describes a completed import, so the CLI can print the
@@ -106,6 +109,13 @@ type TransferResult struct {
 	Ports     string
 	Elapsed   time.Duration
 	BytesRead int64
+}
+
+// PoolDriver reports the storage driver backing this host's pool (zfs, btrfs,
+// dir…). An optimized transfer carries a storage-driver native stream, so both
+// halves have to agree on this before any bytes move.
+func (m *Manager) PoolDriver() (string, error) {
+	return m.lx.PoolDriver(m.cfg.Incus.Pool)
 }
 
 // requireSupportedDriver refuses a transfer on a storage driver the feature
@@ -196,6 +206,10 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 		return nil, err
 	}
 
+	driver, err := m.PoolDriver()
+	if err != nil {
+		return nil, err
+	}
 	started := time.Now()
 	sum := sha256.New()
 	n, err := m.lx.BackupExport(ctx, u.Name, lx.BackupOptions{
@@ -210,13 +224,16 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 	metaSHA := sha256.Sum256(meta)
 	_ = m.db.AddAuditLog(opt.Actor, "transfer.export."+u.Name)
 	return &TransferManifest{
-		User:     u.Name,
-		Bytes:    n,
-		SHA256:   hex.EncodeToString(sum.Sum(nil)),
-		Meta:     meta,
-		MetaSHA:  hex.EncodeToString(metaSHA[:]),
-		DiskUsed: m.transferDiskUsed(u),
-		Elapsed:  time.Since(started),
+		User:        u.Name,
+		Bytes:       n,
+		SHA256:      hex.EncodeToString(sum.Sum(nil)),
+		Compression: opt.Compression,
+		Optimized:   opt.Optimized,
+		Meta:        meta,
+		MetaSHA:     hex.EncodeToString(metaSHA[:]),
+		DiskUsed:    m.transferDiskUsed(u),
+		Driver:      driver,
+		Elapsed:     time.Since(started),
 	}, nil
 }
 

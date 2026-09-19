@@ -55,23 +55,23 @@ func startTransfer(t *testing.T, content []byte) transferFixture {
 	t.Cleanup(func() { srv.Close() })
 	go func() { _ = srv.Serve(time.Hour, nil) }()
 
-	target, metaURL, wantSHA, wantMeta, pin, err := parseTransferURL(srv.URL())
+	link, err := parseTransferURL(srv.URL())
 	if err != nil {
 		t.Fatalf("parseTransferURL(%q): %v", srv.URL(), err)
 	}
-	if wantSHA != hex.EncodeToString(archiveSum[:]) {
-		t.Fatalf("URL archive checksum = %q, want the file's sha256", wantSHA)
+	if link.wantSHA != hex.EncodeToString(archiveSum[:]) {
+		t.Fatalf("URL archive checksum = %q, want the file's sha256", link.wantSHA)
 	}
-	if wantMeta != hex.EncodeToString(metaSum[:]) {
-		t.Fatalf("URL metadata checksum = %q, want the file's sha256", wantMeta)
+	if link.wantMeta != hex.EncodeToString(metaSum[:]) {
+		t.Fatalf("URL metadata checksum = %q, want the file's sha256", link.wantMeta)
 	}
-	if !strings.Contains(metaURL, "/m/") {
-		t.Fatalf("metadata URL %q is not on the metadata path", metaURL)
+	if !strings.Contains(link.metaURL, "/m/") {
+		t.Fatalf("metadata URL %q is not on the metadata path", link.metaURL)
 	}
-	if pin != srv.Fingerprint() {
-		t.Fatalf("URL pin = %q, want the listener's fingerprint %q", pin, srv.Fingerprint())
+	if link.pin != srv.Fingerprint() {
+		t.Fatalf("URL pin = %q, want the listener's fingerprint %q", link.pin, srv.Fingerprint())
 	}
-	return transferFixture{target: target, metaURL: metaURL, archiveSHA: wantSHA, metaSHA: wantMeta, pin: pin}
+	return transferFixture{target: link.target, metaURL: link.metaURL, archiveSHA: link.wantSHA, metaSHA: link.wantMeta, pin: link.pin}
 }
 
 // TestTransferRoundTrip covers the whole receive path against a real listener:
@@ -226,7 +226,7 @@ func TestParseTransferURL(t *testing.T) {
 		{"wrong path", "https://1.2.3.4:8443/other/tok" + frag, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, _, _, err := parseTransferURL(tc.url)
+			_, err := parseTransferURL(tc.url)
 			if tc.ok && err != nil {
 				t.Fatalf("rejected a valid URL: %v", err)
 			}
@@ -370,5 +370,65 @@ func TestTransferArchivePathIsUnique(t *testing.T) {
 		if filepath.Dir(p) != dir {
 			t.Fatalf("archive %s is not in %s", p, dir)
 		}
+	}
+}
+
+// The archive's format and the sending build are additions to the URL
+// fragment. A command from an older build carries neither, and one from a
+// newer build carries extras an older receiver ignores, so both directions
+// have to keep parsing.
+func TestTransferURLFormatFields(t *testing.T) {
+	d := strings.Repeat("a", sha256.Size*2)
+	base := "https://1.2.3.4:8443/d/tok#sha256=" + d + "&meta=" + d + "&cert=" + d
+
+	old, err := parseTransferURL(base)
+	if err != nil {
+		t.Fatalf("an older build's URL was rejected: %v", err)
+	}
+	if old.optimized || old.compression != "" || old.version != "" || old.driver != "" {
+		t.Errorf("a URL without the new fields described itself as %+v", old)
+	}
+
+	modern, err := parseTransferURL(base + "&compression=zstd&v=1.10.2&driver=zfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modern.compression != "zstd" || modern.version != "1.10.2" || modern.driver != "zfs" || modern.optimized {
+		t.Errorf("parsed %+v, want zstd/1.10.2/zfs and not optimized", modern)
+	}
+
+	opt, err := parseTransferURL(base + "&optimized=1&driver=btrfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opt.optimized || opt.driver != "btrfs" || opt.compression != "" {
+		t.Errorf("parsed %+v, want optimized on btrfs with no compression", opt)
+	}
+}
+
+// An --optimized stream may only be imported into a pool running the driver it
+// was produced on; everything else is refused before anything is fetched.
+func TestOptimizedCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  transferURL
+		mine string
+		ok   bool
+	}{
+		{"same driver", transferURL{optimized: true, driver: "zfs"}, "zfs", true},
+		{"different driver", transferURL{optimized: true, driver: "zfs"}, "btrfs", false},
+		{"driver not stated", transferURL{optimized: true}, "zfs", false},
+		{"plain tar ignores the driver", transferURL{compression: "zstd"}, "btrfs", true},
+		{"plain tar without a driver", transferURL{}, "zfs", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkOptimizedCompat(tc.url, tc.mine)
+			if tc.ok && err != nil {
+				t.Fatalf("refused a compatible stream: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("accepted a stream this host cannot restore")
+			}
+		})
 	}
 }
