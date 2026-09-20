@@ -22,10 +22,10 @@ net.ipv6.conf.default.use_tempaddr = 0
 net.core.netdev_max_backlog = 8192
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
-net.ipv4.tcp_rmem = 8192 262144 4194304
-net.ipv4.tcp_wmem = 4096 16384 4194304
-net.core.rmem_max = 4194304
-net.core.wmem_max = 4194304
+net.ipv4.tcp_rmem = 8192 262144 8388608
+net.ipv4.tcp_wmem = 4096 16384 8388608
+net.core.rmem_max = 8388608
+net.core.wmem_max = 8388608
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 EOF

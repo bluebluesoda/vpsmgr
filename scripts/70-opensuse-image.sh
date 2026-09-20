@@ -84,8 +84,8 @@ cat >> /etc/sysctl.conf <<SYSCTL
 
 # vpsmgr TCP tuning
 net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_rmem = 8192 262144 4194304
-net.ipv4.tcp_wmem = 4096 16384 4194304
+net.ipv4.tcp_rmem = 8192 262144 8388608
+net.ipv4.tcp_wmem = 4096 16384 8388608
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 SYSCTL
