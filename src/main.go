@@ -151,12 +151,6 @@ func main() {
 		}
 	case "quota":
 		err = userQuota(os.Args[2:])
-	case "extra64":
-		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps extra64 <name>")
-			break
-		}
-		err = userExtra64(os.Args[2])
 	case "power":
 		if len(os.Args) != 4 {
 			err = fmt.Errorf("usage: vps power <name> start|stop|restart")
@@ -208,8 +202,7 @@ func usage() {
 usage:
   vps list [name]                  all users, or one user's detail
   vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--days 30] [--extra64]
-  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--days 30] [--clear-expiry]
-  vps extra64 <name>               assign a whole /64 block from net.ipv6_extra_prefix
+  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--days 30] [--clear-expiry] [--extra64]
   vps power <name> start|stop|restart
   vps passwd <name>                reissue user panel password (shown once)
   vps admin-passwd                 reset admin panel password (shown once)
@@ -1403,32 +1396,9 @@ func userDel(name string) error {
 	return nil
 }
 
-// userExtra64 hands an existing container a whole /64 out of
-// net.ipv6_extra_prefix (the same operation as the admin panel's quota dialog).
-// Like there, it can only assign: a block stays with the account until the
-// account is deleted.
-func userExtra64(name string) error {
-	c, err := cfg.Load()
-	if err != nil {
-		return err
-	}
-	d, err := db.Open(c.Panel.DB)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	m := mgr.New(c, d)
-	block, err := m.AssignExtraBlock(name)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("user %s: whole /64 %s\n", name, block)
-	return nil
-}
-
 func userQuota(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100] [--days 30] [--clear-expiry]")
+		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100] [--days 30] [--clear-expiry] [--extra64]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -1437,12 +1407,14 @@ func userQuota(args []string) error {
 	var memS, diskS, bandwidthS string
 	var days int
 	var clearExpiry bool
+	var extra64 bool
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0 = unlimited
 	fs.IntVar(&days, "days", 0, "")                // extend validity by N days
 	fs.BoolVar(&clearExpiry, "clear-expiry", false, "")
+	fs.BoolVar(&extra64, "extra64", false, "") // assign a whole /64 from net.ipv6_extra_prefix
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1528,12 +1500,12 @@ func userQuota(args []string) error {
 	bandwidthChanged := setBandwidth || bandwidthGB != u.BandwidthQuotaGB
 	setDays, clearExpiry := provided["days"], provided["clear-expiry"]
 	expiryChanged := setDays || clearExpiry
-	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged && !expiryChanged {
+	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged && !expiryChanged && !extra64 {
 		if inter.IsTTY() {
 			fmt.Println("no changes, exiting")
 			return nil
 		}
-		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth/--days/--clear-expiry")
+		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth/--days/--clear-expiry/--extra64")
 	}
 	if disk < u.DiskGB {
 		return fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, disk)
@@ -1558,6 +1530,16 @@ func userQuota(args []string) error {
 			return fmt.Errorf("--days must be positive (use --clear-expiry to remove the deadline)")
 		}
 		if _, err := m.ExtendExpiryFor(name, time.Duration(days)*24*time.Hour); err != nil {
+			return err
+		}
+	}
+	// --extra64 hands the container a whole /64 out of net.ipv6_extra_prefix
+	// (the same operation as the admin panel's quota dialog). Like there it can
+	// only assign: a block stays with the account until the account is deleted.
+	// Nothing to do when the host hands no blocks out, so a failed assignment
+	// (no prefix configured, pool exhausted) is reported rather than ignored.
+	if extra64 {
+		if _, err := m.AssignExtraBlock(name); err != nil {
 			return err
 		}
 	}

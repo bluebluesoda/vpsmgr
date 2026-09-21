@@ -345,8 +345,9 @@ the block is free for the next container.
   (N left)`, disabled once the pool is empty; the batch dialog has the same one.
   `vps add --extra64` is the CLI equivalent.
 - **Admin → quota**: `Assign a whole /64` for a container that has none; a
-  container that already owns one shows it read-only. `vps extra64 <name>` is
-  the CLI equivalent.
+  container that already owns one shows it read-only. `vps quota <name>
+  --extra64` is the CLI equivalent (the same dialog's other fields keep
+  working).
 - **User panel**: the block is listed next to the container's IPv6 address
   (`IPv6 prefix: <block>/64`), presented plainly — nothing advertises it as
   something to ask for.

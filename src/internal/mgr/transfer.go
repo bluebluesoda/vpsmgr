@@ -835,21 +835,24 @@ func freshNICAddrs() (map[string]string, error) {
 // following the disk here.
 func (m *Manager) instanceConfig(u *db.User) (map[string]string, map[string]lx.Device) {
 	poolMode := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
-	block, poolAddr := "", ""
+	block, poolAddr, addr := "", "", ""
 	if poolMode {
 		// Only pool mode keeps the address on the routed NIC, and only when
 		// the user actually has one.
 		poolAddr = u.IPv6Address
 	} else {
+		primary, _ := m.IPv6Addr(u.Name)
 		if b, _ := m.IPv6Block(u.Name); b != nil {
 			block = b.String()
 		}
 		// The imported account never carries a whole /64 (the block is
-		// host-local, like the /112 index), so only the /112 is declared.
+		// host-local, like the /112 index), so this normally keeps the plain
+		// /112-only shape.
 		block = blockRoutes(block, u.IPv6ExtraBlock)
+		addr = deviceIPv6Addr(primary, u.IPv6ExtraBlock)
 	}
 	return m.lx.InstanceSpec(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.IP,
-		"", block, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB)
+		addr, block, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB)
 }
 
 // requireStopped refuses to export a container that is not stopped. The check

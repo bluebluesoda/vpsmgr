@@ -530,7 +530,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	cloned := cloneOwner != ""
 	if cloned {
 		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
-			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, "", blockStr, poolAddr,
+			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr,
 			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
 		}
@@ -544,7 +544,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		if err := m.lx.EnsureImage(image); err != nil {
 			return nil, fmt.Errorf("ensure image %s: %w", image, err)
 		}
-		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, "", blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("launch container: %w", err)
 		}
 	}
@@ -1526,7 +1526,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		// account owns one (it keeps it across a reinstall).
 		blockStr = blockRoutes(blockStr, u.IPv6ExtraBlock)
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, "", blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, deviceIPv6Addr(ipv6, u.IPv6ExtraBlock), blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
