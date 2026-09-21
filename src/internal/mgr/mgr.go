@@ -456,11 +456,10 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	//   - none:   no IPv6 at all
 	poolAddr := ""
 	// ipv6 is the container's PRIMARY address (bound inside the guest, and what
-	// the user connects to). The Incus device never carries it: eth0 is given
-	// routes only, because a declared ipv6.address turns every route into a
-	// via-address one, and such a route cannot be added once the address is
-	// itself covered by a gateway route (the account's /112). See
-	// applyExtraRoutes.
+	// the user connects to). It is declared on the NIC as ipv6.address, which is
+	// what makes Incus install the account's /112 route as `via <primary>` — the
+	// form that delivers every address in the /112 to the container. See
+	// applyExtraRoutes, including the order a declared /64 has to take.
 	ipv6 := ""
 	var ipv6Index int64 // stored /112 block index (prefix mode only)
 	blockStr := ""
@@ -530,7 +529,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	cloned := cloneOwner != ""
 	if cloned {
 		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
-			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr,
+			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, ipv6, blockStr, poolAddr,
 			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
 		}
@@ -544,7 +543,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		if err := m.lx.EnsureImage(image); err != nil {
 			return nil, fmt.Errorf("ensure image %s: %w", image, err)
 		}
-		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("launch container: %w", err)
 		}
 	}
@@ -1526,7 +1525,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		// account owns one (it keeps it across a reinstall).
 		blockStr = blockRoutes(blockStr, u.IPv6ExtraBlock)
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, deviceIPv6Addr(ipv6, u.IPv6ExtraBlock), blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
@@ -1826,13 +1825,16 @@ func (m *Manager) EnsureBlockRoutes() error {
 		if err != nil || b == nil {
 			continue
 		}
-		if _, err := m.lx.EnsureEth0Options(u.Name, map[string]string{"ipv6.routes": b.String()}); err != nil && firstErr == nil {
+		// Whatever the account owns, whole /64 included: setting only the /112
+		// here would drop a block owner's /64 back off its NIC.
+		if _, err := m.lx.EnsureEth0Options(u.Name, map[string]string{"ipv6.routes": blockRoutes(b.String(), u.IPv6ExtraBlock)}); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-	// The whole /64 blocks are routed by the panel rather than by Incus, so they
-	// need their own pass — both to install them on an upgrade and to bring them
-	// back after a reboot (that is what RewireAllIPv6 does at boot).
+	// A container that owns a whole /64 additionally needs its ipv6.address
+	// declared again (see applyExtraRoutes), which is a change made after the
+	// container existed — hence its own pass, run on every upgrade and at boot
+	// (that is what RewireAllIPv6 does).
 	if err := m.EnsureExtraBlockRoutes(); err != nil && firstErr == nil {
 		firstErr = err
 	}

@@ -290,22 +290,29 @@ asks for it — an operator turns it on deliberately.
 
 ### How the route is wired
 
-The block is declared on the container's own NIC — `ipv6.routes = <account's
-/112>,<block>/64` — and `ipv6.address` is **removed** from that device. Both
-halves are load-bearing:
+The block is declared on the container's own NIC — `ipv6.routes = <block>/64,
+<account's /112>` — and the device keeps its `ipv6.address`. Three things about
+that are load-bearing:
 
 - Incus builds `security.ipv6_filtering` from the addresses and routes a NIC
   declares, and that filter drops everything else. A block that is not declared
   is a block the bridge throws away: the container binds its addresses and gets
   replies from the host, but every packet it sources from the block dies at the
   veth.
-- Incus programs a declared route as `via <ipv6.address>`. The kernel refuses
-  such a route when the gateway is itself covered by a *gateway* route — which
-  the account's own `/112` route is (`RTNETLINK answers: No route to host`) —
-  so the declared routes have to be direct (`dev <bridge>`), which is exactly
-  what omitting `ipv6.address` produces. Nothing is lost: the container binds
-  its primary address itself, from the provider script, so the device option was
-  only ever the DHCPv6 reservation and the routes' gateway.
+- `ipv6.address` stays declared, because that is what keeps the account's
+  `/112` usable. Incus programs a declared route as `via <ipv6.address>`, i.e.
+  straight to the container's MAC, and the guest makes its whole `/112` local —
+  so every address in it answers, but only as long as the host hands the packet
+  to the container directly. Without the address the routes become direct
+  (`dev <bridge>`), and the host has to resolve each address by NDP on the
+  bridge, where the guest only answers for the ones it has bound: `::1` works
+  and the rest of the `/112` goes silent.
+- The `/64` is listed **first**. The kernel refuses a via-address route whose
+  gateway is itself reached by a via-address route, and the `/112` route is
+  exactly that (`RTNETLINK answers: No route to host`), so the `/64` only
+  installs while it is declared ahead of the `/112`. Installed, it hands the
+  whole block to the container's MAC, which is what lets a customer route
+  sub-prefixes out of it instead of running a responder for every address.
 
 Because the wiring lives in the container's own network configuration, Incus
 restores it on every start — a container restart or a host reboot brings the
