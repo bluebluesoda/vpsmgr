@@ -362,16 +362,18 @@ func (m *Manager) enableProxyNDP() error {
 const ndppdConfPath = "/etc/vpsmgr/ndppd.conf"
 const ndppdConfLink = "/etc/ndppd.conf"
 
-// ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
-// under a `proxy <ext_if>` section, so the in-tree NDP responder knows which
-// /112 blocks to answer for on the external link. `extraBlock` adds a /112
-// whose account row does not exist yet (Add wires the container before writing
-// its row, so it passes the block it just picked) and `drop` leaves one user
-// out by name (its row still exists while Del unwires the container).
+// ndppdConf renders /etc/ndppd.conf: one `rule <cidr>` per block a container
+// owns — its deterministic /112 and, when it has one, its whole /64 from
+// net.ipv6_extra_prefix — under a `proxy <ext_if>` section, so the in-tree NDP
+// responder knows which prefixes to answer for on the external link. `fresh`
+// adds blocks whose account row does not exist yet (Add wires the container
+// before writing its row, so it passes what it just picked, comma-separated)
+// and `drop` leaves one user out by name (its row still exists while Del
+// unwires the container).
 // Empty when IPv6 is disabled or no container has a block. The format is kept
 // ndppd-compatible (each rule line is a bare `rule <cidr> {`), even though the
 // daemon is no longer used in prefix mode.
-func (m *Manager) ndppdConf(extraBlock, drop string) (string, error) {
+func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
 	if !m.cfg.IPv6Enabled() {
 		return "", nil
 	}
@@ -395,9 +397,15 @@ func (m *Manager) ndppdConf(extraBlock, drop string) (string, error) {
 		if block != nil {
 			blocks = append(blocks, block.String())
 		}
+		// The whole /64 is routed to the container the same way the /112 is, so
+		// an upstream that resolves the prefix by NDP has to be answered for it
+		// too.
+		if u.IPv6ExtraBlock != "" {
+			blocks = append(blocks, u.IPv6ExtraBlock)
+		}
 	}
-	if extraBlock != "" {
-		blocks = append(blocks, extraBlock)
+	if fresh != "" {
+		blocks = append(blocks, strings.Split(fresh, ",")...)
 	}
 	if len(blocks) == 0 {
 		return "", nil
@@ -422,8 +430,8 @@ func (m *Manager) ndppdConf(extraBlock, drop string) (string, error) {
 // root-owned old file (rename checks the parent dir, not the target). When no
 // container has IPv6 routing the file is removed, so a stale rule can never
 // misroute.
-func (m *Manager) writeNDPPD(extraBlock, drop string) error {
-	conf, err := m.ndppdConf(extraBlock, drop)
+func (m *Manager) writeNDPPD(fresh, drop string) error {
+	conf, err := m.ndppdConf(fresh, drop)
 	if err != nil {
 		return err
 	}
@@ -460,12 +468,13 @@ func (m *Manager) writeNDPPD(extraBlock, drop string) error {
 	return nil
 }
 
-// WireIPv6 registers a container's /112 with the NDP proxy so its addresses
-// are reachable from the internet. block is the container's /112, which Add
-// passes explicitly (it wires the container before its account row exists);
-// with nil the block is read from the account's stored index. The Incus device
-// already routes the /112 to the container.
-func (m *Manager) WireIPv6(name string, block *net.IPNet) error {
+// WireIPv6 registers a container's blocks with the NDP proxy so its addresses
+// are reachable from the internet: its /112, and the whole /64 it may own from
+// net.ipv6_extra_prefix. Both are passed explicitly by Add, which wires the
+// container before its account row exists; with nil they are read from the
+// account (the stored /112 index and the stored /64). The Incus device routes
+// the /112, and WireExtraBlock routes the /64.
+func (m *Manager) WireIPv6(name string, block, extra *net.IPNet) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
@@ -476,10 +485,17 @@ func (m *Manager) WireIPv6(name string, block *net.IPNet) error {
 		}
 		block = b
 	}
-	if block == nil {
+	var fresh []string
+	if block != nil {
+		fresh = append(fresh, block.String())
+	}
+	if extra != nil {
+		fresh = append(fresh, extra.String())
+	}
+	if len(fresh) == 0 {
 		return nil
 	}
-	return m.writeNDPPD(block.String(), "")
+	return m.writeNDPPD(strings.Join(fresh, ","), "")
 }
 
 // UnwireIPv6 removes a container's /112 from the NDP proxy. Returns the error
@@ -535,5 +551,10 @@ func (m *Manager) RewireAllIPv6() error {
 		return err
 	}
 	m.cleanLegacyKernelProxy()
-	return m.writeNDPPD("", "")
+	if err := m.writeNDPPD("", ""); err != nil {
+		return err
+	}
+	// The whole /64 blocks are installed by the panel, not by Incus, so nothing
+	// else would bring them back after a reboot.
+	return m.EnsureExtraBlockRoutes()
 }

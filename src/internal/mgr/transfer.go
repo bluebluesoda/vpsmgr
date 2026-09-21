@@ -470,7 +470,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	}
 	switch {
 	case m.usesTwoNICs(u):
-		if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
+		if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address, ""); err != nil {
 			return fail(fmt.Errorf("config container ipv6: %w", err))
 		}
 		if err := m.WireIPv6Pool(u.Name, u.IPv6Address); err != nil {
@@ -480,10 +480,13 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 		// Pool mode, no address handed out: the container is pure IPv4 and
 		// there is nothing to route.
 	default:
-		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
+		// An imported account starts without a whole /64: the block is
+		// host-local (like the /112 index it is not carried across machines),
+		// and the operator can hand one out afterwards from the quota dialog.
+		if err := m.ConfigureContainerIPv6(u.Name, "", ""); err != nil {
 			return fail(fmt.Errorf("config container ipv6: %w", err))
 		}
-		if err := m.WireIPv6(u.Name, nil); err != nil {
+		if err := m.WireIPv6(u.Name, nil, nil); err != nil {
 			return fail(fmt.Errorf("wire ipv6: %w", err))
 		}
 	}
@@ -832,19 +835,21 @@ func freshNICAddrs() (map[string]string, error) {
 // following the disk here.
 func (m *Manager) instanceConfig(u *db.User) (map[string]string, map[string]lx.Device) {
 	poolMode := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
-	ipv6, block, poolAddr := "", "", ""
+	block, poolAddr := "", ""
 	if poolMode {
 		// Only pool mode keeps the address on the routed NIC, and only when
 		// the user actually has one.
 		poolAddr = u.IPv6Address
 	} else {
-		ipv6, _ = m.IPv6Addr(u.Name)
 		if b, _ := m.IPv6Block(u.Name); b != nil {
 			block = b.String()
 		}
+		// The imported account never carries a whole /64 (the block is
+		// host-local, like the /112 index), so only the /112 is declared.
+		block = blockRoutes(block, u.IPv6ExtraBlock)
 	}
 	return m.lx.InstanceSpec(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.IP,
-		ipv6, block, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB)
+		"", block, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB)
 }
 
 // requireStopped refuses to export a container that is not stopped. The check

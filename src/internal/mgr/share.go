@@ -252,15 +252,17 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", err
 	}
-	ipv6, blockStr := "", ""
+	blockStr := ""
 	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePool {
-		ipv6, _ = m.IPv6Addr(u.Name)
 		if block, _ := m.IPv6Block(u.Name); block != nil {
 			blockStr = block.String()
 		}
+		// The account keeps its whole /64 across the reinstall, so the clone
+		// gets the same declared routes.
+		blockStr = blockRoutes(blockStr, u.IPv6ExtraBlock)
 	}
 	if err := m.lx.CloneFromSnapshot(owner.Name, snap, tmp,
-		m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.IP, ipv6, blockStr, u.IPv6Address,
+		m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.IP, "", blockStr, u.IPv6Address,
 		m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", fmt.Errorf("clone shared checkpoint: %w", err)
@@ -312,7 +314,7 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 	m.clearAuthorizedKeys(u.Name)
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		if u.IPv6Address != "" {
-			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
+			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address, ""); err != nil {
 				rollback()
 				return "", fmt.Errorf("config container ipv6: %w", err)
 			}
@@ -322,11 +324,11 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 			}
 		}
 	} else {
-		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil {
+		if err := m.ConfigureContainerIPv6(u.Name, "", ""); err != nil {
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(u.Name, nil); err != nil {
+		if err := m.WireIPv6(u.Name, nil, nil); err != nil {
 			rollback()
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}
