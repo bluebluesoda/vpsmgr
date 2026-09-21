@@ -151,6 +151,12 @@ func main() {
 		}
 	case "quota":
 		err = userQuota(os.Args[2:])
+	case "extra64":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vps extra64 <name>")
+			break
+		}
+		err = userExtra64(os.Args[2])
 	case "power":
 		if len(os.Args) != 4 {
 			err = fmt.Errorf("usage: vps power <name> start|stop|restart")
@@ -201,8 +207,9 @@ func usage() {
 	fmt.Print(`vps ` + ver.Version + `
 usage:
   vps list [name]                  all users, or one user's detail
-  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--days 30]
+  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--days 30] [--extra64]
   vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--days 30] [--clear-expiry]
+  vps extra64 <name>               assign a whole /64 block from net.ipv6_extra_prefix
   vps power <name> start|stop|restart
   vps passwd <name>                reissue user panel password (shown once)
   vps admin-passwd                 reset admin panel password (shown once)
@@ -1281,11 +1288,13 @@ func userAdd(args []string) error {
 	var cpuS string
 	var memS, diskS, bandwidthS string
 	var days int
+	var extra64 bool
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
 	fs.IntVar(&days, "days", 0, "")                // validity in days, 0 = permanent
+	fs.BoolVar(&extra64, "extra64", false, "")     // whole /64 from net.ipv6_extra_prefix
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1368,7 +1377,7 @@ func userAdd(args []string) error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth, Days: days})
+	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth, Days: days, AllocateExtra64: extra64})
 	if err != nil {
 		return err
 	}
@@ -1391,6 +1400,29 @@ func userDel(name string) error {
 		return err
 	}
 	fmt.Printf("user %s deleted (container, nft rules, domain routes, records)\n", name)
+	return nil
+}
+
+// userExtra64 hands an existing container a whole /64 out of
+// net.ipv6_extra_prefix (the same operation as the admin panel's quota dialog).
+// Like there, it can only assign: a block stays with the account until the
+// account is deleted.
+func userExtra64(name string) error {
+	c, err := cfg.Load()
+	if err != nil {
+		return err
+	}
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	m := mgr.New(c, d)
+	block, err := m.AssignExtraBlock(name)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("user %s: whole /64 %s\n", name, block)
 	return nil
 }
 
@@ -1646,6 +1678,9 @@ func printAdded(r *mgr.Result) {
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
+	if r.IPv6Extra != "" {
+		fmt.Printf("ipv6 /64: %s  (routed to the container; claimed and released with the account)\n", r.IPv6Extra)
+	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
 	} else {
@@ -1670,6 +1705,9 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("ip:       %s\n", u.IP)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
+	}
+	if r.IPv6Extra != "" {
+		fmt.Printf("ipv6 /64: %s\n", r.IPv6Extra)
 	}
 	if r.V4Forward {
 		fmt.Printf("ssh:      %d\n", u.SSHPort)

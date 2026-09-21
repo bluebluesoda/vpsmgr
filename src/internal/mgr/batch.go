@@ -141,7 +141,12 @@ type UserStatus struct {
 	DownGB   string
 	BWTotal  string // up+down this month, GB ("0.0" when idle) — for sorting
 	IPv6     string
-	Procs    int64 // latest sampled process count (0 when stopped / unavailable)
+	// IPv6Extra is the whole /64 the account owns from net.ipv6_extra_prefix
+	// ("" when it has none, and always empty in pool mode). The admin panel
+	// shows it in the quota dialog, where a block can be handed out once and
+	// can never be taken back.
+	IPv6Extra string
+	Procs     int64 // latest sampled process count (0 when stopped / unavailable)
 }
 
 // BatchUsers reads the database-backed resource snapshot. It intentionally
@@ -196,6 +201,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 				rs.IPv6 = ipv6
 			}
 		}
+		rs.IPv6Extra = u.IPv6ExtraBlock
 		out = append(out, rs)
 	}
 	return out, nil

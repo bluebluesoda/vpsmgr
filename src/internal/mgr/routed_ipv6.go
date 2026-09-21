@@ -45,7 +45,7 @@ func (e *RoutedIPv6Error) Unwrap() error { return e.Err }
 //     and re-applies the profile on every boot. No daemons, no waiting.
 //
 // Both end by flushing stale on-link / redirect routes for the parent prefix.
-func (m *Manager) ipv6ContainerScript(ipv6 string) (string, error) {
+func (m *Manager) ipv6ContainerScript(ipv6, extra string) (string, error) {
 	if ipv6 == "" {
 		return "", nil
 	}
@@ -56,7 +56,7 @@ func (m *Manager) ipv6ContainerScript(ipv6 string) (string, error) {
 	// Bare prefix (without the trailing ::) used to match routes that belong
 	// to the parent prefix, e.g. 2406:da14:1dd2:a807:753a for a /80.
 	prefix := strings.TrimSuffix(n.IP.String(), "::")
-	return m.ipv6ContainerScriptFor(ipv6, prefix)
+	return m.ipv6ContainerScriptFor(ipv6, prefix, extra)
 }
 
 // ipv6ContainerScriptFor renders the same script for an explicit address and
@@ -64,7 +64,14 @@ func (m *Manager) ipv6ContainerScript(ipv6 string) (string, error) {
 // the DB), so prefix is "" — the script then configures the routed-NIC layout:
 // eth0 statically binds the public /128 with fe80::1 as gateway (Incus's
 // routed NIC gateway), and eth1 runs DHCPv4 on the private bridge.
-func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix string) (string, error) {
+//
+// extra is the whole /64 the account owns from net.ipv6_extra_prefix ("" when
+// it has none). It is bound with its real /64 length, so the prefix is on-link
+// inside the container: any address in it is usable and the customer can carve
+// sub-prefixes out of it for internal networks. It is deliberately NOT added as
+// a local route, which would claim every address in the block for the container
+// itself and make exactly that impossible. Pool mode never has one.
+func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix, extra string) (string, error) {
 	if ipv6 == "" {
 		return "", nil
 	}
@@ -76,12 +83,47 @@ func (m *Manager) ipv6ContainerScriptFor(ipv6, prefix string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	flush := fmt.Sprintf(`for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
+	// The extra block: its first address is the container's, the rest of the
+	// /64 is left to it.
+	extraAddr, extraCIDR := "", ""
+	if extra != "" {
+		_, n, err := net.ParseCIDR(extra)
+		if err != nil {
+			return "", fmt.Errorf("invalid extra IPv6 block %q: %w", extra, err)
+		}
+		extraCIDR = n.String()
+		extraAddr = addHostOffset(n.IP, 1).String()
+	}
+	nmcliExtra := ""
+	if extraAddr != "" {
+		nmcliExtra = "," + extraAddr + "/64"
+	}
+	// Appended to the networkd config, after the primary /128 binding. Empty
+	// (the whole block vanishes) when the container has no extra prefix.
+	networkdExtra := ""
+	if extraAddr != "" {
+		networkdExtra = fmt.Sprintf(`  if ! grep -qs '^Address=%s/64$' "$CFG" 2>/dev/null; then
+    cat >> "$CFG" <<EXTRAADDR
+[Address]
+Address=%s/64
+EXTRAADDR
+    changed=1
+  fi`, extraAddr, extraAddr)
+	}
+	// The flush below removes the parent prefix's stale on-link routes. The
+	// extra block can share a textual prefix with the parent (it is a /64 out
+	// of the same space), so skip it by exact destination — otherwise the
+	// block's own on-link route would be deleted right after being installed.
+	extraSkip := ""
+	if extraCIDR != "" {
+		extraSkip = fmt.Sprintf("\n  [ \"$r\" = %s ] && continue", extraCIDR)
+	}
+	flush := fmt.Sprintf(`for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do%s
   case "$r" in
     %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
   esac
 done
-ip -6 route flush cache 2>/dev/null || true`, prefix)
+ip -6 route flush cache 2>/dev/null || true`, extraSkip, prefix)
 	script := fmt.Sprintf(`set -e
 # GATEWAY_MAC is the Incus bridge's MAC: the container's default route is
 # fe80::1 (the bridge gateway), but security.ipv6_filtering drops the guest's
@@ -106,7 +148,7 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
   CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
   [ -n "$CONN" ] && nmcli con mod "$CONN" \
     ipv6.method manual \
-    ipv6.addresses %s/128 \
+    ipv6.addresses %s/128%s \
     ipv6.gateway fe80::1 2>/dev/null || true
   [ -n "$CONN" ] && nmcli con up "$CONN" >/dev/null 2>&1 || true
   [ -n "$GATEWAY_MAC" ] && ip -6 neigh replace fe80::1 lladdr "$GATEWAY_MAC" nud permanent dev eth0 2>/dev/null || true
@@ -156,6 +198,7 @@ Address=%s/128
 ADDR
     changed=1
   fi
+%s
   # Static default route via the bridge's fixed link-local gateway: with RA
   # off-link/route-prefix off there is no RA-provided default, so without this
   # the container cannot reach out (only inbound works via the host's proxy).
@@ -211,7 +254,7 @@ EOF
 systemctl daemon-reload || true
 systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true
 systemctl restart vpsmgr-ipv6.service >/dev/null 2>&1 || true
-%s`, bridgeMAC, localBlock, ipv6, ipv6, ipv6, flush)
+%s`, bridgeMAC, localBlock, ipv6, nmcliExtra, ipv6, ipv6, networkdExtra, flush)
 	return script, nil
 }
 
@@ -316,7 +359,12 @@ fi
 // primary address. A caller that already knows it passes it — Add launches the
 // container before creating its account row, so the address comes from the
 // block index it just picked. An empty addr is read from the account's row.
-func (m *Manager) ConfigureContainerIPv6(name, addr string) error {
+//
+// extra is the whole /64 from net.ipv6_extra_prefix ("" when the account has
+// none). Add passes the block it just picked, for the same reason it passes the
+// address; everywhere else an empty value is resolved from the account, and an
+// account that does not exist yet simply has no block.
+func (m *Manager) ConfigureContainerIPv6(name, addr, extra string) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
@@ -333,12 +381,17 @@ func (m *Manager) ConfigureContainerIPv6(name, addr string) error {
 			return err
 		}
 	}
+	if extra == "" && !pool {
+		if u, uerr := m.db.GetUserByName(name); uerr == nil {
+			extra = u.IPv6ExtraBlock
+		}
+	}
 	var script string
 	var err error
 	if pool {
-		script, err = m.ipv6ContainerScriptFor(addr, "")
+		script, err = m.ipv6ContainerScriptFor(addr, "", "")
 	} else {
-		script, err = m.ipv6ContainerScript(addr)
+		script, err = m.ipv6ContainerScript(addr, extra)
 	}
 	if err != nil || script == "" {
 		return err
@@ -369,7 +422,7 @@ func (m *Manager) EnsureRoutedIPv6() error {
 		if st, err := m.lx.State(u.Name); err != nil || st != "Running" {
 			continue // stopped or not created yet
 		}
-		if err := m.ConfigureContainerIPv6(u.Name, ""); err != nil && firstErr == nil {
+		if err := m.ConfigureContainerIPv6(u.Name, "", ""); err != nil && firstErr == nil {
 			firstErr = &RoutedIPv6Error{Container: u.Name, Err: err}
 		}
 	}

@@ -58,7 +58,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 19
+const schemaVersion = 20
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -331,6 +331,17 @@ var migrations = []struct {
 	{19, []string{
 		`ALTER TABLE users ADD COLUMN ipv6_index INTEGER`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6_index ON users(ipv6_index)`,
+	}},
+	// v20 adds the optional whole /64 block a container can be given from
+	// net.ipv6_extra_prefix (an extra prefix routed alongside the /112 primary
+	// address). NULL means "this account has none" — the state of every account
+	// on an install that never set the extra prefix, which is why the unique
+	// index has to tolerate many NULLs. The CIDR is stored as given rather than
+	// re-derived from the config, so changing the prefix later never invalidates
+	// an existing assignment.
+	{20, []string{
+		`ALTER TABLE users ADD COLUMN ipv6_extra_block TEXT`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6_extra_block ON users(ipv6_extra_block)`,
 	}},
 }
 

@@ -187,7 +187,7 @@ func TestUserStatusRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating, "", 0, "")
+	u, err := d.CreateUserFull("carol", "h", "10.115.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusCreating, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +218,10 @@ func TestUserStatusRoundTrip(t *testing.T) {
 // may be left behind — no column, no index, no version row — so the next start
 // retries the migration from a clean v18 schema instead of finding half of it
 // applied (which would fail forever with "duplicate column name").
+//
+// v20 is unwound along with v19 before the attempt: the applied versions must
+// stay an unbroken run (the gap rule), so a schema rewound to v18 has to drop
+// every later marker too.
 func TestMigrateStepFailureRollsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stepfail.db")
 	d, err := Open(path)
@@ -229,9 +233,11 @@ func TestMigrateStepFailureRollsBack(t *testing.T) {
 	}
 	// Back to the v18 state, schema included.
 	for _, s := range []string{
-		`DELETE FROM schema_migrations WHERE version = 19`,
+		`DELETE FROM schema_migrations WHERE version IN (19, 20)`,
 		`DROP INDEX IF EXISTS idx_users_ipv6_index`,
 		`ALTER TABLE users DROP COLUMN ipv6_index`,
+		`DROP INDEX IF EXISTS idx_users_ipv6_extra_block`,
+		`ALTER TABLE users DROP COLUMN ipv6_extra_block`,
 	} {
 		if _, err := d.sql.Exec(s); err != nil {
 			t.Fatal(err)
@@ -254,17 +260,17 @@ func TestMigrateStepFailureRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.Close()
-	for _, col := range []string{"ipv6_index"} {
+	for _, col := range []string{"ipv6_index", "ipv6_extra_block"} {
 		if hasColumn(t, raw, "users", col) {
 			t.Errorf("column %s survived the rollback", col)
 		}
 	}
 	var n int
-	if err := raw.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 19`).Scan(&n); err != nil {
+	if err := raw.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version IN (19, 20)`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Errorf("v19 recorded despite the failure")
+		t.Errorf("v19/v20 recorded despite the failure")
 	}
 	if err := raw.QueryRow(`SELECT count(*) FROM users`).Scan(&n); err != nil {
 		t.Fatal(err)

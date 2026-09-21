@@ -223,6 +223,15 @@ type NetCfg struct {
 	// assigned in pool mode (typically the addresses the provider lets the
 	// host bind individually). A user keeps its address until deleted.
 	IPv6Pool []string `yaml:"ipv6_pool,omitempty"`
+	// IPv6ExtraPrefix is an OPTIONAL extra prefix (normally shorter than /64)
+	// that whole /64 blocks are carved from and routed to containers, on top of
+	// the /112 primary address each container already gets from IPv6Subnet.
+	// Empty — the default, and the state of every upgraded install — disables
+	// the feature completely: nothing is allocated and no UI appears.
+	// Deliberately unvalidated beyond "parseable global CIDR": the operator
+	// may hand us only a slice of what the provider gave them and asserts it is
+	// theirs. The /64 the host itself uses is never handed to a container.
+	IPv6ExtraPrefix string `yaml:"ipv6_extra_prefix,omitempty"`
 }
 
 // IPv6 mode values.
@@ -802,6 +811,34 @@ func (c *Config) IPv6Network() (*net.IPNet, error) {
 	// many host bits: any prefix /80 or shorter works.
 	if ones > 80 {
 		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /80 or shorter (got /%d)", s, ones)
+	}
+	return n, nil
+}
+
+// IPv6ExtraPrefixNetwork parses and validates the optional extra prefix whole
+// /64 blocks are carved from. Empty means "feature disabled" (nil, no error).
+// The value is accepted as-is: the operator asserts the prefix is theirs, so
+// there is no ownership check and no length restriction beyond a parseable
+// global CIDR carrying an explicit prefix length. A prefix of /64 or longer
+// simply yields zero allocatable blocks, which disables the feature silently
+// rather than erroring.
+func (c *Config) IPv6ExtraPrefixNetwork() (*net.IPNet, error) {
+	s := c.Net.IPv6ExtraPrefix
+	if s == "" {
+		return nil, nil
+	}
+	if !strings.Contains(s, "/") {
+		return nil, fmt.Errorf("invalid ipv6_extra_prefix %q: prefix length required (e.g. /56 or /48)", s)
+	}
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ipv6_extra_prefix %q: %w", s, err)
+	}
+	if n.IP.To4() != nil {
+		return nil, fmt.Errorf("invalid ipv6_extra_prefix %q: not an IPv6 prefix", s)
+	}
+	if n.IP.IsPrivate() || n.IP.IsLinkLocalUnicast() || n.IP.IsLoopback() || n.IP.IsUnspecified() {
+		return nil, fmt.Errorf("invalid ipv6_extra_prefix %q: must be a global (public) prefix", s)
 	}
 	return n, nil
 }

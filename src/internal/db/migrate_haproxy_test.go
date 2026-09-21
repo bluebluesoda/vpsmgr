@@ -29,6 +29,13 @@ func rewindToV17(t *testing.T, rows map[string]string) string {
 	if _, err := d.sql.Exec(`ALTER TABLE users DROP COLUMN ipv6_index`); err != nil {
 		t.Fatal(err)
 	}
+	// Un-apply v20, which added users.ipv6_extra_block (same ALTER caveat).
+	if _, err := d.sql.Exec(`DROP INDEX IF EXISTS idx_users_ipv6_extra_block`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sql.Exec(`ALTER TABLE users DROP COLUMN ipv6_extra_block`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.sql.Exec(`DELETE FROM settings WHERE key IN ('traefik','haproxy')`); err != nil {
 		t.Fatal(err)
 	}
