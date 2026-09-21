@@ -47,6 +47,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
 | `net.ipv6_pool` | operator | `vps config set` needs `--apply`; admin-panel changes apply immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
+| `net.ipv6_extra_prefix` | operator | next `vps add` / reinstall (existing blocks are reapplied by `vps install` / `vps ipv6-reapply`); admin-panel changes apply immediately | optional extra prefix (prefix mode) that a container can be given a whole /64 out of, e.g. `2001:1c00:b1b:7f0::/60`; empty = feature off (the default, including on every upgrade). Accepted as-is — the /64 this host itself uses is never handed out |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool (backend selected at install via `VPSMGR_STORAGE=zfs\|btrfs\|dir`) |
@@ -123,6 +124,11 @@ net:
   ipv6_pool: []                # optional (pool mode): the /128 addresses containers are
                                # assigned from, e.g. "2001:db8:1::9c4" (bare global
                                # addresses, no prefix length)
+  ipv6_extra_prefix: ""        # optional (prefix mode): an extra prefix a container can
+                               # be given a whole /64 out of, e.g. "2001:1c00:b1b:7f0::/60"
+                               # (/48, /56, /60 ...). Empty = off (the default; nothing is
+                               # allocated and no panel UI appears). The /64 this host uses
+                               # itself is never handed out. See docs/ipv6.md
 
 incus:
   image: "vpsmgr/debian-sshd"
@@ -310,6 +316,12 @@ goes away when the panel is uninstalled.
 - `net.ipv6_mode` is fixed at install and immutable (like `net.subnet`):
   `none` (pure IPv4), `prefix` (classic /112 blocks), `pool` (per-container
   address from `net.ipv6_pool`). Switching modes would renumber containers.
+- `net.ipv6_extra_prefix` is **optional and off by default** — an upgraded host
+  keeps running exactly as before until an operator fills it in, and nothing in
+  the installer or the panel prompts for it. It only means anything in `prefix`
+  mode, is accepted as the operator enters it (no ownership check: they assert
+  the prefix is theirs), and never renumbers an existing container. A value that
+  holds no whole /64 (a /64 or longer) simply leaves the feature inert.
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
   address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.

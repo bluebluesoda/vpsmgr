@@ -52,6 +52,12 @@ type pageData struct {
 	PoolFree     []string
 	PoolUsed     int
 	PoolTotal    int
+	// Whole /64 blocks (net.ipv6_extra_prefix, prefix mode only). ExtraConfigured
+	// is "the operator set an extra prefix", which is what makes the create
+	// form's checkbox render at all; ExtraFree is how many blocks are left, and
+	// 0 greys the checkbox out instead of hiding it.
+	ExtraConfigured bool
+	ExtraFree       int
 	// AdminKeys is the operator's own SSH-key store (management panel only).
 	AdminKeys []sshKeyRow
 	// BatchID, when set, is a running/recent batch create the page should show
@@ -125,8 +131,12 @@ type userView struct {
 	DownGB      string
 	BWTotal     string // up+down this month, GB — used for table sorting
 	IPv6        string
-	Procs       int64  // live process count (0 when stopped)
-	ProcsLimit  string // per-container pids.max cap, e.g. "4096"
+	// IPv6Extra is the whole /64 the account owns from net.ipv6_extra_prefix
+	// ("" when none). Shown read-only in the quota dialog, where such a block
+	// can be assigned but never taken back.
+	IPv6Extra  string
+	Procs      int64  // live process count (0 when stopped)
+	ProcsLimit string // per-container pids.max cap, e.g. "4096"
 	// Quota validity: Expired locks the account to read-only (only the admin's
 	// extend/delete work). ExpiredDays is whole days past the deadline, floored
 	// (a same-day expiry shows 0). ExpiresShort is the UTC date for display.
@@ -172,6 +182,15 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		d.PoolFree = s.mgr.FreePoolIPv6List()
 		if total, used, err := s.mgr.IPv6PoolUsage(); err == nil {
 			d.PoolUsed, d.PoolTotal = used, total
+		}
+	}
+	// Whole /64 blocks: prefix mode with an extra prefix configured. A prefix
+	// that holds no whole /64 (a /64 or longer) counts as not configured — there
+	// would be nothing to hand out.
+	if s.mgr.IPv6Mode() == cfg.IPv6ModePrefix {
+		if total, _, _, free, err := s.mgr.ExtraCapacity(); err == nil && total > 0 {
+			d.ExtraConfigured = true
+			d.ExtraFree = free
 		}
 	}
 	if keys, err := s.mgr.ListAdminKeys(); err == nil {
@@ -261,6 +280,7 @@ func (s *Server) loadUsers(d *pageData) {
 			DownGB:       st.DownGB,
 			BWTotal:      st.BWTotal,
 			IPv6:         st.IPv6,
+			IPv6Extra:    st.IPv6Extra,
 			Procs:        st.Procs,
 			ProcsLimit:   lx.DefaultProcessesLimit,
 			ExpiresAt:    u.ExpiresAt,
@@ -492,7 +512,11 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_days"))
 		return
 	}
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true, Days: days})
+	// Whole-/64 checkbox (prefix mode with an extra prefix configured): the form
+	// ticks it by default, and it is disabled once the pool is empty. Allocation
+	// is best-effort either way — an exhausted pool silently yields no block.
+	allocExtra64 := strings.TrimSpace(r.FormValue("extra64")) != ""
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true, Days: days, AllocateExtra64: allocExtra64})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
@@ -581,6 +605,7 @@ func (s *Server) handleUserBatch(w http.ResponseWriter, r *http.Request) {
 	opt := mgr.AddOptions{
 		CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB,
 		AllowChild: true, Days: days, FromShare: share,
+		AllocateExtra64: strings.TrimSpace(r.FormValue("extra64")) != "",
 	}
 	_ = s.db.AddAuditLog("000", "user.batch_create")
 	// Background: each clone takes tens of seconds, so the request returns at
@@ -705,6 +730,17 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.db.AddAuditLog("000+"+name, "ipv6.assign")
+	}
+	// A whole /64 can be handed to a container that has none, and only then: a
+	// block, once assigned, is the account's for life — this dialog can never
+	// take it back (deleting the account is the only way to release it). The
+	// manager call is idempotent, so a re-submit is harmless.
+	if strings.TrimSpace(r.FormValue("extra64")) != "" {
+		if _, err := s.mgr.AssignExtraBlock(name); err != nil {
+			s.redirect(w, r, s.p(""), "error: "+err.Error())
+			return
+		}
+		_ = s.db.AddAuditLog("000+"+name, "ipv6.extra64.assign")
 	}
 	_ = s.db.AddAuditLog("000+"+name, "quota.update")
 	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
@@ -1328,6 +1364,15 @@ type ipv6PoolPageData struct {
 	Used   int
 	Free   int
 	Addrs  []mgr.PoolEntries
+	// Whole /64 blocks (prefix mode): the extra prefix the operator configured
+	// ("" = feature off), how its blocks are distributed, and who holds them.
+	// Only the ASSIGNED blocks are listed — a /48 would have 65536 of them.
+	ExtraPrefix   string
+	ExtraTotal    int
+	ExtraReserved int
+	ExtraUsed     int
+	ExtraFree     int
+	ExtraAssigned []mgr.ExtraEntry
 }
 
 func (s *Server) renderIPv6Pool(w http.ResponseWriter, r *http.Request, d ipv6PoolPageData) {
@@ -1370,7 +1415,49 @@ func (s *Server) handleIPv6Pool(w http.ResponseWriter, r *http.Request) {
 	} else {
 		d.Addrs = addrs
 	}
+	// Whole-/64 blocks live on the same page: prefix mode has no address pool,
+	// so this card is what that mode's page actually shows.
+	if d.Mode == cfg.IPv6ModePrefix {
+		d.ExtraPrefix = s.cfg.Net.IPv6ExtraPrefix
+		if t, reserved, u, free, err := s.mgr.ExtraCapacity(); err == nil {
+			d.ExtraTotal, d.ExtraReserved, d.ExtraUsed, d.ExtraFree = t, reserved, u, free
+		} else {
+			d.Err = d.Err + " " + err.Error()
+		}
+		d.ExtraAssigned = s.mgr.ExtraAssignments()
+	}
 	s.renderIPv6Pool(w, r, d)
+}
+
+// handleIPv6ExtraSet stores net.ipv6_extra_prefix: the optional prefix whole /64
+// blocks are carved from. Empty turns the feature off. The value is taken as
+// the operator enters it — they assert the prefix is theirs, so nothing checks
+// that the provider really routes it — and only the basic shape (a global CIDR
+// carrying a length) is validated, by the same registry entry the CLI uses.
+func (s *Server) handleIPv6ExtraSet(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	f := cfg.FieldFor("net.ipv6_extra_prefix")
+	if f == nil {
+		s.redirect(w, r, s.p("/ipv6pool"), "error: unknown setting")
+		return
+	}
+	if err := f.Assign(s.cfg, r.FormValue("prefix")); err != nil {
+		s.redirect(w, r, s.p("/ipv6pool"), "error: "+err.Error())
+		return
+	}
+	if err := cfg.Save(s.cfg); err != nil {
+		s.redirect(w, r, s.p("/ipv6pool"), "error: "+err.Error())
+		return
+	}
+	// Best-effort host plumbing refresh so the change takes effect at once.
+	// Existing blocks keep working either way: their routes are restored by the
+	// same pass, and changing the prefix never renumbers a container.
+	_ = s.mgr.RewireAllIPv6()
+	_ = s.db.AddAuditLog("000", "ipv6.extra_prefix")
+	s.redirect(w, r, s.p("/ipv6pool"), s.t(r, "extra_prefix_saved"))
 }
 
 // handleIPv6PoolAdd batch-adds addresses from the multi-line textarea.

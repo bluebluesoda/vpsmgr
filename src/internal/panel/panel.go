@@ -201,6 +201,7 @@ type pageData struct {
 	DownGB                  string
 	IPv6                    string // primary global address (the one to connect to)
 	IPv6Block               string // the /112 block the container owns (informational)
+	IPv6Extra               string // whole /64 handed out from the extra prefix ("" = none)
 	Snapshots               []snapshotRow
 	SnapshotLimit           int // configured per-container snapshot cap (for display)
 	// Snapshot share: the code others can use to install from a checkpoint, and
@@ -471,6 +472,10 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 			if b, _ := s.mgr.IPv6Block(u.Name); b != nil {
 				d.IPv6Block = b.String()
 			}
+			// The whole /64 the account may own (net.ipv6_extra_prefix). Neutral
+			// presentation: it is simply shown, not advertised as something to
+			// ask for.
+			d.IPv6Extra = u.IPv6ExtraBlock
 		}
 	}
 	up, down := s.mgr.BandwidthFor(u.ID) // pure DB read

@@ -299,7 +299,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <table>
 {{if .V4Forward}}<tr><th>IPV4</th><td colspan="3"><code class="copyable">{{.PublicIP}}</code></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code class="copyable" data-copy="ssh -p {{.SSHPort}} root@{{.PublicIP}}" title="ssh -p {{.SSHPort}} root@{{.PublicIP}}">{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code class="copyable" data-copy="ssh -p 22 root@{{.IPv6}}" title="ssh -p 22 root@{{.IPv6}}">22</code></span>{{end}}</td></tr>
-{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code class="copyable">{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}</td></tr>{{end}}
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code class="copyable">{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: {{.IPv6Block}}</div>{{end}}{{if .IPv6Extra}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}IPv6 段{{else}}IPv6 prefix{{end}}: <code class="copyable">{{.IPv6Extra}}</code></div>{{end}}</td></tr>{{end}}
 </table>
 </div>
 

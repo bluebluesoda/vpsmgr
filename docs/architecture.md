@@ -118,6 +118,12 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
 - **Port 25 is always blocked**: the ruleset's forward chain drops port 25
   (TCP+UDP, both directions) for all forwarded traffic — permanent anti-spam,
   only a full uninstall clears it.
+- **Optional whole /64 per container**: on a `prefix`-mode host whose provider
+  delegates a prefix shorter than /64, `net.ipv6_extra_prefix` lets a container
+  own a whole /64 out of it alongside its /112 primary — the only block size
+  inside which SLAAC and sub-delegation work. OFF by default and invisible until
+  an operator sets that key; the /64 this host itself uses is never handed out.
+  See [ipv6.md](ipv6.md).
 - Add/Del/Reinstall are serialized by a per-process mutex, and `mgr.Add` rolls
   back the container, IPv6 route, nft rules and DB record on any post-launch
   failure. The DB write is a **single transaction** (`db.CreateUserFull`):
