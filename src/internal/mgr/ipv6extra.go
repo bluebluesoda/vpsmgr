@@ -250,6 +250,19 @@ func blockRoutes(block112, extra string) string {
 	}
 }
 
+// deviceIPv6Addr is the ipv6.address a container's NIC should declare: the
+// account's primary address — unless it owns a whole /64, in which case none.
+// A declared address turns every declared route into a via-address one, and the
+// kernel refuses that form for a block the account's own /112 route covers (see
+// applyExtraRoutes). A container without a block therefore keeps exactly the NIC
+// shape it has always had, on a host that never configured the feature or not.
+func deviceIPv6Addr(primary, extra string) string {
+	if extra != "" {
+		return ""
+	}
+	return primary
+}
+
 // applyExtraRoutes rewrites a container's eth0 IPv6 wiring so its whole /64 is
 // routed to it: ipv6.routes carries the /112 AND the block, and ipv6.address is
 // REMOVED. Both halves matter, and both were found the hard way:
