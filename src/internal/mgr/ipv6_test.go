@@ -33,7 +33,7 @@ func ipv6TestManager(t *testing.T, subnet string, users map[string]int64) *Manag
 	for name, index := range users {
 		i++
 		if _, err := d.CreateUserFull(name, "h", fmt.Sprintf("10.42.0.%d", i+1), i, 30000+i, 10000+i*100,
-			1, 1024, 10, 0, db.StatusReady, "", index, ""); err != nil {
+			1, 1024, 10, 0, db.StatusReady, "", index, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -208,7 +208,7 @@ func TestIPv6ContainerScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script, err := m.ipv6ContainerScript(addr)
+	script, err := m.ipv6ContainerScript(addr, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestIPv6ContainerScript(t *testing.T) {
 func TestConfigureContainerIPv6Disabled(t *testing.T) {
 	c := cfg.Default() // IPv6 disabled by default
 	m := &Manager{cfg: c}
-	if err := m.ConfigureContainerIPv6("alice", ""); err != nil {
+	if err := m.ConfigureContainerIPv6("alice", "", ""); err != nil {
 		t.Errorf("expected a no-op when IPv6 is disabled, got %v", err)
 	}
 }
@@ -255,7 +255,7 @@ func TestIPv6ContainerScriptNoAddress(t *testing.T) {
 	c := cfg.Default()
 	c.Net.IPv6Subnet = "2602:fada:6::/64"
 	m := &Manager{cfg: c}
-	if s, err := m.ipv6ContainerScript(""); err != nil || s != "" {
+	if s, err := m.ipv6ContainerScript("", ""); err != nil || s != "" {
 		t.Errorf(`ipv6ContainerScript("") = %q, %v; want "", nil`, s, err)
 	}
 }
@@ -291,7 +291,7 @@ func TestPoolContainerScript(t *testing.T) {
 	}
 	// An empty address is a no-op (V4-only container) — the empty check lives in
 	// ipv6ContainerScriptFor, the pool script's only caller.
-	if s, _ := m.ipv6ContainerScriptFor("", ""); s != "" {
+	if s, _ := m.ipv6ContainerScriptFor("", "", ""); s != "" {
 		t.Errorf("expected empty script for empty address, got %q", s)
 	}
 }

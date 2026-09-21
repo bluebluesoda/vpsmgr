@@ -35,6 +35,13 @@ type User struct {
 	// IPv6Address is the pool-mode IPv6 /128 assigned to this user ("" when
 	// none, e.g. prefix mode or a V4-only container). Released on delete.
 	IPv6Address string
+	// IPv6ExtraBlock is the whole /64 (a CIDR string, e.g.
+	// "2001:1c00:b1b:7f1::/64") carved from net.ipv6_extra_prefix and routed to
+	// this container alongside its /112 primary address ("" = none). Stored as
+	// the CIDR actually handed out, so a later change of the configured prefix
+	// cannot invalidate it. It is released only by deleting the account — no
+	// quota edit can take it back.
+	IPv6ExtraBlock string
 	// Color is the accent color the operator assigned to this user ("" =
 	// default). A hex string from the admin panel's fixed palette; the user
 	// panel tints its theme with it.
@@ -67,9 +74,12 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 // default otherwise). ipv6Address is the pool-mode /128 assigned to the user
 // ("" for none) and ipv6Index the prefix-mode /112 block index (0 for none);
 // both are written in the same transaction so a reservation and the user row
-// can never disagree. expiresAt is the quota deadline (RFC3339 UTC, "" =
-// permanent).
-func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, expiresAt string) (*User, error) {
+// can never disagree. ipv6ExtraBlock is the optional whole /64 handed out from
+// net.ipv6_extra_prefix ("" for none) — it goes through the same transaction
+// for the same reason: a block that is routed to a container but not recorded
+// could be handed to a second one. expiresAt is the quota deadline (RFC3339
+// UTC, "" = permanent).
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, ipv6ExtraBlock, expiresAt string) (*User, error) {
 	if status == "" {
 		status = StatusReady
 	}
@@ -80,11 +90,11 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	defer tx.Rollback()
 
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, IPv6Index: ipv6Index, ExpiresAt: expiresAt}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, IPv6Index: ipv6Index, IPv6ExtraBlock: ipv6ExtraBlock, ExpiresAt: expiresAt}
 	r, err := tx.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, expires_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), nullIfZero(u.IPv6Index), u.ExpiresAt)
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, ipv6_extra_block, expires_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), nullIfZero(u.IPv6Index), nullIfEmpty(u.IPv6ExtraBlock), u.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -194,31 +204,33 @@ func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	var ipv6 sql.NullString
 	var ipv6Index sql.NullInt64
+	var ipv6Extra sql.NullString
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra)
 	if err != nil {
 		return nil, err
 	}
 	u.IPv6Address = ipv6.String
 	u.IPv6Index = ipv6Index.Int64
+	u.IPv6ExtraBlock = ipv6Extra.String
 	return u, nil
 }
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -229,12 +241,14 @@ func (d *DB) ListUsers() ([]*User, error) {
 		u := &User{}
 		var ipv6 sql.NullString
 		var ipv6Index sql.NullInt64
+		var ipv6Extra sql.NullString
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra); err != nil {
 			return nil, err
 		}
 		u.IPv6Address = ipv6.String
 		u.IPv6Index = ipv6Index.Int64
+		u.IPv6ExtraBlock = ipv6Extra.String
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -321,6 +335,35 @@ func (d *DB) UsedIPv6Addresses() (map[string]bool, error) {
 			return nil, err
 		}
 		used[a] = true
+	}
+	return used, rows.Err()
+}
+
+// UpdateUserIPv6ExtraBlock sets a user's whole-/64 block (carved from
+// net.ipv6_extra_prefix), or clears it with "". The column carries a unique
+// index, so a block can only ever belong to one user. Nothing in the panel
+// calls this with "": a block is released only by deleting the account.
+func (d *DB) UpdateUserIPv6ExtraBlock(id int64, block string) error {
+	_, err := d.sql.Exec(`UPDATE users SET ipv6_extra_block=? WHERE id=?`, nullIfEmpty(block), id)
+	return err
+}
+
+// UsedIPv6ExtraBlocks returns the set of whole-/64 blocks currently assigned to
+// users, so the manager can pick the lowest free one and the UI can count what
+// is left.
+func (d *DB) UsedIPv6ExtraBlocks() (map[string]bool, error) {
+	rows, err := d.sql.Query(`SELECT ipv6_extra_block FROM users WHERE ipv6_extra_block IS NOT NULL AND ipv6_extra_block != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	used := map[string]bool{}
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		used[b] = true
 	}
 	return used, rows.Err()
 }

@@ -374,6 +374,29 @@ var Fields = []Field{
 			}
 			return nil
 		}},
+	{"net.ipv6_extra_prefix", KindOperator, ApplyNextAdd,
+		"optional extra prefix (prefix mode) whole /64 blocks are carved from and routed to containers; empty = feature off. Accepted as-is — the /64 this host itself uses is never handed to a container",
+		"2001:1c00:b1b:7f0::/60 (empty for off)",
+		func(c *Config) string {
+			if c.Net.IPv6ExtraPrefix == "" {
+				return "off"
+			}
+			return c.Net.IPv6ExtraPrefix
+		},
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.Net.IPv6ExtraPrefix = ""
+				return nil
+			}
+			old := c.Net.IPv6ExtraPrefix
+			c.Net.IPv6ExtraPrefix = v
+			if _, err := c.IPv6ExtraPrefixNetwork(); err != nil {
+				c.Net.IPv6ExtraPrefix = old
+				return err
+			}
+			return nil
+		}},
 	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",
 		getStr(func(c *Config) string { return c.Incus.Image }),

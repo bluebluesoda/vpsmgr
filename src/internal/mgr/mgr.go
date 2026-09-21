@@ -350,6 +350,11 @@ type AddOptions struct {
 	// Ignored unless the config is in pool mode (prefix mode always assigns
 	// the address built from the account's stored block index).
 	IPv6Addr string
+	// AllocateExtra64 asks for a whole /64 out of net.ipv6_extra_prefix (prefix
+	// mode only). Best-effort by design: with no extra prefix configured, or
+	// with every block taken, the container is created without one rather than
+	// failing.
+	AllocateExtra64 bool
 	// Days is the initial quota validity in days (0 or negative = permanent).
 	Days int
 	// FromShare is a snapshot share code. When set, the container is cloned
@@ -450,10 +455,18 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	//             pool is exhausted / the caller opted out with "none"
 	//   - none:   no IPv6 at all
 	poolAddr := ""
-	ipv6 := ""          // eth0 ipv6.address handed to Incus (prefix mode only)
+	// ipv6 is the container's PRIMARY address (bound inside the guest, and what
+	// the user connects to). The Incus device never carries it: eth0 is given
+	// routes only, because a declared ipv6.address turns every route into a
+	// via-address one, and such a route cannot be added once the address is
+	// itself covered by a gateway route (the account's /112). See
+	// applyExtraRoutes.
+	ipv6 := ""
 	var ipv6Index int64 // stored /112 block index (prefix mode only)
 	blockStr := ""
 	var block *net.IPNet // the block those produce (prefix mode only)
+	extraBlock := ""     // optional whole /64 out of net.ipv6_extra_prefix
+	var extraNet *net.IPNet
 	switch m.cfg.IPv6ModeEffective() {
 	case cfg.IPv6ModePool:
 		if opt.IPv6Addr == "none" {
@@ -486,6 +499,23 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			blockStr = block.String()
 			ipv6 = addHostOffset(block.IP, 1).String()
 		}
+		// Optional whole /64 (net.ipv6_extra_prefix, off unless the operator
+		// configured one). Never fatal: an exhausted pool just means no block.
+		if opt.AllocateExtra64 && m.ExtraEnabled() {
+			picked64, err := m.pickExtraBlock()
+			if err != nil {
+				return nil, err
+			}
+			if picked64 != "" {
+				_, n, err := net.ParseCIDR(picked64)
+				if err != nil {
+					return nil, fmt.Errorf("parse extra block %s: %w", picked64, err)
+				}
+				extraBlock, extraNet = n.String(), n
+			}
+		}
+		// The routes the NIC declares: the /112, and the /64 when it got one.
+		blockStr = blockRoutes(blockStr, extraBlock)
 	}
 	// Defend against orphan containers: a crashed create (or an out-of-band
 	// `incus` instance) could already hold this name or the IP NextFreeIdx just
@@ -500,7 +530,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	cloned := cloneOwner != ""
 	if cloned {
 		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
-			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, ipv6, blockStr, poolAddr,
+			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr,
 			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
 		}
@@ -514,7 +544,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		if err := m.lx.EnsureImage(image); err != nil {
 			return nil, fmt.Errorf("ensure image %s: %w", image, err)
 		}
-		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, deviceIPv6Addr(ipv6, extraBlock), blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 			return nil, fmt.Errorf("launch container: %w", err)
 		}
 	}
@@ -584,7 +614,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	// host-routed peer IPv6 container script. No-op when IPv6 is disabled.
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		if poolAddr != "" {
-			if err := m.ConfigureContainerIPv6(name, poolAddr); err != nil {
+			if err := m.ConfigureContainerIPv6(name, poolAddr, ""); err != nil {
 				cleanup()
 				return nil, fmt.Errorf("config container ipv6: %w", err)
 			}
@@ -598,16 +628,16 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		// bring the guest's /128 + local /112 up FIRST, then publish the NDP
 		// rule. Publishing last means an outside client's first SYN never
 		// races the guest still half-configured during `vps add`.
-		if err := m.ConfigureContainerIPv6(name, ipv6); err != nil {
+		if err := m.ConfigureContainerIPv6(name, ipv6, extraBlock); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(name, block); err != nil {
+		if err := m.WireIPv6(name, block, extraNet); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ipv6Index, ExpiryFromDays(opt.Days))
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ipv6Index, extraBlock, ExpiryFromDays(opt.Days))
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -672,6 +702,7 @@ type Result struct {
 	DownGB       string
 	IPv6         string // primary global address (the one to connect to)
 	IPv6Block    string // the /112 block the container owns (informational)
+	IPv6Extra    string // whole /64 handed out from the extra prefix ("" = none)
 	V4Forward    bool   // whether IPv4 inbound (ssh/ports/domains) is live
 }
 
@@ -702,6 +733,7 @@ func (m *Manager) resultForState(u *db.User, pass, state string) *Result {
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: state, Domains: ds, PortsPerUser: cfg.PortsPerUser,
 		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block,
+		IPv6Extra: u.IPv6ExtraBlock,
 		V4Forward: m.cfg.Net.V4Forward}
 }
 
@@ -1077,7 +1109,11 @@ func (m *Manager) Power(name, action string) error {
 		if err := m.lx.SetAutostart(u.Name, true); err != nil {
 			return err
 		}
-		return m.lx.Start(u.Name)
+		if err := m.lx.Start(u.Name); err != nil {
+			return err
+		}
+		m.reapplyExtraBlockGuest(u)
+		return nil
 	case "stop":
 		if err := m.lx.SetAutostart(u.Name, false); err != nil {
 			return err
@@ -1087,9 +1123,30 @@ func (m *Manager) Power(name, action string) error {
 		if err := m.lx.SetAutostart(u.Name, true); err != nil {
 			return err
 		}
-		return m.lx.Restart(u.Name)
+		if err := m.lx.Restart(u.Name); err != nil {
+			return err
+		}
+		m.reapplyExtraBlockGuest(u)
+		return nil
 	}
 	return errors.New("unknown action")
+}
+
+// reapplyExtraBlockGuest rebinds a container's whole /64 inside the guest after
+// it (re)starts. The host-side route is part of the container's own network
+// configuration, so Incus brings it back by itself; the address inside the guest
+// is not — it is written by the provider script — so a container that was
+// stopped when its block was assigned (or that came back from a host reboot
+// without the boot pass reaching it) needs this. Best-effort: a guest that
+// rejects its configuration must not turn a successful power operation into an
+// error, and the boot pass (`vps ipv6-reapply`) heals it later.
+func (m *Manager) reapplyExtraBlockGuest(u *db.User) {
+	if u == nil || u.IPv6ExtraBlock == "" {
+		return
+	}
+	if err := m.ConfigureContainerIPv6(u.Name, "", ""); err != nil {
+		fmt.Printf("  ! warn: %s: rebind %s in the guest: %v\n", u.Name, u.IPv6ExtraBlock, err)
+	}
 }
 
 // validSnapName restricts snapshot names to a safe charset so user-supplied
@@ -1451,6 +1508,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	ipv6 := ""
 	blockStr := ""
 	var block *net.IPNet
+	var extraNet *net.IPNet
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		// NOT set on the Incus eth0 device (rejected: outside bridge subnet).
 	} else {
@@ -1459,8 +1517,16 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		if block != nil {
 			blockStr = block.String()
 		}
+		if u.IPv6ExtraBlock != "" {
+			if _, n, err := net.ParseCIDR(u.IPv6ExtraBlock); err == nil {
+				extraNet = n
+			}
+		}
+		// The NIC declares the routes: the /112, and the whole /64 when the
+		// account owns one (it keeps it across a reinstall).
+		blockStr = blockRoutes(blockStr, u.IPv6ExtraBlock)
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, deviceIPv6Addr(ipv6, u.IPv6ExtraBlock), blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
@@ -1477,7 +1543,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	}
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		if u.IPv6Address != "" {
-			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address); err != nil {
+			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address, ""); err != nil {
 				rollback()
 				return "", fmt.Errorf("config container ipv6: %w", err)
 			}
@@ -1489,11 +1555,11 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	} else {
 		// Configure the guest's IPv6 first, then publish the NDP rule, so the
 		// outside world only learns the /112 once the container is ready.
-		if err := m.ConfigureContainerIPv6(u.Name, ipv6); err != nil {
+		if err := m.ConfigureContainerIPv6(u.Name, ipv6, u.IPv6ExtraBlock); err != nil {
 			rollback()
 			return "", fmt.Errorf("config container ipv6: %w", err)
 		}
-		if err := m.WireIPv6(u.Name, block); err != nil {
+		if err := m.WireIPv6(u.Name, block, extraNet); err != nil {
 			rollback()
 			return "", fmt.Errorf("wire ipv6: %w", err)
 		}
@@ -1763,6 +1829,12 @@ func (m *Manager) EnsureBlockRoutes() error {
 		if _, err := m.lx.EnsureEth0Options(u.Name, map[string]string{"ipv6.routes": b.String()}); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	// The whole /64 blocks are routed by the panel rather than by Incus, so they
+	// need their own pass — both to install them on an upgrade and to bring them
+	// back after a reboot (that is what RewireAllIPv6 does at boot).
+	if err := m.EnsureExtraBlockRoutes(); err != nil && firstErr == nil {
+		firstErr = err
 	}
 	return firstErr
 }

@@ -244,6 +244,14 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         {{if .PoolTotal}}<small style="color:#6b7280">{{if eq .Lang "zh"}}池 {{.PoolUsed}}/{{.PoolTotal}} 已用{{else}}{{.PoolUsed}}/{{.PoolTotal}} used{{end}}</small>{{end}}
       </div>
       {{end}}
+      {{if .ExtraConfigured}}
+      <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}整段 /64{{else}}Whole /64{{end}}</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;{{if not .ExtraFree}}color:#9ca3af{{end}}">
+          <input type="checkbox" name="extra64" value="1" style="width:auto;flex:none"{{if .ExtraFree}} checked{{else}} disabled{{end}}>
+          <span>{{if eq .Lang "zh"}}分配 /64 前缀（剩余 {{.ExtraFree}} 个）{{else}}Assign a whole /64 ({{.ExtraFree}} left){{end}}</span>
+        </label>
+      </div>
+      {{end}}
       <button type="submit" class="primary neutral" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
@@ -292,7 +300,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               {{else}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false,{{if .IPv6}}true{{else}}false{{end}})">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false,{{if .IPv6}}true{{else}}false{{end}},'{{.IPv6Extra}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
               <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary neutral"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
@@ -434,6 +442,19 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         </select>
       </div>
       {{end}}
+      {{if .ExtraConfigured}}
+      <!-- A whole /64 can be given to a container that has none. Once given it
+           is the account's for life: this form can assign one, never release it. -->
+      <div class="field" id="quotaExtra64Wrap" style="display:none"><label>{{if eq .Lang "zh"}}分配 /64 前缀{{else}}Assign a whole /64{{end}}</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;{{if not .ExtraFree}}color:#9ca3af{{end}}">
+          <input type="checkbox" name="extra64" value="1" id="quotaExtra64" style="width:auto;flex:none"{{if not .ExtraFree}} disabled{{end}}>
+          <span>{{if eq .Lang "zh"}}分配 /64 前缀（剩余 {{.ExtraFree}} 个）{{else}}Assign a whole /64 ({{.ExtraFree}} left){{end}}</span>
+        </label>
+      </div>
+      <div class="field" id="quotaExtra64Have" style="display:none"><label>{{if eq .Lang "zh"}}IPv6 段{{else}}IPv6 prefix{{end}}</label>
+        <code id="quotaExtra64Val"></code>
+      </div>
+      {{end}}
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
     </form>
     <p id="quotaExpiredNote" style="display:none;color:#b91c1c;font-weight:600;margin:10px 0 0">{{if eq .Lang "zh"}}该账户已到期，仅可延期。{{else}}This account has expired — only extending is allowed.{{end}}</p>
@@ -544,6 +565,14 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" type="number" min="0" step="1" value="0"></div>
         <div class="field"><label>{{if eq .Lang "zh"}}有效期天数{{else}}Validity days{{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
       </div>
+      {{if .ExtraConfigured}}
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;{{if not .ExtraFree}}color:#9ca3af{{end}}">
+          <input type="checkbox" name="extra64" value="1" style="width:auto;flex:none"{{if .ExtraFree}} checked{{else}} disabled{{end}}>
+          <span>{{if eq .Lang "zh"}}为每个容器分配 /64 前缀（剩余 {{.ExtraFree}} 个）{{else}}Assign a whole /64 to each container ({{.ExtraFree}} left){{end}}</span>
+        </label>
+      </div>
+      {{end}}
       <div class="foot">
         <button type="button" id="batchCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
         <button type="submit" class="primary" id="batchSubmit">{{if eq .Lang "zh"}}开始创建{{else}}Start{{end}}</button>
@@ -610,7 +639,7 @@ function copyModal(){
   if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
   else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
-function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6){
+function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6, extra64){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
   document.getElementById('quotaBwName').value = name;
@@ -630,6 +659,17 @@ function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6){
   // A pool address can be given to a container that has none, and only then.
   var v6wrap = document.getElementById('quotaIpv6Wrap');
   if(v6wrap) v6wrap.style.display = (hasIpv6 || lock) ? 'none' : '';
+  // Whole /64: the checkbox is offered only while one is free and the container
+  // has none (a greyed-out, disabled checkbox is rendered when none is). A
+  // container that already owns one shows it read-only — this form can never
+  // take it back.
+  var e64have = document.getElementById('quotaExtra64Have');
+  if(e64have){
+    e64have.style.display = extra64 ? '' : 'none';
+    if(extra64) document.getElementById('quotaExtra64Val').textContent = extra64;
+  }
+  var e64wrap = document.getElementById('quotaExtra64Wrap');
+  if(e64wrap) e64wrap.style.display = (extra64 || lock) ? 'none' : '';
   var note = document.getElementById('quotaExpiredNote'); if(note) note.style.display = lock ? 'block' : 'none';
   document.getElementById('quotaExtend').value = 'none';
   document.getElementById('quotaExtendDaysWrap').style.display = 'none';
