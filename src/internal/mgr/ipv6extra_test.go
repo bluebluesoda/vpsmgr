@@ -251,6 +251,27 @@ func TestIPv6ContainerScriptWithExtraBlock(t *testing.T) {
 	}
 }
 
+// The whole /64 must be listed BEFORE the account's /112. Incus installs the
+// list in order, each entry as a `via <primary>` route, and the kernel refuses a
+// via-address route whose gateway is itself reached by one — which the /112
+// route is ("RTNETLINK answers: No route to host"). Reordering this string
+// silently costs every block container its /64, so pin it.
+func TestExtraBlockRoutesOrder(t *testing.T) {
+	const block112 = "2602:fada:6::/112"
+	const block64 = "2602:fada:6:7::/64"
+	if got, want := blockRoutes(block112, block64), block64+","+block112; got != want {
+		t.Errorf("blockRoutes(%q, %q) = %q, want %q", block112, block64, got, want)
+	}
+	// Without a block the value is exactly what it has always been, and a
+	// missing /112 (pool mode) must not leave a stray comma.
+	if got := blockRoutes(block112, ""); got != block112 {
+		t.Errorf("blockRoutes without a block = %q, want %q", got, block112)
+	}
+	if got := blockRoutes("", block64); got != block64 {
+		t.Errorf("blockRoutes without a /112 = %q, want %q", got, block64)
+	}
+}
+
 // Assignments are listed with their owner, in block order.
 func TestExtraAssignments(t *testing.T) {
 	m := extraTestManager(t, "2001:db8:4::/60")

@@ -602,17 +602,6 @@ func (c *Client) SetDisk(name string, gb int) error {
 // a running container hot-removes the device, which trips an Incus netprio bug
 // and can leave the option unapplied, so the container is stopped first.
 func (c *Client) EnsureDeviceOptions(name, devName string, opts map[string]string) (bool, error) {
-	return c.EnsureDeviceOptionsDrop(name, devName, opts, nil)
-}
-
-// EnsureDeviceOptionsDrop is EnsureDeviceOptions plus a list of option names to
-// REMOVE from the device in the same patch. Removing a key is not cosmetic:
-// Incus turns a NIC's ipv6.routes entries into `via <ipv6.address>` routes, so
-// dropping ipv6.address is what makes the routes direct (`dev <bridge>`) — the
-// only form that can carry the whole /64 a container may own, since a
-// via-address route is unsupported once the address itself is covered by a
-// gateway route (the account's own /112).
-func (c *Client) EnsureDeviceOptionsDrop(name, devName string, opts map[string]string, drop []string) (bool, error) {
 	l := c.lockDev(name)
 	l.Lock()
 	defer l.Unlock()
@@ -625,12 +614,6 @@ func (c *Client) EnsureDeviceOptionsDrop(name, devName string, opts map[string]s
 		return false, fmt.Errorf("incus: instance %s has no %s device", name, devName)
 	}
 	changed := false
-	for _, k := range drop {
-		if _, present := dev[k]; present {
-			delete(dev, k)
-			changed = true
-		}
-	}
 	for k, v := range opts {
 		if dev[k] != v {
 			dev[k] = v

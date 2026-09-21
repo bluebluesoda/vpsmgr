@@ -29,12 +29,12 @@ import (
 //     address in it is usable. Sub-prefixes the customer carves out internally
 //     are more specific than that /64 and win over it.
 //   - The host routes <block>/64 to the container by declaring it on the
-//     container's NIC: eth0 carries `ipv6.routes = <account's /112>,<block>/64`
-//     and NO `ipv6.address` (see applyExtraRoutes for why both parts are
-//     required). Declaring it there is what makes the bridge's own source
-//     filter accept packets the container sources from the block, and it makes
-//     Incus reinstall the route on every container start, so the block survives
-//     reboots with no panel-side route plumbing.
+//     container's NIC: eth0 carries `ipv6.routes = <block>/64,<account's /112>`
+//     (that order is load-bearing) and keeps its `ipv6.address` — see
+//     applyExtraRoutes for why each part is required. Declaring it there is what
+//     makes the bridge's own source filter accept packets the container sources
+//     from the block, and it makes Incus reinstall the route on every container
+//     start, so the block survives reboots with no panel-side route plumbing.
 //   - ndppd gets a rule per block, like the /112s, so an upstream that does NDP
 //     for the prefix is answered.
 //
@@ -237,8 +237,9 @@ func (m *Manager) ExtraAssignments() []ExtraEntry {
 	return out
 }
 
-// blockRoutes renders an eth0 ipv6.routes value: the account's /112 block, plus
-// the whole /64 when it owns one. Incus takes a comma-separated list.
+// blockRoutes renders an eth0 ipv6.routes value: the whole /64 first, then the
+// account's /112. Incus takes a comma-separated list, and it installs it in the
+// order given — which matters, see applyExtraRoutes.
 func blockRoutes(block112, extra string) string {
 	switch {
 	case extra == "":
@@ -246,40 +247,35 @@ func blockRoutes(block112, extra string) string {
 	case block112 == "":
 		return extra
 	default:
-		return block112 + "," + extra
+		return extra + "," + block112
 	}
-}
-
-// deviceIPv6Addr is the ipv6.address a container's NIC should declare: the
-// account's primary address — unless it owns a whole /64, in which case none.
-// A declared address turns every declared route into a via-address one, and the
-// kernel refuses that form for a block the account's own /112 route covers (see
-// applyExtraRoutes). A container without a block therefore keeps exactly the NIC
-// shape it has always had, on a host that never configured the feature or not.
-func deviceIPv6Addr(primary, extra string) string {
-	if extra != "" {
-		return ""
-	}
-	return primary
 }
 
 // applyExtraRoutes rewrites a container's eth0 IPv6 wiring so its whole /64 is
-// routed to it: ipv6.routes carries the /112 AND the block, and ipv6.address is
-// REMOVED. Both halves matter, and both were found the hard way:
+// routed to it: ipv6.routes carries the block AND the account's /112, and
+// ipv6.address stays declared. Every part of that shape is load-bearing, and all
+// of it was found the hard way:
 //
-//   - Incus builds the NIC's source filter (security.ipv6_filtering) from the
-//     declared addresses and routes, so the /64 must be declared or the bridge
-//     drops every packet the container sources from it.
-//   - Incus programs a declared route as `via <ipv6.address>`. The kernel
-//     refuses such a route when the gateway is itself covered by a gateway
-//     route — which the account's own /112 route is ("no route to host") — so a
-//     declared /64 can only be installed as a direct `dev` route, which is what
-//     omitting ipv6.address produces. Nothing is lost: the container binds its
-//     primary address itself, statically, from the guest script.
+//   - Declaring the /64 is what makes the bridge's source filter
+//     (security.ipv6_filtering) accept packets the container sources from it.
+//   - ipv6.address must stay declared. Incus programs a declared route as `via
+//     <ipv6.address>`, and that is what keeps the /112 usable: the guest makes
+//     the whole /112 local (see ipv6ContainerScriptFor), so any address in it
+//     answers — but only if the host delivers it to the container's MAC. Drop
+//     the address and both routes become direct `dev` routes, so the host has to
+//     resolve every single address by neighbour discovery on the bridge, where
+//     the guest only answers for the ones it has bound: ::1 works and the rest
+//     of the /112 goes silent.
+//   - The /64 must come FIRST. The kernel refuses a via-address route whose
+//     gateway is itself reached by a via-address route, and the /112 route is
+//     exactly that ("No route to host"), so the /64 only installs while it is
+//     declared before the /112. Installed, it carries the whole block to the
+//     container's MAC — which is what lets the customer route sub-prefixes out
+//     of it instead of running a responder for every address in it.
 //
-// The device update restarts the container (Incus device patches do; see
-// EnsureDeviceOptionsDrop), so the caller can configure the guest right after.
-// Idempotent: an unchanged device is not touched.
+// A changed device restarts the container (Incus device patches stop it first),
+// so the caller can configure the guest right after. Idempotent: an unchanged
+// device is not touched.
 func (m *Manager) applyExtraRoutes(name, extra string) error {
 	block, err := m.IPv6Block(name)
 	if err != nil {
@@ -288,17 +284,25 @@ func (m *Manager) applyExtraRoutes(name, extra string) error {
 	if block == nil {
 		return fmt.Errorf("%s has no /112 block to route", name)
 	}
-	routes := blockRoutes(block.String(), extra)
-	_, err = m.lx.EnsureDeviceOptionsDrop(name, "eth0",
-		map[string]string{"ipv6.routes": routes}, []string{"ipv6.address"})
+	primary, err := m.IPv6Addr(name)
+	if err != nil {
+		return err
+	}
+	if primary == "" {
+		return fmt.Errorf("%s has no IPv6 address to route from", name)
+	}
+	_, err = m.lx.EnsureEth0Options(name, map[string]string{
+		"ipv6.address": primary,
+		"ipv6.routes":  blockRoutes(block.String(), extra),
+	})
 	return err
 }
 
 // EnsureExtraBlockRoutes reapplies the eth0 wiring of every account that owns a
-// whole /64. Containers that were created (or upgraded) with only the /112
-// declared would otherwise never get their block back: the kernel-side state is
-// part of the instance config, but the declaration is a change made after the
-// container existed. Called by EnsureBlockRoutes (`vps install`) and by
+// whole /64. Containers that were created (or upgraded) before their block was
+// declared would otherwise never get it back: the kernel-side state is part of
+// the instance config, but the declaration is a change made after the container
+// existed. Called by EnsureBlockRoutes (`vps install`) and by
 // RewireAllIPv6 (the boot unit and `vps ipv6-reapply`), so it also heals a
 // container that was recreated out of band.
 func (m *Manager) EnsureExtraBlockRoutes() error {
