@@ -265,20 +265,22 @@ if ! curl -sS --max-time 10 -o /dev/null https://api.globalping.io/v1/measuremen
 fi
 
 echo "== Phase 3: external verification (random address in $CAND_PREFIX) =="
-# The random host-part must avoid:  the provider gateway (::1), the host's own
-# address, and all-zero / all-f suffix hextets (subnet-router / subnet-anycast).
-HOST_SUFFIX=$(echo "$HOST_ADDR" | awk -F: '{print $NF}')
-RAND=""
-for i in $(seq 1 30); do
-  SUF=$(printf '%04x' "$((RANDOM%65521+1))")   # 1..65520, avoids 0 and ffff
-  [[ "$SUF" == "$HOST_SUFFIX" ]] && continue
-  RAND="$SUF"
-  break
-done
-[[ -n "$RAND" ]] || die "could not pick a random host part"
-# strip any "/len" from the prefix for address concatenation
-PREFIX_BARE="${CAND_PREFIX%%/*}"
-TEST_ADDR="$PREFIX_BARE$RAND"
+# Probe a uniformly random address INSIDE the prefix, not a random host part of
+# its first /64: for a delegation shorter than /64 (a /60, /56, /48) the whole
+# point is that the provider routes all of it, and an address in the first /64
+# proves nothing — that is usually the segment the host already holds an address
+# in. Avoiding the network address and the last address also skips the two
+# anycast forms (subnet-router ::0 and subnet anycast ...:ffff).
+TEST_ADDR=$(python3 - "$CAND_PREFIX" <<'PY'
+import ipaddress, random, sys
+net = ipaddress.IPv6Network(sys.argv[1], strict=False)
+addr = net.network_address + random.randrange(1, net.num_addresses)
+if addr == net.broadcast_address:
+    addr -= 1
+print(addr)
+PY
+)
+[[ -n "$TEST_ADDR" ]] || die "could not pick a random address in $CAND_PREFIX"
 TEST_CIDR="$TEST_ADDR/128"
 
 log "picked random test address: $TEST_ADDR (inside $CAND_PREFIX)"

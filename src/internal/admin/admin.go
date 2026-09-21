@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ipv6pool", s.requireAuth(s.handleIPv6Pool))
 	mux.HandleFunc("/ipv6pool-add", s.requireAuth(s.requirePost(s.handleIPv6PoolAdd)))
 	mux.HandleFunc("/ipv6pool-del", s.requireAuth(s.requirePost(s.handleIPv6PoolDel)))
+	mux.HandleFunc("/ipv6extra-set", s.requireAuth(s.requirePost(s.handleIPv6ExtraSet)))
 	mux.HandleFunc("/audit", s.requireAuth(s.handleAudit))
 	mux.HandleFunc("/audit/api", s.requireAuth(s.handleAuditAPI))
 	mux.HandleFunc("/user-add", s.requireAuth(s.requirePost(s.handleUserAdd)))

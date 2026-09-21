@@ -15,7 +15,7 @@ func TestIPv6AddressLifecycle(t *testing.T) {
 	defer d.Close()
 
 	addr := "2001:db8::9c4"
-	u, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, addr, 0, "")
+	u, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, addr, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestIPv6AddressLifecycle(t *testing.T) {
 	}
 
 	// Same address for a second user must be refused (UNIQUE index).
-	if _, err := d.CreateUserFull("bob", "h", "10.42.0.3", 2, 30002, 10100, 1, 1024, 10, 0, StatusReady, addr, 0, ""); err == nil {
+	if _, err := d.CreateUserFull("bob", "h", "10.42.0.3", 2, 30002, 10100, 1, 1024, 10, 0, StatusReady, addr, 0, "", ""); err == nil {
 		t.Fatal("expected UNIQUE violation for duplicate address, got nil")
 	}
 
@@ -47,7 +47,7 @@ func TestIPv6AddressLifecycle(t *testing.T) {
 	}
 
 	// The address is now assignable again.
-	if _, err := d.CreateUserFull("carol", "h", "10.42.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusReady, addr, 0, ""); err != nil {
+	if _, err := d.CreateUserFull("carol", "h", "10.42.0.4", 3, 30003, 10200, 1, 1024, 10, 0, StatusReady, addr, 0, "", ""); err != nil {
 		t.Fatalf("reassign after delete: %v", err)
 	}
 }
@@ -61,7 +61,7 @@ func TestIPv6AddressNullShared(t *testing.T) {
 	}
 	defer d.Close()
 	for i, name := range []string{"a", "b", "c"} {
-		if _, err := d.CreateUserFull(name, "h", "10.42.0."+string(rune('2'+i)), i+1, 30001+i, 10000+i*100, 1, 1024, 10, 0, StatusReady, "", 0, ""); err != nil {
+		if _, err := d.CreateUserFull(name, "h", "10.42.0."+string(rune('2'+i)), i+1, 30001+i, 10000+i*100, 1, 1024, 10, 0, StatusReady, "", 0, "", ""); err != nil {
 			t.Fatalf("user %s without address: %v", name, err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestIPv6IndexLifecycle(t *testing.T) {
 	defer d.Close()
 
 	index := int64(0x2bd806c9)
-	u, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, "", index, "")
+	u, err := d.CreateUserFull("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0, StatusReady, "", index, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +95,13 @@ func TestIPv6IndexLifecycle(t *testing.T) {
 	}
 
 	// The same index for a second user must be refused.
-	if _, err := d.CreateUserFull("bob", "h", "10.42.0.3", 2, 30002, 10100, 1, 1024, 10, 0, StatusReady, "", index, ""); err == nil {
+	if _, err := d.CreateUserFull("bob", "h", "10.42.0.3", 2, 30002, 10100, 1, 1024, 10, 0, StatusReady, "", index, "", ""); err == nil {
 		t.Fatal("expected UNIQUE violation for a duplicate index, got nil")
 	}
 
 	// Accounts without one are stored as NULL, so many can coexist.
 	for i, name := range []string{"carol", "dave"} {
-		if _, err := d.CreateUserFull(name, "h", "10.42.0."+string(rune('4'+i)), 3+i, 30003+i, 10200+i*100, 1, 1024, 10, 0, StatusReady, "", 0, ""); err != nil {
+		if _, err := d.CreateUserFull(name, "h", "10.42.0."+string(rune('4'+i)), 3+i, 30003+i, 10200+i*100, 1, 1024, 10, 0, StatusReady, "", 0, "", ""); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}

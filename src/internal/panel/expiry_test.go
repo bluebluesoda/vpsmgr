@@ -19,7 +19,7 @@ func TestExpiredAccountLocked(t *testing.T) {
 	prefix := "/" + testSecret
 	hash, _ := pw.Hash("pw")
 	if _, err := d.CreateUserFull("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10, 0,
-		db.StatusReady, "", 0, "2000-01-01T00:00:00Z"); err != nil {
+		db.StatusReady, "", 0, "", "2000-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	cookie := loginAndCookie(t, h, prefix, "alice", "pw")

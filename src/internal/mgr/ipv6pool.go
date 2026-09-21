@@ -325,7 +325,7 @@ func (m *Manager) AssignPoolIPv6(name, addr string) (string, error) {
 	if err := m.lx.WaitReady(u.Name, 180*time.Second); err != nil {
 		return restore(fmt.Errorf("wait for container: %w", err))
 	}
-	if err := m.ConfigureContainerIPv6(u.Name, picked); err != nil {
+	if err := m.ConfigureContainerIPv6(u.Name, picked, ""); err != nil {
 		return restore(fmt.Errorf("configure ipv6 in container: %w", err))
 	}
 	if err := m.WireIPv6Pool(u.Name, picked); err != nil {
