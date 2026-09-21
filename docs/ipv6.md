@@ -262,3 +262,91 @@ Incus programs everything.
 Pool mode works with either `v4_forward` setting. When the pool is exhausted
 (or the admin picks "no IPv6"), containers are plain V4-only boxes — same as
 the pre-IPv6 behavior.
+
+## Whole /64 blocks from an extra prefix (optional)
+
+A provider that delegates a prefix **shorter than /64** (a /60, /56 or /48) makes
+one thing possible that a plain /64 host cannot do: hand a container a *whole
+/64*. The /112 block a prefix-mode account normally owns has 16 host bits, so
+nothing inside the container can use SLAAC (which needs exactly 64 bits) or be
+delegated any further.
+
+The feature is **off by default and stays off on every upgrade**: it exists only
+while `net.ipv6_extra_prefix` is set (see [configuration.md](configuration.md)).
+Nothing is allocated and no panel UI appears otherwise, and the installer never
+asks for it — an operator turns it on deliberately.
+
+### What a container gets
+
+- Its `/112` primary address and everything around it, unchanged.
+- A whole `/64` out of the extra prefix (e.g. `2001:1c00:b1b:7f0::/64`), bound
+  inside the container as `<block>::1/64` — with its real length, so the prefix
+  is on-link there, any address in it is usable, and the customer can carve
+  sub-prefixes out of it for internal networks. It is deliberately **not** a
+  local route: that would claim every address in the block for the container
+  itself and make exactly that delegation impossible.
+- The host routes the block to the container, and one ndppd rule covers it (like
+  the `/112`s) for an upstream that resolves prefixes by NDP.
+
+### How the route is wired
+
+The block is declared on the container's own NIC — `ipv6.routes = <account's
+/112>,<block>/64` — and `ipv6.address` is **removed** from that device. Both
+halves are load-bearing:
+
+- Incus builds `security.ipv6_filtering` from the addresses and routes a NIC
+  declares, and that filter drops everything else. A block that is not declared
+  is a block the bridge throws away: the container binds its addresses and gets
+  replies from the host, but every packet it sources from the block dies at the
+  veth.
+- Incus programs a declared route as `via <ipv6.address>`. The kernel refuses
+  such a route when the gateway is itself covered by a *gateway* route — which
+  the account's own `/112` route is (`RTNETLINK answers: No route to host`) —
+  so the declared routes have to be direct (`dev <bridge>`), which is exactly
+  what omitting `ipv6.address` produces. Nothing is lost: the container binds
+  its primary address itself, from the provider script, so the device option was
+  only ever the DHCPv6 reservation and the routes' gateway.
+
+Because the wiring lives in the container's own network configuration, Incus
+restores it on every start — a container restart or a host reboot brings the
+block back with no panel-side route plumbing. What the guest needs (the address
+binding) is written by the provider script, so a power start, the boot unit and
+`vps ipv6-reapply` re-apply it idempotently; `EnsureExtraBlockRoutes` also
+re-declares the NIC of every account that owns a block, healing a container that
+was recreated or downgraded out of band.
+
+### The host's own /64 is never handed out
+
+The pool excludes every `/64` the host itself uses: the one holding
+`net.ipv6_subnet` (bridge address, gateway, every `/112`) and any `/64` the host
+holds a global address in. Routing one of those to a container would collide
+with the host's own on-link route and cut its upstream connectivity — which is
+why an operator may safely point the key at a prefix that also contains the
+host's own /64: it is carved out, not handed out.
+
+### Capacity and degradation
+
+`2^(64-len)` blocks, minus the reserved ones: a `/60` yields 15 or 16, a `/56`
+255 or 256, a `/48` many thousands. Blocks are handed out lowest-first, so the
+assigned set reads in order. An exhausted pool is **not** an error: the
+container is created without a block, the create form greys its checkbox out,
+and the label shows how many are left.
+
+An assignment belongs to the account for life. Editing a container's quotas can
+never take the block back — only deleting the account releases it, after which
+the block is free for the next container.
+
+### Where it shows up
+
+- **Admin → IPv6** (prefix mode): the prefix editor, the capacity readout
+  (`total / kept for this host / assigned / free`) and the list of assigned
+  blocks with their owners (only the assigned ones — a /48 has 65536).
+- **Admin → create user**: a ticked-by-default checkbox `Assign a whole /64
+  (N left)`, disabled once the pool is empty; the batch dialog has the same one.
+  `vps add --extra64` is the CLI equivalent.
+- **Admin → quota**: `Assign a whole /64` for a container that has none; a
+  container that already owns one shows it read-only. `vps extra64 <name>` is
+  the CLI equivalent.
+- **User panel**: the block is listed next to the container's IPv6 address
+  (`IPv6 prefix: <block>/64`), presented plainly — nothing advertises it as
+  something to ask for.
