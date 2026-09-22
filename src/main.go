@@ -447,7 +447,7 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vps-nft.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vps-nft: %s", strings.TrimSpace(string(out)))
 	}
-	if c.IPv6Enabled() && proxyUsable {
+	if (c.IPv6Enabled() || c.IPv6ExtraEnabled()) && proxyUsable {
 		if out, err := exec.Command("systemctl", "enable", "--now", "vps-ipv6.service").CombinedOutput(); err != nil {
 			return fmt.Errorf("enable vps-ipv6: %s", strings.TrimSpace(string(out)))
 		}
