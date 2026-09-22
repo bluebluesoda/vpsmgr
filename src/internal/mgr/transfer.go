@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -695,12 +696,21 @@ func (m *Manager) ensureStaticIPv4(u *db.User) error {
 // an address has that shape. Prefix mode, IPv4-only, and a pool-mode container
 // with no address all put both addresses on one bridged eth0.
 func (m *Manager) usesTwoNICs(u *db.User) bool {
-	return m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool && u.IPv6Address != ""
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool && u.IPv6Address != "" {
+		return true
+	}
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModeNone && u.IPv6ExtraBlock != "" {
+		return true
+	}
+	return false
 }
 
 // containerHasIPv6 reports whether this host gives the container a global IPv6
 // address of its own.
 func (m *Manager) containerHasIPv6(u *db.User) bool {
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModeNone {
+		return u.IPv6ExtraBlock != ""
+	}
 	if !m.cfg.IPv6Enabled() {
 		return false
 	}
@@ -840,6 +850,13 @@ func (m *Manager) instanceConfig(u *db.User) (map[string]string, map[string]lx.D
 		// Only pool mode keeps the address on the routed NIC, and only when
 		// the user actually has one.
 		poolAddr = u.IPv6Address
+	} else if m.cfg.IPv6ModeEffective() == cfg.IPv6ModeNone {
+		if u.IPv6ExtraBlock != "" {
+			if _, n, err := net.ParseCIDR(u.IPv6ExtraBlock); err == nil {
+				poolAddr = addHostOffset(n.IP, 1).String()
+				block = u.IPv6ExtraBlock
+			}
+		}
 	} else {
 		ipv6, _ = m.IPv6Addr(u.Name)
 		if b, _ := m.IPv6Block(u.Name); b != nil {

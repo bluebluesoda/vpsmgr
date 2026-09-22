@@ -481,6 +481,26 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		// rejects a static ipv6.address outside the bridge's subnet. The
 		// container binds its /128 itself (ConfigureContainerIPv6) and the host
 		// routes it (WireIPv6Pool).
+	case cfg.IPv6ModeNone:
+		// No base IPv6. If extra prefix is configured and requested, the
+		// container gets a whole /64 via a routed NIC.
+		if opt.AllocateExtra64 && m.ExtraEnabled() {
+			picked64, err := m.pickExtraBlock()
+			if err != nil {
+				return nil, err
+			}
+			if picked64 != "" {
+				_, n, err := net.ParseCIDR(picked64)
+				if err != nil {
+					return nil, fmt.Errorf("parse extra block %s: %w", picked64, err)
+				}
+				extraBlock, extraNet = n.String(), n
+				// In none mode the /64's first address becomes the container's
+				// primary IPv6, delivered via a routed NIC (the poolIPv6 path).
+				poolAddr = addHostOffset(n.IP, 1).String()
+				blockStr = n.String()
+			}
+		}
 	default:
 		// A random block index, stored with the account: an address must not
 		// spell out its owner's name (see docs/ipv6.md).
@@ -611,7 +631,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	// (ConfigureContainerIPv6) and the host routes + proxy_ndp it
 	// (WireIPv6Pool). Prefix mode: the /112 NDP proxy rule, then the
 	// host-routed peer IPv6 container script. No-op when IPv6 is disabled.
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+	switch m.cfg.IPv6ModeEffective() {
+	case cfg.IPv6ModePool:
 		if poolAddr != "" {
 			if err := m.ConfigureContainerIPv6(name, poolAddr, ""); err != nil {
 				cleanup()
@@ -622,7 +643,20 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 				return nil, fmt.Errorf("wire ipv6 pool: %w", err)
 			}
 		}
-	} else {
+	case cfg.IPv6ModeNone:
+		// None mode with extra /64: configure the routed NIC guest-side and
+		// register the /64 with the NDP responder.
+		if extraBlock != "" {
+			if err := m.ConfigureContainerIPv6(name, poolAddr, extraBlock); err != nil {
+				cleanup()
+				return nil, fmt.Errorf("config container ipv6: %w", err)
+			}
+			if err := m.WireIPv6(name, nil, extraNet); err != nil {
+				cleanup()
+				return nil, fmt.Errorf("wire ipv6: %w", err)
+			}
+		}
+	default:
 		// Host-routed peer IPv6 (no L2 discovery / MITM between containers):
 		// bring the guest's /128 + local /112 up FIRST, then publish the NDP
 		// rule. Publishing last means an outside client's first SYN never
@@ -1508,9 +1542,19 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	blockStr := ""
 	var block *net.IPNet
 	var extraNet *net.IPNet
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+	poolAddr := u.IPv6Address
+	switch m.cfg.IPv6ModeEffective() {
+	case cfg.IPv6ModePool:
 		// NOT set on the Incus eth0 device (rejected: outside bridge subnet).
-	} else {
+	case cfg.IPv6ModeNone:
+		if u.IPv6ExtraBlock != "" {
+			if _, n, err := net.ParseCIDR(u.IPv6ExtraBlock); err == nil {
+				extraNet = n
+				poolAddr = addHostOffset(n.IP, 1).String()
+				blockStr = u.IPv6ExtraBlock
+			}
+		}
+	default:
 		ipv6, _ = m.IPv6Addr(u.Name)
 		block, _ = m.IPv6Block(u.Name)
 		if block != nil {
@@ -1525,7 +1569,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		// account owns one (it keeps it across a reinstall).
 		blockStr = blockRoutes(blockStr, u.IPv6ExtraBlock)
 	}
-	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.IPv6Address, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		rollback()
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
@@ -1540,7 +1584,8 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		rollback()
 		return "", fmt.Errorf("provision container: %w", err)
 	}
-	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
+	switch m.cfg.IPv6ModeEffective() {
+	case cfg.IPv6ModePool:
 		if u.IPv6Address != "" {
 			if err := m.ConfigureContainerIPv6(u.Name, u.IPv6Address, ""); err != nil {
 				rollback()
@@ -1551,7 +1596,18 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 				return "", fmt.Errorf("wire ipv6 pool: %w", err)
 			}
 		}
-	} else {
+	case cfg.IPv6ModeNone:
+		if u.IPv6ExtraBlock != "" {
+			if err := m.ConfigureContainerIPv6(u.Name, poolAddr, u.IPv6ExtraBlock); err != nil {
+				rollback()
+				return "", fmt.Errorf("config container ipv6: %w", err)
+			}
+			if err := m.WireIPv6(u.Name, nil, extraNet); err != nil {
+				rollback()
+				return "", fmt.Errorf("wire ipv6: %w", err)
+			}
+		}
+	default:
 		// Configure the guest's IPv6 first, then publish the NDP rule, so the
 		// outside world only learns the /112 once the container is ready.
 		if err := m.ConfigureContainerIPv6(u.Name, ipv6, u.IPv6ExtraBlock); err != nil {

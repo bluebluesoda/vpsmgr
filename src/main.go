@@ -417,12 +417,12 @@ func cmdInstall() error {
 	// install clearly instead of the service hot-looping under Restart=always.
 	_ = exec.Command("systemctl", "disable", "--now", "vps-ipv6.service").Run()
 	proxyUsable := true
-	if c.IPv6Enabled() {
+	if c.IPv6Enabled() || c.IPv6ExtraEnabled() {
 		unit := ipv6Unit
-		if c.IPv6ModeEffective() == cfg.IPv6ModePrefix {
+		if c.IPv6ModeEffective() == cfg.IPv6ModePrefix || (c.IPv6ModeEffective() == cfg.IPv6ModeNone && c.IPv6ExtraEnabled()) {
 			unit = ipv6ProxyUnit
 			if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
-				log.Printf("warning: prefix-mode IPv6 needs an Ethernet ext_if (%s): %v — NDP responder not enabled; fix net.ext_if and re-run `vps install`", c.Net.ExtIF, err)
+				log.Printf("warning: prefix-mode/extra-prefix IPv6 needs an Ethernet ext_if (%s): %v — NDP responder not enabled; fix net.ext_if and re-run `vps install`", c.Net.ExtIF, err)
 				proxyUsable = false
 			}
 		}
@@ -576,13 +576,19 @@ func cmdIPv6Proxy() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if !c.IPv6Enabled() || c.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+	mode := c.IPv6ModeEffective()
+	if mode != cfg.IPv6ModePrefix && (mode != cfg.IPv6ModeNone || !c.IPv6ExtraEnabled()) {
 		return nil
 	}
 	if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
 		return err
 	}
-	n, err := c.IPv6Network()
+	var n *net.IPNet
+	if mode == cfg.IPv6ModePrefix {
+		n, err = c.IPv6Network()
+	} else {
+		n, err = c.IPv6ExtraPrefixNetwork()
+	}
 	if err != nil {
 		return err
 	}

@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/lx"
 )
 
 // Whole-/64 blocks from an extra prefix (net.ipv6_extra_prefix).
@@ -58,7 +60,8 @@ func (m *Manager) ExtraPrefixNetwork() (*net.IPNet, error) {
 // ExtraEnabled reports whether a container can be given a whole /64 right now:
 // prefix mode, an extra prefix configured, and at least one free block.
 func (m *Manager) ExtraEnabled() bool {
-	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+	mode := m.cfg.IPv6ModeEffective()
+	if mode != cfg.IPv6ModePrefix && mode != cfg.IPv6ModeNone {
 		return false
 	}
 	_, _, _, free, err := m.ExtraCapacity()
@@ -74,8 +77,7 @@ func (m *Manager) ExtraCapacity() (total, reserved, used, free int, err error) {
 	if err != nil || p == nil {
 		return 0, 0, 0, 0, err
 	}
-	// Only prefix mode hands out blocks; in pool mode the config value is inert.
-	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+	if mode := m.cfg.IPv6ModeEffective(); mode != cfg.IPv6ModePrefix && mode != cfg.IPv6ModeNone {
 		return 0, 0, 0, 0, nil
 	}
 	total = int(extraBlockCount(p))
@@ -184,8 +186,8 @@ func (m *Manager) reservedExtraBlocks(extra *net.IPNet) map[string]bool {
 // /48, and the pick is deterministic — the admin page can show exactly which
 // blocks are in use.
 func (m *Manager) pickExtraBlock() (string, error) {
-	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
-		return "", nil // only prefix mode hands out blocks
+	if mode := m.cfg.IPv6ModeEffective(); mode != cfg.IPv6ModePrefix && mode != cfg.IPv6ModeNone {
+		return "", nil // only prefix or none mode hands out blocks
 	}
 	p, err := m.cfg.IPv6ExtraPrefixNetwork()
 	if err != nil || p == nil {
@@ -277,6 +279,10 @@ func blockRoutes(block112, extra string) string {
 // so the caller can configure the guest right after. Idempotent: an unchanged
 // device is not touched.
 func (m *Manager) applyExtraRoutes(name, extra string) error {
+	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModeNone {
+		return m.applyExtraRoutesNone(name, extra)
+	}
+	// Prefix mode: declare the /64 and /112 on eth0 (bridge NIC).
 	block, err := m.IPv6Block(name)
 	if err != nil {
 		return err
@@ -298,6 +304,58 @@ func (m *Manager) applyExtraRoutes(name, extra string) error {
 	return err
 }
 
+// applyExtraRoutesNone wires a /64 to a container in none mode via a routed
+// NIC. In none mode, a container with an extra /64 has two NICs: eth0 is a
+// routed NIC (parent: ext_if) carrying the /64, and eth1 is a bridged NIC on
+// incusbr0 carrying the private IPv4.
+func (m *Manager) applyExtraRoutesNone(name, extra string) error {
+	if extra == "" {
+		return nil
+	}
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	u.IPv6ExtraBlock = extra
+	spec, devices := m.instanceConfig(u)
+
+	bare := make(map[string]lx.Device, len(devices))
+	for deviceName, dev := range devices {
+		clone := make(lx.Device, len(dev))
+		for k, v := range dev {
+			clone[k] = v
+		}
+		bare[deviceName] = clone
+	}
+	if dev, ok := bare["eth1"]; ok {
+		delete(dev, "ipv4.address")
+	}
+
+	wasRunning := false
+	if st, err := m.lx.State(name); err == nil && st == "Running" {
+		wasRunning = true
+		if err := m.lx.Stop(name); err != nil {
+			return err
+		}
+	}
+
+	if err := m.lx.ReplaceConfig(name, spec, bare); err != nil {
+		return err
+	}
+	if err := m.lx.ReplaceConfig(name, spec, devices); err != nil {
+		return err
+	}
+	if wasRunning {
+		if err := m.lx.Start(name); err != nil {
+			return err
+		}
+		if err := m.lx.WaitReady(name, 180*time.Second); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EnsureExtraBlockRoutes reapplies the eth0 wiring of every account that owns a
 // whole /64. Containers that were created (or upgraded) before their block was
 // declared would otherwise never get it back: the kernel-side state is part of
@@ -306,7 +364,8 @@ func (m *Manager) applyExtraRoutes(name, extra string) error {
 // RewireAllIPv6 (the boot unit and `vps ipv6-reapply`), so it also heals a
 // container that was recreated out of band.
 func (m *Manager) EnsureExtraBlockRoutes() error {
-	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
+	mode := m.cfg.IPv6ModeEffective()
+	if mode != cfg.IPv6ModePrefix && mode != cfg.IPv6ModeNone {
 		return nil
 	}
 	users, err := m.db.ListUsers()
@@ -337,8 +396,9 @@ func (m *Manager) AssignExtraBlock(name string) (string, error) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
-	if m.cfg.IPv6ModeEffective() != cfg.IPv6ModePrefix {
-		return "", errors.New("this host does not hand out whole /64 blocks (IPv6 prefix mode only)")
+	mode := m.cfg.IPv6ModeEffective()
+	if mode != cfg.IPv6ModePrefix && mode != cfg.IPv6ModeNone {
+		return "", errors.New("this host does not hand out whole /64 blocks (prefix or none mode with an extra prefix)")
 	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -368,7 +428,13 @@ func (m *Manager) AssignExtraBlock(name string) (string, error) {
 		}
 		return "", err
 	}
-	if err := m.ConfigureContainerIPv6(u.Name, "", block); err != nil {
+
+	poolAddr := ""
+	if mode == cfg.IPv6ModeNone {
+		_, n, _ := net.ParseCIDR(block)
+		poolAddr = addHostOffset(n.IP, 1).String()
+	}
+	if err := m.ConfigureContainerIPv6(u.Name, poolAddr, block); err != nil {
 		fmt.Printf("  ! warn: %s was given %s but the container rejected its IPv6 config: %v\n", u.Name, block, err)
 	}
 	_ = m.writeNDPPD("", "")

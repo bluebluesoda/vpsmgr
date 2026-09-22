@@ -781,6 +781,18 @@ func isPrivateIPv4(s string) bool {
 // IPv6Enabled reports whether IPv6 pass-through is configured (either mode).
 func (c *Config) IPv6Enabled() bool { return c.IPv6ModeEffective() != IPv6ModeNone }
 
+// IPv6ExtraEnabled reports whether the extra /64 prefix feature is configured
+// (non-empty, valid prefix shorter than /64). Unlike IPv6Enabled, this can
+// be true even in none mode — the feature does not require a base IPv6 subnet.
+func (c *Config) IPv6ExtraEnabled() bool {
+	p, err := c.IPv6ExtraPrefixNetwork()
+	if err != nil || p == nil {
+		return false
+	}
+	ones, _ := p.Mask.Size()
+	return ones < 64
+}
+
 // IPv6Network parses and validates the configured IPv6 prefix. It must be a
 // global (non-ULA, non-link-local) CIDR — /64 or shorter (e.g. /56), or longer
 // up to /80 when the provider hands the host a /80 slice. The prefix length is
