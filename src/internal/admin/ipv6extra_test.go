@@ -101,4 +101,39 @@ func TestExtraPrefixUI(t *testing.T) {
 			t.Error("exhausted pool does not disable the /64 checkbox")
 		}
 	})
+
+	t.Run("none mode with extra prefix", func(t *testing.T) {
+		srv, _ := newTestServer(t)
+		srv.cfg.Net.IPv6Subnet = ""
+		srv.cfg.Net.IPv6Mode = cfg.IPv6ModeNone
+		srv.cfg.Net.IPv6ExtraPrefix = "2a12:5e41:25de:8800::/56"
+		setAdminPass(t, srv, "correct-horse-battery")
+		h := srv.Handler()
+		prefix := "/" + testAdminSecret
+		ck := adminLogin(t, h, prefix, "correct-horse-battery")
+
+		// Overview page renders the extra64 checkbox
+		rr := doReq(t, h, http.MethodGet, prefix, nil, ck)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET / = %d: %s", rr.Code, rr.Body.String())
+		}
+		body := rr.Body.String()
+		if !strings.Contains(body, `name="extra64"`) {
+			t.Error("none mode with extra prefix does not render extra64 checkbox in overview")
+		}
+		if !strings.Contains(body, prefix+"/ipv6pool") {
+			t.Error("none mode with extra prefix does not render IPv6 nav link")
+		}
+
+		// IPv6 page renders the extra prefix card
+		rr = doReq(t, h, http.MethodGet, prefix+"/ipv6pool", nil, ck)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET /ipv6pool = %d: %s", rr.Code, rr.Body.String())
+		}
+		body = rr.Body.String()
+		if !strings.Contains(body, `value="2a12:5e41:25de:8800::/56"`) {
+			t.Error("none mode /ipv6pool page does not render the extra prefix input")
+		}
+	})
 }
+

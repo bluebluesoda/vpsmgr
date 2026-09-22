@@ -644,6 +644,7 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 	return c.EnsureDeviceOptions(name, "eth0", opts)
 }
 
+
 // EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
 // rate limit of a container. Changing only the limits.* keys is applied
 // LIVE by Incus via tc (htb qdisc on the host veth) — it does NOT reset the NIC
@@ -917,13 +918,17 @@ func (c *Client) instanceSpec(pool, bridge, ip, ipv6, block, poolIPv6, extIF str
 		// Pool mode: eth0 = routed public /128, eth1 = bridged private v4.
 		// routed NIC accepts only actual addresses for ipv4.address (no
 		// "none"), so v4 is simply not set on it.
-		devices["eth0"] = device{
+		eth0 := device{
 			"type":         "nic",
 			"nictype":      "routed",
 			"parent":       extIF,
 			"name":         "eth0",
 			"ipv6.address": poolIPv6,
 		}
+		if block != "" {
+			eth0["ipv6.routes"] = block
+		}
+		devices["eth0"] = eth0
 		devices["eth1"] = device{
 			"type":         "nic",
 			"nictype":      "bridged",

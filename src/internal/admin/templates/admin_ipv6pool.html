@@ -65,10 +65,10 @@ form.inline { display: inline; }
   {{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
   {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
 
-  {{if eq .Mode "prefix"}}
+  {{if or (eq .Mode "prefix") (eq .Mode "none")}}
   <div class="card">
     <h2>{{if eq .Lang "zh"}}整段 /64 分配{{else}}Whole /64 blocks{{end}}</h2>
-    <p class="muted">{{if eq .Lang "zh"}}前缀模式下容器地址由前缀自动派生，不需要地址池。这里可以额外填写一段更短的前缀（如 /60、/56、/48）：填写后，新容器可以额外获得一整段 /64，在容器内部自行切分子网或运行 SLAAC。留空即关闭该功能，已分配的 /64 不受影响。{{else}}In prefix mode a container's address is derived from the prefix and no pool is needed. Optionally enter an extra, shorter prefix here (e.g. /60, /56, /48): a container can then be given a whole /64 of its own, to subnet internally or run SLAAC. Leave it empty to keep the feature off; already-assigned /64s are not affected.{{end}}</p>
+    <p class="muted">{{if eq .Lang "zh"}}这里可以填写一段委派的前缀（如 /60、/56、/48）：填写后，容器可以获得一整段 /64，在容器内部自行切分子网或运行 SLAAC。在 IPv4-only 模式下容器将通过独立路由网卡接入 IPv6。留空即关闭该功能，已分配的 /64 不受影响。{{else}}Optionally enter a delegated prefix here (e.g. /60, /56, /48): containers can then be given a whole /64 of their own, to subnet internally or run SLAAC. In IPv4-only mode, the /64 is delivered via a routed NIC. Leave empty to disable; already-assigned /64s are not affected.{{end}}</p>
     <form action="{{.Prefix}}/ipv6extra-set" method="post">
       <div class="field"><label>{{if eq .Lang "zh"}}额外前缀（CIDR）{{else}}Extra prefix (CIDR){{end}}</label>
         <input name="prefix" value="{{.ExtraPrefix}}" placeholder="2001:1c00:b1b:7f0::/60" spellcheck="false" autocomplete="off" style="width:100%;max-width:420px;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#fff;color:inherit">

@@ -375,7 +375,7 @@ var Fields = []Field{
 			return nil
 		}},
 	{"net.ipv6_extra_prefix", KindOperator, ApplyNextAdd,
-		"optional extra prefix (prefix mode) whole /64 blocks are carved from and routed to containers; empty = feature off. Accepted as-is — the /64 this host itself uses is never handed to a container",
+		"optional extra prefix — whole /64 blocks are carved from and routed to containers; works in prefix mode (alongside /112) and none mode (standalone routed /64). Empty = feature off. The /64 this host itself uses is never handed to a container",
 		"2001:1c00:b1b:7f0::/60 (empty for off)",
 		func(c *Config) string {
 			if c.Net.IPv6ExtraPrefix == "" {

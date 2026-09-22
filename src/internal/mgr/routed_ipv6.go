@@ -350,6 +350,61 @@ fi
 `, ipv6, ipv6), nil
 }
 
+// extraOnlyContainerScript configures a container with a routed /64 on eth0
+// (none mode with an extra prefix). The /64 is an on-link prefix, not a /128,
+// so SLAAC and internal sub-delegation work.
+func (m *Manager) extraOnlyContainerScript(block string) (string, error) {
+	_, n, err := net.ParseCIDR(block)
+	if err != nil {
+		return "", err
+	}
+	addr := addHostOffset(n.IP, 1).String()
+	
+	return fmt.Sprintf(`set -e
+for i in $(seq 1 40); do
+  [ -S /run/systemd/private ] && break
+  sleep 0.5
+done
+if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
+  CONN0=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth0" {print $1; exit}')
+  [ -z "$CONN0" ] && CONN0=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
+  [ -n "$CONN0" ] && nmcli con mod "$CONN0" ipv6.method manual ipv6.addresses %s/64 ipv6.gateway fe80::1 ipv4.method disabled 2>/dev/null || true
+  [ -n "$CONN0" ] && nmcli con up "$CONN0" >/dev/null 2>&1 || true
+  CONN1=$(nmcli -t -f NAME,DEVICE con show 2>/dev/null | awk -F: '$2 == "eth1" {print $1; exit}')
+  [ -z "$CONN1" ] && CONN1=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth1 | head -1)
+  [ -n "$CONN1" ] && nmcli con mod "$CONN1" ipv4.method auto 2>/dev/null || true
+  [ -n "$CONN1" ] && nmcli con up "$CONN1" >/dev/null 2>&1 || true
+else
+  mkdir -p /etc/systemd/network
+  cat > /etc/systemd/network/eth0.network <<'EOF'
+[Match]
+Name=eth0
+
+[Network]
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+DNS=2001:4860:4860::8888
+DNS=2001:4860:4860::8844
+
+[Address]
+Address=%s/64
+
+[Route]
+Destination=::/0
+Gateway=fe80::1
+EOF
+  cat > /etc/systemd/network/eth1.network <<'EOF'
+[Match]
+Name=eth1
+
+[Network]
+DHCP=ipv4
+EOF
+  systemctl restart systemd-networkd || true
+fi
+`, addr, addr), nil
+}
+
 // ConfigureContainerIPv6 applies the host-routed IPv6 setup to one container
 // (its stack decides the mechanism). Called on add/reinstall for new
 // containers and by EnsureRoutedIPv6 for existing ones. No-op when IPv6 is
@@ -365,11 +420,13 @@ fi
 // address; everywhere else an empty value is resolved from the account, and an
 // account that does not exist yet simply has no block.
 func (m *Manager) ConfigureContainerIPv6(name, addr, extra string) error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() && !m.cfg.IPv6ExtraEnabled() {
 		return nil
 	}
 	pool := m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool
-	if addr == "" {
+	none := m.cfg.IPv6ModeEffective() == cfg.IPv6ModeNone
+
+	if addr == "" && !none {
 		var err error
 		if pool {
 			u, uerr := m.db.GetUserByName(name)
@@ -388,7 +445,12 @@ func (m *Manager) ConfigureContainerIPv6(name, addr, extra string) error {
 	}
 	var script string
 	var err error
-	if pool {
+	if none {
+		if extra == "" {
+			return nil
+		}
+		script, err = m.extraOnlyContainerScript(extra)
+	} else if pool {
 		script, err = m.ipv6ContainerScriptFor(addr, "", "")
 	} else {
 		script, err = m.ipv6ContainerScript(addr, extra)
@@ -410,7 +472,7 @@ func (m *Manager) ConfigureContainerIPv6(name, addr, extra string) error {
 // are skipped, not errors. Pool mode: the container binds its single /128
 // + default route itself (ConfigureContainerIPv6 with the DB-stored address).
 func (m *Manager) EnsureRoutedIPv6() error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() && !m.cfg.IPv6ExtraEnabled() {
 		return nil
 	}
 	users, err := m.db.ListUsers()

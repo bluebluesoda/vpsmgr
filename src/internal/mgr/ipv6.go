@@ -374,7 +374,7 @@ const ndppdConfLink = "/etc/ndppd.conf"
 // ndppd-compatible (each rule line is a bare `rule <cidr> {`), even though the
 // daemon is no longer used in prefix mode.
 func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() && !m.cfg.IPv6ExtraEnabled() {
 		return "", nil
 	}
 	ext := m.cfg.Net.ExtIF
@@ -390,12 +390,14 @@ func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
 		if u.Name == drop {
 			continue
 		}
-		block, err := m.IPv6Block(u.Name)
-		if err != nil {
-			return "", err
-		}
-		if block != nil {
-			blocks = append(blocks, block.String())
+		if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePrefix {
+			block, err := m.IPv6Block(u.Name)
+			if err != nil {
+				return "", err
+			}
+			if block != nil {
+				blocks = append(blocks, block.String())
+			}
 		}
 		// The whole /64 is routed to the container the same way the /112 is, so
 		// an upstream that resolves the prefix by NDP has to be answered for it
@@ -415,7 +417,13 @@ func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
 	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "proxy %s {\n", ext)
 	for _, block := range blocks {
-		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block, m.cfg.Incus.Bridge)
+		// In none mode, there is no bridge, so fallback to eth0 on host if bridge is empty? 
+		// Actually the responder just ignores `iface` for prefix mode since it replies to ext_if, but ndppd format expects one.
+		iface := m.cfg.Incus.Bridge
+		if iface == "" {
+			iface = "lo"
+		}
+		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block, iface)
 	}
 	b.WriteString("}\n")
 	return b.String(), nil
@@ -475,10 +483,10 @@ func (m *Manager) writeNDPPD(fresh, drop string) error {
 // account (the stored /112 index and the stored /64). The Incus device routes
 // the /112, and WireExtraBlock routes the /64.
 func (m *Manager) WireIPv6(name string, block, extra *net.IPNet) error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() && !m.cfg.IPv6ExtraEnabled() {
 		return nil
 	}
-	if block == nil {
+	if block == nil && m.cfg.IPv6ModeEffective() == cfg.IPv6ModePrefix {
 		b, err := m.IPv6Block(name)
 		if err != nil {
 			return err
@@ -502,7 +510,7 @@ func (m *Manager) WireIPv6(name string, block, extra *net.IPNet) error {
 // so a failed proxy reconfiguration is not silently swallowed in Del/cleanup —
 // a leftover ndppd rule would keep answering for a deleted container's block.
 func (m *Manager) UnwireIPv6(name string) error {
-	if !m.cfg.IPv6Enabled() {
+	if !m.cfg.IPv6Enabled() && !m.cfg.IPv6ExtraEnabled() {
 		return nil
 	}
 	return m.writeNDPPD("", name)

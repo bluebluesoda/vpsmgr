@@ -273,26 +273,28 @@ delegated any further.
 
 The feature is **off by default and stays off on every upgrade**: it exists only
 while `net.ipv6_extra_prefix` is set (see [configuration.md](configuration.md)).
-Nothing is allocated and no panel UI appears otherwise, and the installer never
-asks for it — an operator turns it on deliberately.
+It works in both **prefix mode** and **IPv4-only (none) mode**. Nothing is
+allocated and no panel UI appears otherwise, and the installer never asks for it
+— an operator turns it on deliberately.
 
 ### What a container gets
 
-- Its `/112` primary address and everything around it, unchanged.
-- A whole `/64` out of the extra prefix (e.g. `2001:1c00:b1b:7f0::/64`), bound
-  inside the container as `<block>::1/64` — with its real length, so the prefix
-  is on-link there, any address in it is usable, and the customer can carve
-  sub-prefixes out of it for internal networks. It is deliberately **not** a
-  local route: that would claim every address in the block for the container
-  itself and make exactly that delegation impossible.
-- The host routes the block to the container, and one ndppd rule covers it (like
-  the `/112`s) for an upstream that resolves prefixes by NDP.
+- In **prefix mode**: its `/112` primary address and everything around it, plus a whole `/64`.
+- In **none mode**: a standalone whole `/64` (e.g. `2001:1c00:b1b:7f0::/64`), delivered alongside its private IPv4. No `/112` is assigned.
+- In both modes, the block is bound inside the container as `<block>::1/64` — with its real length, so the prefix is on-link there, any address in it is usable, and the customer can carve sub-prefixes out of it for internal networks. It is deliberately **not** a local route: that would claim every address in the block for the container itself and make delegation impossible.
+- The host routes the block to the container, and the in-tree NDP responder covers it for an upstream that resolves prefixes by NDP.
 
 ### How the route is wired
 
-The block is declared on the container's own NIC — `ipv6.routes = <block>/64,
-<account's /112>` — and the device keeps its `ipv6.address`. Three things about
-that are load-bearing:
+- **Prefix mode (single bridged NIC)**:
+  The block is declared on the container's own NIC — `ipv6.routes = <block>/64, <account's /112>` — and the device keeps its `ipv6.address`.
+- **None mode (routed IPv6 + bridged IPv4)**:
+  Because the bridge has no IPv6 subnet, the container receives two NICs (the same layout as pool mode):
+  - `eth0` — `nictype: routed`, `parent: <ext_if>`, `ipv6.address=<block>::1`, `ipv6.routes=<block>/64`.
+  - `eth1` — `nictype: bridged` on `incusbr0`, `ipv4.address=<private v4>`.
+  Inside the guest, `eth0` binds `<block>::1/64` with default gateway `fe80::1`, and `eth1` runs DHCPv4.
+
+In prefix mode, three things about the eth0 declaration are load-bearing:
 
 - Incus builds `security.ipv6_filtering` from the addresses and routes a NIC
   declares, and that filter drops everything else. A block that is not declared
@@ -345,7 +347,7 @@ the block is free for the next container.
 
 ### Where it shows up
 
-- **Admin → IPv6** (prefix mode): the prefix editor, the capacity readout
+- **Admin → IPv6** (prefix or none mode): the prefix editor, the capacity readout
   (`total / kept for this host / assigned / free`) and the list of assigned
   blocks with their owners (only the assigned ones — a /48 has 65536).
 - **Admin → create user**: a ticked-by-default checkbox `Assign a whole /64

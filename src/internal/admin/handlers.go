@@ -184,10 +184,10 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 			d.PoolUsed, d.PoolTotal = used, total
 		}
 	}
-	// Whole /64 blocks: prefix mode with an extra prefix configured. A prefix
+	// Whole /64 blocks: prefix or none mode with an extra prefix configured. A prefix
 	// that holds no whole /64 (a /64 or longer) counts as not configured — there
 	// would be nothing to hand out.
-	if s.mgr.IPv6Mode() == cfg.IPv6ModePrefix {
+	if s.mgr.IPv6Mode() == cfg.IPv6ModePrefix || s.mgr.IPv6Mode() == cfg.IPv6ModeNone {
 		if total, _, _, free, err := s.mgr.ExtraCapacity(); err == nil && total > 0 {
 			d.ExtraConfigured = true
 			d.ExtraFree = free
@@ -1401,6 +1401,8 @@ func (s *Server) handleIPv6Pool(w http.ResponseWriter, r *http.Request) {
 		d.Mode = cfg.IPv6ModePool
 	} else if s.mgr.IPv6Mode() == cfg.IPv6ModePrefix {
 		d.Mode = cfg.IPv6ModePrefix
+	} else {
+		d.Mode = cfg.IPv6ModeNone
 	}
 	total, used, err := s.mgr.IPv6PoolUsage()
 	if err != nil {
@@ -1415,9 +1417,9 @@ func (s *Server) handleIPv6Pool(w http.ResponseWriter, r *http.Request) {
 	} else {
 		d.Addrs = addrs
 	}
-	// Whole-/64 blocks live on the same page: prefix mode has no address pool,
-	// so this card is what that mode's page actually shows.
-	if d.Mode == cfg.IPv6ModePrefix {
+	// Whole-/64 blocks live on the same page: prefix and none modes have no address pool,
+	// so this card is what those modes' page actually shows.
+	if d.Mode == cfg.IPv6ModePrefix || d.Mode == cfg.IPv6ModeNone {
 		d.ExtraPrefix = s.cfg.Net.IPv6ExtraPrefix
 		if t, reserved, u, free, err := s.mgr.ExtraCapacity(); err == nil {
 			d.ExtraTotal, d.ExtraReserved, d.ExtraUsed, d.ExtraFree = t, reserved, u, free

@@ -287,3 +287,98 @@ func TestExtraAssignments(t *testing.T) {
 		t.Errorf("ExtraAssignments = %v, want alice's then bob's", got)
 	}
 }
+
+// In IPv4-only (none) mode, ExtraEnabled and ExtraCapacity report the pool
+// capacity, pickExtraBlock allocates blocks, and extraOnlyContainerScript produces
+// an on-link /64 routed configuration.
+func TestExtraBlockInNoneMode(t *testing.T) {
+	c := cfg.Default()
+	c.Net.IPv6Mode = cfg.IPv6ModeNone
+	c.Net.IPv6Subnet = ""
+	c.Net.IPv6ExtraPrefix = "2a12:5e41:25de:8800::/56"
+	d, err := db.Open(filepath.Join(t.TempDir(), "none.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	m := &Manager{cfg: c, db: d}
+
+	if !m.ExtraEnabled() {
+		t.Fatal("ExtraEnabled() = false in none mode with extra prefix, want true")
+	}
+	total, reserved, used, free, err := m.ExtraCapacity()
+	if err != nil {
+		t.Fatalf("ExtraCapacity: %v", err)
+	}
+	if total != 256 || used != 0 || free != 256-reserved {
+		t.Errorf("ExtraCapacity = (%d, %d, %d, %d), want total=256, used=0, free=%d", total, reserved, used, free, 256-reserved)
+	}
+
+	block, err := m.pickExtraBlock()
+	if err != nil {
+		t.Fatalf("pickExtraBlock: %v", err)
+	}
+	if block != "2a12:5e41:25de:8800::/64" {
+		t.Errorf("pickExtraBlock() = %q, want 2a12:5e41:25de:8800::/64", block)
+	}
+
+	script, err := m.extraOnlyContainerScript(block)
+	if err != nil {
+		t.Fatalf("extraOnlyContainerScript: %v", err)
+	}
+	// Check that the script configures /64 on eth0 without local route, and DHCP on eth1
+	for _, required := range []string{
+		"Address=2a12:5e41:25de:8800::1/64",
+		"Gateway=fe80::1",
+		"DHCP=ipv4",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("script missing %q:\n%s", required, script)
+		}
+	}
+	if strings.Contains(script, "Type=local") {
+		t.Errorf("script should not contain Type=local (must be on-link delegation):\n%s", script)
+	}
+}
+
+// A /56 sliced from the middle of a /48 (e.g. 2a12:5e41:25de:4200::/56 out of 2a12:5e41:25de::/48)
+// must correctly produce 256 /64 blocks starting at ...4200::/64 and ending at ...42ff::/64.
+func TestExtraBlockMiddleSlice(t *testing.T) {
+	const middleSlice = "2a12:5e41:25de:4200::/56"
+	_, p, err := net.ParseCIDR(middleSlice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := extraBlockCount(p)
+	if count != 256 {
+		t.Fatalf("extraBlockCount(%s) = %d, want 256", middleSlice, count)
+	}
+
+	first := extraBlockAt(p, 0)
+	if first != "2a12:5e41:25de:4200::/64" {
+		t.Errorf("extraBlockAt(0) = %s, want 2a12:5e41:25de:4200::/64", first)
+	}
+
+	second := extraBlockAt(p, 1)
+	if second != "2a12:5e41:25de:4201::/64" {
+		t.Errorf("extraBlockAt(1) = %s, want 2a12:5e41:25de:4201::/64", second)
+	}
+
+	last := extraBlockAt(p, 255)
+	if last != "2a12:5e41:25de:42ff::/64" {
+		t.Errorf("extraBlockAt(255) = %s, want 2a12:5e41:25de:42ff::/64", last)
+	}
+
+	// Verify every single block is contained within the configured /56 prefix
+	for i := uint64(0); i < 256; i++ {
+		b := extraBlockAt(p, i)
+		ip, _, err := net.ParseCIDR(b)
+		if err != nil {
+			t.Fatalf("parse block %s: %v", b, err)
+		}
+		if !p.Contains(ip) {
+			t.Errorf("block %s (idx %d) is outside parent prefix %s", b, i, middleSlice)
+		}
+	}
+}
+
