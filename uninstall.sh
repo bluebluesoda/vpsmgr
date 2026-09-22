@@ -72,6 +72,16 @@ log "removing files..."
 rm -f /usr/local/bin/vps /usr/local/bin/traefik
 rm -f /etc/systemd/system/vps.service /etc/systemd/system/vps-nft.service /etc/systemd/system/vps-ipv6.service
 rm -f /etc/systemd/system/haproxy.service /etc/systemd/system/traefik.service
+rm -f /etc/systemd/system/docker.service.d/vpsmgr.conf
+rmdir /etc/systemd/system/docker.service.d 2>/dev/null || true
+if command -v iptables >/dev/null 2>&1 && iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+  iptables -D DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || true
+  iptables -D DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || true
+fi
+if command -v ip6tables >/dev/null 2>&1 && ip6tables -L DOCKER-USER -n >/dev/null 2>&1; then
+  ip6tables -D DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || true
+  ip6tables -D DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || true
+fi
 # Restore the host-wide io_uring clamp to the kernel default before dropping
 # 99-vpsmgr.conf (which sets it to 1 at install time).
 sysctl -w kernel.io_uring_disabled=0 >/dev/null 2>&1 || true
