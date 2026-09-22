@@ -49,4 +49,35 @@ if ! dpkg -s nftables >/dev/null 2>&1; then
 fi
 log "nftables: $(nft --version 2>/dev/null | head -1)"
 
+# --- Docker compatibility (DOCKER-USER chain) ---
+# When Docker is installed on the host, it sets iptables FORWARD default policy
+# to DROP. This breaks forwarded traffic for incusbr0 (both IPv4, and IPv6 if
+# Docker's experimental/ipv6 is enabled). Docker provides the DOCKER-USER chain
+# specifically for custom allow rules to be evaluated before Docker's own rules.
+# Allow incusbr0 traffic in DOCKER-USER now, and install a systemd drop-in for
+# docker.service so rules persist across Docker restarts.
+apply_docker_rules(){
+  if command -v iptables >/dev/null 2>&1 && iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+    iptables -C DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
+    iptables -C DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null
+  fi
+  if command -v ip6tables >/dev/null 2>&1 && ip6tables -L DOCKER-USER -n >/dev/null 2>&1; then
+    ip6tables -C DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || ip6tables -I DOCKER-USER -i incusbr0 -j ACCEPT
+    ip6tables -C DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || ip6tables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null
+  fi
+}
+apply_docker_rules
+
+if systemctl list-unit-files docker.service >/dev/null 2>&1 || [[ -f /lib/systemd/system/docker.service || -f /etc/systemd/system/docker.service ]]; then
+  log "docker detected — ensuring incusbr0 forwarding rules in docker.service.d/vpsmgr.conf"
+  install -d -m 0755 /etc/systemd/system/docker.service.d
+  cat > /etc/systemd/system/docker.service.d/vpsmgr.conf <<'EOF'
+# Managed by vpsmgr — generated file, do not edit by hand.
+# Keeps incusbr0 traffic allowed in DOCKER-USER across Docker restarts.
+[Service]
+ExecStartPost=-/bin/sh -c 'iptables -C DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i incusbr0 -j ACCEPT; iptables -C DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null; ip6tables -L DOCKER-USER -n >/dev/null 2>&1 && { ip6tables -C DOCKER-USER -i incusbr0 -j ACCEPT 2>/dev/null || ip6tables -I DOCKER-USER -i incusbr0 -j ACCEPT; ip6tables -C DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null || ip6tables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED 2>/dev/null; } || true'
+EOF
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
 echo "[20] network ready"

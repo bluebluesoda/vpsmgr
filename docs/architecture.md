@@ -114,7 +114,12 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   rules are written and HAProxy is stopped (domains kept but not served); the
   NAT4 masquerade stays so containers still reach IPv4 outbound. Toggle:
   `vps config set net.v4_forward true|false` (applied immediately). The SSH/port
-  values stay recorded in the DB.
+- **Docker compatibility**: on hosts running Docker, Docker's default iptables
+  policy (`-P FORWARD DROP`) would otherwise block forwarded traffic from
+  `incusbr0`. The installer adds allow rules to the `DOCKER-USER` chain (both
+  IPv4 and IPv6) and installs a `docker.service.d/vpsmgr.conf` systemd drop-in
+  so `incusbr0` forwarding stays active across Docker restarts without
+  interfering with Docker's container isolation.
 - **Port 25 is always blocked**: the ruleset's forward chain drops port 25
   (TCP+UDP, both directions) for all forwarded traffic — permanent anti-spam,
   only a full uninstall clears it.
