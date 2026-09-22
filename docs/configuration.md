@@ -179,13 +179,14 @@ Rules:
   outside `10000-29999` — only the overlap with the usable domain counts, and a
   fully-outside range contributes nothing.
 - Values are **auto-aligned to whole hundreds**: the low end rounds up to a
-  block start and the high end rounds down then extends to `+99`, so the
-  effective range always ends in `...99`, never `...00`. For example
-  `10001-29998` becomes `10100-29999`.
+  block start and the high end rounds down to a block end (`...99 <= B`), so the
+  effective range always ends in `...99`, never `...00`, and never spills past
+  the requested upper bound. For example `10001-29998` becomes `10100-29899`,
+  and `10000-15000` becomes `10000-14999`.
 - At least one whole 100-port block must remain (the value is rejected
   otherwise) — a range that cannot host even one container is an error.
 - Capacity follows the ranges: `10000-29999` allows **200** containers;
-  `10000-20000, 25000-30000` allows **151**; and so on. The interactive prompt
+  `10000-20000, 25000-30000` allows **150**; and so on. The interactive prompt
   echoes the computed capacity for confirmation.
 - A narrowed set reserves far fewer host user ports, so an install's
   port-occupancy check scans only the configured ranges — not the whole

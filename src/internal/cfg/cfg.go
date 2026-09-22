@@ -386,9 +386,8 @@ func LegacySlotRangeToUserPorts(slotRange string) (string, error) {
 //   - Lo/hi may extend outside [UserPortBase, UserPortMax] — only the overlap
 //     with the usable domain counts (a range fully outside contributes nothing).
 //   - Each range is aligned inward to whole hundreds: the low end rounds UP to
-//     a block start, the high end rounds DOWN to a block start then extends to
-//     +99 (so the effective range always ends in ...99, never ...00). A range
-//     narrower than one block is dropped.
+//     a block start, the high end rounds DOWN to a block end (never exceeding
+//     b, ending in ...99). A range narrower than one block is dropped.
 //   - Overlapping/adjacent ranges are merged, so capacity is never double-counted.
 //   - At least one usable 100-port block must remain, or the value is rejected
 //     (a range that cannot host even one container is an error).
@@ -421,9 +420,9 @@ func ParseUserPorts(s string) ([]PortRange, error) {
 		if a > b {
 			continue
 		}
-		// Align inward: lo up to a block start, hi down to a block start then +99.
+		// Align inward: lo rounds UP to a block start, hi rounds DOWN to a block end <= b.
 		lo := ((a + PortsPerUser - 1) / PortsPerUser) * PortsPerUser
-		hi := (b/PortsPerUser)*PortsPerUser + PortsPerUser - 1
+		hi := ((b + 1) / PortsPerUser) * PortsPerUser - 1
 		if lo > hi {
 			continue // narrower than one block
 		}
@@ -448,7 +447,7 @@ func ParseUserPorts(s string) ([]PortRange, error) {
 }
 
 // CanonicalUserPorts renders parsed ranges as their canonical comma-separated
-// string form ("10000-20099, 25000-29999"). Returns the raw input unchanged if
+// string form ("10000-19999, 25000-29999"). Returns the raw input unchanged if
 // it does not parse.
 func CanonicalUserPorts(s string) string {
 	rs, err := ParseUserPorts(s)

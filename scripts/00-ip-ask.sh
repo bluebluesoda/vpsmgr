@@ -315,8 +315,8 @@ PY
 # comma-separated) and the container capacity on one line ("canon|cap"). Exit 0
 # only when the value yields at least one usable 100-port block. Mirrors
 # cfg.ParseUserPorts: low end rounds up to a block start, high end rounds down
-# then +99 (never ends in ...00); ranges outside 10000-29999 are clamped, and
-# fully-outside ranges contribute nothing.
+# to a block end <= b (never ends in ...00, never exceeds user's b); ranges
+# outside 10000-29999 are clamped, and fully-outside ranges contribute nothing.
 normalize_user_ports(){
   python3 - "$1" <<'PY'
 import sys
@@ -337,7 +337,7 @@ def norm(s):
         if a > b:
             continue
         lo = ((a + 99) // 100) * 100
-        hi = (b // 100) * 100 + 99
+        hi = ((b + 1) // 100) * 100 - 1
         if lo > hi:
             continue
         out.append([lo, hi])
