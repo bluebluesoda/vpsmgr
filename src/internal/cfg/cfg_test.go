@@ -266,17 +266,19 @@ func TestParseUserPorts(t *testing.T) {
 		canon string // canonical form; "" = must be rejected
 	}{
 		{"10000-29999", 200, "10000-29999"},                           // default full range
-		{"10000-20000", 101, "10000-20099"},                           // hi rounds down then +99 (never ends in 00)
-		{"10001-29998", 199, "10100-29999"},                           // inward-aligned both ends
+		{"10000-20000", 100, "10000-19999"},                           // hi rounds down to block end <= b (never exceeds b)
+		{"10000-15000", 50, "10000-14999"},                            // boundary test: 15000 rounds down to 14999, not 15099
+		{"10001-29998", 198, "10100-29899"},                           // inward-aligned both ends (29998 rounds down to 29899)
+		{"10001-29999", 199, "10100-29999"},                           // inward-aligned low end only
 		{"10001-10099", 0, ""},                                        // narrower than one block
 		{"10000-10099", 1, "10000-10099"},                             // exactly one block
-		{"10000-20000, 25000-30000", 151, "10000-20099, 25000-29999"}, // discontiguous
-		{"10000-15000, 14000-20000", 101, "10000-20099"},              // overlapping → merged
-		{"5000-15000", 51, "10000-15099"},                             // lo below domain clamps to 10000
+		{"10000-20000, 25000-30000", 150, "10000-19999, 25000-29999"}, // discontiguous
+		{"10000-15000, 14000-20000", 100, "10000-19999"},              // overlapping → merged
+		{"5000-15000", 50, "10000-14999"},                             // lo below domain clamps to 10000
 		{"20000-40000", 100, "20000-29999"},                           // hi above domain clamps to 29999
-		{"10000-10000", 1, "10000-10099"},                             // single port still yields its block
+		{"10000-10000", 0, ""},                                         // single port has no whole block
 		{"5000-6000", 0, ""},                                          // fully outside domain
-		{"10000-20000, 21000-21099", 102, "10000-20099, 21000-21099"}, // adjacent not merged (gap 100)
+		{"10000-20000, 21000-21099", 101, "10000-19999, 21000-21099"}, // adjacent not merged (gap 100)
 	}
 	for _, c := range cases {
 		rs, err := ParseUserPorts(c.in)
@@ -329,8 +331,8 @@ func TestUserPortCount(t *testing.T) {
 		t.Errorf("default UserPortCount() = %d, want 200", n)
 	}
 	cfg.Net.UserPorts = "10000-20000, 25000-30000"
-	if n := cfg.UserPortCount(); n != 151 {
-		t.Errorf("UserPortCount() = %d, want 151", n)
+	if n := cfg.UserPortCount(); n != 150 {
+		t.Errorf("UserPortCount() = %d, want 150", n)
 	}
 	cfg.Net.UserPorts = "garbage"
 	if n := cfg.UserPortCount(); n != 200 {
@@ -346,8 +348,8 @@ func TestFillAutoUserPortsEnv(t *testing.T) {
 	if err := c.FillAuto(); err != nil {
 		t.Fatalf("FillAuto: %v", err)
 	}
-	if c.Net.UserPorts != "10000-20099, 25000-29999" {
-		t.Errorf("user_ports = %q, want canonical 10000-20099, 25000-29999", c.Net.UserPorts)
+	if c.Net.UserPorts != "10000-19999, 25000-29999" {
+		t.Errorf("user_ports = %q, want canonical 10000-19999, 25000-29999", c.Net.UserPorts)
 	}
 
 	// A bad env value must fail loudly, not silently default.
