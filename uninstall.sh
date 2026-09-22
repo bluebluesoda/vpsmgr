@@ -169,7 +169,7 @@ if [[ $PURGE -eq 1 ]]; then
   rm -rf /etc/incus /var/lib/incus /var/cache/incus /var/log/incus /var/lib/incus-lxcfs
   nft delete table inet incus 2>/dev/null || true
   nft delete table bridge incus 2>/dev/null || true
-  rm -f /etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources /etc/apt/keyrings/zabbly.asc
+  rm -f /etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources /etc/apt/keyrings/zabbly.asc /etc/apt/preferences.d/zabbly-incus
   apt-get update -qq >/dev/null 2>&1 || true
 fi
 
