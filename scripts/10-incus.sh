@@ -59,6 +59,21 @@ fi
 
 # --- ensure the Zabbly repo is present, then install Incus ---
 ZABBLY_SOURCE="/etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources"
+ZABBLY_PREF="/etc/apt/preferences.d/zabbly-incus"
+
+# Prefer Zabbly packages over distro-provided packages. On Ubuntu hosts
+# with Ubuntu Pro / ESM enabled, ESM-apps packages carry Pin-Priority: 510,
+# which makes APT prefer Ubuntu's older incus-client (6.0) over Zabbly's (7.0)
+# and break incus-base's strict dependency.
+if [[ ! -f "$ZABBLY_PREF" ]]; then
+  install -d -m 0755 /etc/apt/preferences.d
+  cat > "$ZABBLY_PREF" <<EOF
+Package: *
+Pin: origin pkgs.zabbly.com
+Pin-Priority: 600
+EOF
+fi
+
 if [[ -f "$ZABBLY_SOURCE" ]]; then
   log "zabbly incus lts-7.0 repo already configured"
 else
