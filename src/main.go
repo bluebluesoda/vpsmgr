@@ -738,7 +738,7 @@ func cmdServe() error {
 	// the proxy reads. Regenerating from the DB (and dropping every domain the
 	// DB no longer knows) makes the panel self-heal after any crash. Only
 	// meaningful when v4 forwarding is on.
-	if m.V4ForwardLive() {
+	if m.LiveDomainProxyEnabled() {
 		if err := m.SyncAllDomains(); err != nil {
 			log.Printf("warn: haproxy reconciliation at startup: %v", err)
 		}
@@ -1190,7 +1190,7 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 	case cfg.ApplyImmediate:
 		switch key {
 		case "net.v4_forward":
-			what = "toggles container IPv4 inbound immediately — SSH / port / domain reachability of every container changes"
+			what = "changes every container's direct IPv4 SSH/port forwarding; web-only keeps the public IPv4 and optional HAProxy 80/443 domains"
 		case "net.haproxy":
 			what = "starts/stops HAProxy immediately and changes whether new domains may be added"
 		case "incus.swap_ratio":
@@ -1619,7 +1619,7 @@ func userList() error {
 	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-8s %-8s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "UP_GB", "DOWN_GB", "CPU%", "MEMUSE")
 	for _, r := range results {
 		ports := mgr.UserPorts(r.User.StartPort, r.PortsPerUser)
-		if !r.V4Forward {
+		if !r.V4Capabilities.DirectForwarding {
 			ports = "v4-off"
 		}
 		fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8d %-7d %-8s %-8s %-6s %-10s\n",
@@ -1655,7 +1655,7 @@ func printAdded(r *mgr.Result) {
 	u := r.User
 	fmt.Printf("name:     %s\n", u.Name)
 	fmt.Printf("state:    %s\n", r.State)
-	if r.V4Forward {
+	if r.V4Capabilities.DirectForwarding {
 		fmt.Printf("ssh:      %d\n", u.SSHPort)
 		fmt.Printf("ports:    %s\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	} else {
@@ -1677,7 +1677,7 @@ func printAdded(r *mgr.Result) {
 		// show. Say so instead of silently dropping the credential line.
 		fmt.Printf("password: (inherited from the %q user group — not shown; reset with `vps passwd %s`)\n", mgr.UserGroupName(u.Name), u.Name)
 	}
-	if r.V4Forward {
+	if r.V4Capabilities.DirectForwarding {
 		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
 	} else {
 		fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)
@@ -1697,7 +1697,7 @@ func printResult(r *mgr.Result) {
 	if r.IPv6Extra != "" {
 		fmt.Printf("ipv6 /64: %s\n", r.IPv6Extra)
 	}
-	if r.V4Forward {
+	if r.V4Capabilities.DirectForwarding {
 		fmt.Printf("ssh:      %d\n", u.SSHPort)
 		fmt.Printf("ports:    %s\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	} else {
@@ -1712,7 +1712,7 @@ func printResult(r *mgr.Result) {
 	if r.Password != "" {
 		c, _ := cfg.Load()
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
-		if r.V4Forward {
+		if r.V4Capabilities.DirectForwarding {
 			fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
 		} else {
 			fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)

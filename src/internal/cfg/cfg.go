@@ -164,18 +164,93 @@ type PanelCfg struct {
 	BandwidthResetDay int `yaml:"bandwidth_reset_day"`
 }
 
+type V4Policy string
+
+const (
+	V4Direct  V4Policy = "true"
+	V4Off     V4Policy = "false"
+	V4WebOnly V4Policy = "web-only"
+)
+
+type V4Capabilities struct {
+	DirectForwarding   bool
+	ShowPublicIPv4     bool
+	DomainProxyAllowed bool
+}
+
+func ParseV4Policy(v string) (V4Policy, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return V4Direct, nil
+	case "0", "false", "no", "off":
+		return V4Off, nil
+	case "web-only":
+		return V4WebOnly, nil
+	default:
+		return V4Off, fmt.Errorf("net.v4_forward must be true, false, or web-only")
+	}
+}
+
+func (p V4Policy) String() string {
+	switch p {
+	case V4Direct:
+		return string(V4Direct)
+	case V4Off:
+		return string(V4Off)
+	case V4WebOnly:
+		return string(V4WebOnly)
+	default:
+		return string(V4Off)
+	}
+}
+
+func (p V4Policy) Capabilities() V4Capabilities {
+	switch p {
+	case V4Direct:
+		return V4Capabilities{DirectForwarding: true, ShowPublicIPv4: true, DomainProxyAllowed: true}
+	case V4WebOnly:
+		return V4Capabilities{ShowPublicIPv4: true, DomainProxyAllowed: true}
+	default:
+		return V4Capabilities{}
+	}
+}
+
+func (p *V4Policy) UnmarshalYAML(node *yaml.Node) error {
+	var raw string
+	if err := node.Decode(&raw); err != nil {
+		return fmt.Errorf("net.v4_forward must be true, false, or web-only")
+	}
+	policy, err := ParseV4Policy(raw)
+	if err != nil {
+		return err
+	}
+	*p = policy
+	return nil
+}
+
+func (p V4Policy) MarshalYAML() (any, error) {
+	switch p {
+	case V4Direct:
+		return true, nil
+	case V4Off:
+		return false, nil
+	case V4WebOnly:
+		return string(V4WebOnly), nil
+	default:
+		return nil, fmt.Errorf("invalid net.v4_forward policy %q", p)
+	}
+}
+
 type NetCfg struct {
 	Subnet  string `yaml:"subnet"`
 	Gateway string `yaml:"gateway"`
 	ExtIF   string `yaml:"ext_if"`
-	// V4Forward controls IPv4 inbound forwarding to containers. When false
-	// (only meaningful with IPv6 pass-through enabled) containers become
-	// IPv6-only: no SSH DNAT, no user-port-block DNAT, and the domain proxy
-	// is disabled — containers still reach IPv4 out via the NAT4 masquerade.
-	// Set once at install, changeable at runtime with `vps config set
-	// net.v4_forward true|false`.
-	// Deliberately NOT omitempty: false must round-trip through the config.
-	V4Forward bool `yaml:"v4_forward"`
+	// V4Forward selects the IPv4 inbound policy: true for direct SSH and
+	// user-port forwarding, false to disable IPv4 inbound, or web-only to
+	// keep public IPv4 display and optional HAProxy domain forwarding without
+	// direct container port forwarding. Containers still reach IPv4 out via
+	// NAT4 in every mode. Deliberately NOT omitempty so every policy persists.
+	V4Forward V4Policy `yaml:"v4_forward"`
 	// Haproxy controls the optional domain reverse proxy (HAProxy, the SNI
 	// passthrough / HTTP host router) independently of IPv4 forwarding. When
 	// false, haproxy.service is stopped and not enabled at boot; existing
@@ -305,7 +380,7 @@ type SnapshotsCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, WebSSH: true, BandwidthResetDay: 1}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true, Haproxy: true, UserPorts: DefaultUserPorts}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: V4Direct, Haproxy: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}
 	return c
@@ -422,7 +497,7 @@ func ParseUserPorts(s string) ([]PortRange, error) {
 		}
 		// Align inward: lo rounds UP to a block start, hi rounds DOWN to a block end <= b.
 		lo := ((a + PortsPerUser - 1) / PortsPerUser) * PortsPerUser
-		hi := ((b + 1) / PortsPerUser) * PortsPerUser - 1
+		hi := ((b+1)/PortsPerUser)*PortsPerUser - 1
 		if lo > hi {
 			continue // narrower than one block
 		}
@@ -617,11 +692,13 @@ func (c *Config) FillAuto() error {
 			c.Net.Gateway = g
 		}
 	}
-	// VPSMGR_V4_FORWARD (1/0/true/false) carries the IPv4 inbound policy chosen
-	// at install time; on adoption the config value is re-exported by the ask
-	// script, so this just mirrors it.
+	// VPSMGR_V4_FORWARD carries the IPv4 inbound policy chosen at install time.
 	if v := os.Getenv("VPSMGR_V4_FORWARD"); v != "" {
-		c.Net.V4Forward = v == "1" || strings.EqualFold(v, "true")
+		policy, err := ParseV4Policy(v)
+		if err != nil {
+			return fmt.Errorf("VPSMGR_V4_FORWARD %q: %w", v, err)
+		}
+		c.Net.V4Forward = policy
 	}
 	// VPSMGR_HAPROXY (1/0/true/false) forces the domain-proxy toggle at
 	// install: 00-check.sh sets it to 0 when 80/443 is already taken so the

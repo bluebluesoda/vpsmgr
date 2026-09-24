@@ -41,7 +41,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
 | `net.user_ports` | operator | next `vps add` / reinstall | user-port ranges a **new** container's 100-port block is drawn from; comma-separated inclusive ranges (e.g. `10000-29999` = 200 containers, or `10000-20000, 25000-30000`); auto-aligned to whole hundreds; affects **new containers only** — existing ones keep their ports |
-| `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, domain proxy disabled, NAT4 outbound kept) |
+| `net.v4_forward` | runtime policy | **applied immediately** | `true` = direct IPv4 SSH/port DNAT; `false` = IPv4 inbound fully off; `web-only` = public IPv4 and optional HAProxy 80/443 domains, with direct IPv4 ports off; NAT4 outbound always remains |
 | `net.haproxy` | runtime toggle | **applied immediately** | false = stop and disable HAProxy; existing domains are retained, but new domains cannot be added. **Renamed from `net.traefik`** — same values; an old key is read and rewritten under the new name |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
 | `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
@@ -112,7 +112,7 @@ panel:
 net:
   subnet: "10.115.0.0/24"      # container subnet 10.<n>.0.0/24 — only the second octet is settable, at install
   gateway: "10.115.0.1"
-  v4_forward: true             # IPv4 inbound policy (false = IPv6-only containers)
+  v4_forward: true             # true = direct IPv4 SSH/ports; false = fully off; web-only = 80/443 domains only
   haproxy: true                # domain reverse proxy (false = stopped and not enabled at boot);
                                # renamed from `traefik` — a pre-rename key is adopted as-is
   ext_if: AUTO                 # external NIC, auto-detected from the default route
@@ -203,24 +203,29 @@ Rules:
 > stays in the file but is ignored and is no longer an editable config key.
 ## IPv4 inbound policy (`v4_forward`)
 
-`net.v4_forward` controls whether containers receive **shared IPv4 inbound**.
-Always enabled by default — the installer does not ask (with IPv6 off, IPv4
-forwarding is mandatory, as containers would otherwise be unreachable).
+`net.v4_forward` controls the IPv4 inbound policy. It is enabled by default and
+accepts three values:
 
-- `true` (default): containers get the random SSH port + user port block (DNAT),
-  and the domain proxy (HAProxy) is available.
-- `false`: containers are **IPv6-only**. No SSH DNAT, no port-block DNAT, and
-  HAProxy is stopped (domains are kept but not served; adding a domain is
-  rejected until re-enabled). Containers still reach IPv4 outbound via the NAT4
-  masquerade.
+- `true` (default): containers get direct SSH and user-port-block DNAT, and
+  HAProxy domains are available when `net.haproxy=true`.
+- `web-only`: direct IPv4 SSH/port DNAT is removed, but the public IPv4 remains
+  visible in the user panel and HAProxy can forward domains on host ports
+  80/443 when `net.haproxy=true`. Domain add/update/delete remains available.
+  The user panel still shows IPv4 SSH as unsupported.
+- `false`: IPv4 inbound is fully off. HAProxy is stopped (domains are kept but
+  not served), the public IPv4 is hidden, and adding a domain is rejected.
+  Containers still reach IPv4 outbound through the NAT4 masquerade.
 
-Toggle at runtime with `vps config set net.v4_forward true|false` — the rules
-are refreshed and HAProxy started/stopped immediately (its boot autostart is
-disabled along with it, so it cannot come back on reboot). The SSH/user ports
-stay recorded in the DB, so turning it back on restores everything. The user
-panel hides IPv4 inbound info and shows "v4 SSH unavailable" while off, and
-**domain-add is blocked while off** — the add form is hidden and the handler
-rejects it (the panel reads the toggle live from the DB, no restart needed).
+Change it at runtime with
+`vps config set net.v4_forward true|false|web-only`. Direct DNAT files are
+refreshed immediately; HAProxy boot autostart follows the effective policy.
+Stored SSH/user ports remain in SQLite, so changing back to `true` restores the
+same allocations.
+
+`web-only` is a vpsmgr application policy: it removes vpsmgr's per-user direct
+DNAT while continuing to use HAProxy for 80/443. Kernel IPv4 forwarding, the
+Incus bridge, NAT4 masquerade, and Docker compatibility rules are unchanged;
+this setting does not install a host-wide packet allowlist.
 
 ## Domain proxy (`net.haproxy`)
 

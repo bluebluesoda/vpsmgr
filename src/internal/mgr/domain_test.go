@@ -20,7 +20,7 @@ import (
 func setupDomainTest(t *testing.T, dir string) (*Manager, *db.DB, string) {
 	t.Helper()
 	c := cfg.Default()
-	c.Net.V4Forward = true
+	c.Net.V4Forward = cfg.V4Direct
 	c.Net.Haproxy = true
 	if dir == "" {
 		dir = t.TempDir()
@@ -46,7 +46,7 @@ func setupDomainTest(t *testing.T, dir string) (*Manager, *db.DB, string) {
 func setupFailingPublish(t *testing.T) (*Manager, *db.DB, string) {
 	t.Helper()
 	c := cfg.Default()
-	c.Net.V4Forward = true
+	c.Net.V4Forward = cfg.V4Direct
 	c.Net.Haproxy = true
 	t.Setenv("VPSMGR_HAPROXY_DIR", t.TempDir())
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -84,6 +84,17 @@ func currentMap(t *testing.T, dir, name string) string {
 		t.Fatalf("read published %s: %v", name, err)
 	}
 	return string(b)
+}
+
+func TestAddDomainWebOnly(t *testing.T) {
+	m, d, name := setupDomainTest(t, "")
+	m.cfg.Net.V4Forward = cfg.V4WebOnly
+	if err := d.SetSetting(db.SettingV4Forward, "web-only"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AddDomain(name, "example.com", false); err != nil {
+		t.Fatalf("web-only AddDomain: %v", err)
+	}
 }
 
 func TestAddDomainPublishesRoute(t *testing.T) {

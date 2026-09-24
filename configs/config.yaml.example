@@ -31,10 +31,11 @@ net:
   # only them. SSH ports (30000-31999) are NOT checked at install — each is
   # probed at `vps add` time, and a busy port is simply skipped.
   user_ports: "10000-29999"
-  v4_forward: true            # IPv4 inbound policy. false (only meaningful with
-                              # ipv6_subnet set) = containers are IPv6-only: no
-                              # SSH/port-block DNAT and haproxy/domains disabled
-                              # (NAT4 outbound kept). Toggle at runtime: vps config set net.v4_forward true|false
+  v4_forward: true            # true = direct IPv4 SSH/port forwarding
+                              # false = IPv4 inbound fully off
+                              # web-only = public IPv4 + HAProxy 80/443 domains,
+                              #            no direct IPv4 SSH/port forwarding
+                              # NAT4 outbound remains enabled in every mode
   haproxy: true               # domain proxy (HAProxy). true = running and enabled
                               # at boot; false = stopped and disabled at boot, with
                               # existing domain records kept but no new domains

@@ -441,8 +441,8 @@ PY
 # leaves it unset → the config default (enabled) applies everywhere.
 if [[ -n "${VPSMGR_V4_FORWARD:-}" ]]; then
   case "$VPSMGR_V4_FORWARD" in
-    1|0|true|false) ;;
-    *) die "VPSMGR_V4_FORWARD must be 1/0 (got '$VPSMGR_V4_FORWARD')"; return 1 ;;
+    1|0|true|false|web-only) ;;
+    *) die "VPSMGR_V4_FORWARD must be 1/0/true/false/web-only (got '$VPSMGR_V4_FORWARD')"; return 1 ;;
   esac
 elif [[ -f /etc/vpsmgr/config.yaml ]]; then
   V4_FWD=$(grep -E '^\s+v4_forward:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')

@@ -25,6 +25,8 @@ fi
 
 REPO="bluebluesoda/vpsmgr"
 BRANCH="${VPSMGR_BRANCH:-main}"
+# shellcheck source=scripts/lib-download.sh
+source "$(dirname "$0")/scripts/lib-download.sh"
 # The installer may reclaim /tmp and /var/tmp when disk space is tight.
 # Keep the active checkout outside those directories until installation ends.
 WORKDIR="$(mktemp -d /var/lib/vpsmgr-oneclick.XXXXXX)"
@@ -43,8 +45,13 @@ for a in "$@"; do
 done
 
 echo "==> downloading $REPO@$BRANCH (gitless) into $WORKDIR"
-curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
-  | tar -xz --strip-components=1 -C "$WORKDIR"
+tarball="$WORKDIR/vpsmgr.tar.gz"
+if ! dl_content "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" "$tarball"; then
+  echo "error: could not download the repository tarball after retries" >&2
+  exit 1
+fi
+tar -xz --strip-components=1 -C "$WORKDIR" -f "$tarball"
+rm -f "$tarball"
 
 echo "==> starting installer ${ARGS[*]:-}"
 bash "$WORKDIR/install.sh" "${ARGS[@]:-}"

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestIPv6Network(t *testing.T) {
@@ -189,6 +191,36 @@ func TestFillAutoIPv4SubnetEnv(t *testing.T) {
 	}
 }
 
+func TestV4PolicyYAMLCompatibility(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want V4Policy
+	}{
+		{"v4_forward: true", V4Direct},
+		{"v4_forward: false", V4Off},
+		{`v4_forward: "false"`, V4Off},
+		{"v4_forward: web-only", V4WebOnly},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			c := Default()
+			if err := yaml.Unmarshal([]byte("net:\n  "+tc.raw+"\n"), c); err != nil {
+				t.Fatal(err)
+			}
+			if c.Net.V4Forward != tc.want {
+				t.Fatalf("policy = %q, want %q", c.Net.V4Forward, tc.want)
+			}
+		})
+	}
+	if err := yaml.Unmarshal([]byte("net:\n  v4_forward: invalid\n"), Default()); err == nil {
+		t.Fatal("invalid v4_forward accepted")
+	}
+	out := MustYAML(&Config{Net: NetCfg{V4Forward: V4WebOnly}})
+	if !strings.Contains(string(out), "v4_forward: web-only") {
+		t.Fatalf("web-only did not round-trip: %s", out)
+	}
+}
+
 func TestFillAutoV4ForwardEnv(t *testing.T) {
 	c := Default()
 	c.Net.ExtIF = "eth0"
@@ -197,7 +229,7 @@ func TestFillAutoV4ForwardEnv(t *testing.T) {
 	if err := c.FillAuto(); err != nil {
 		t.Fatalf("FillAuto: %v", err)
 	}
-	if c.Net.V4Forward {
+	if c.Net.V4Forward != V4Off {
 		t.Error("V4Forward should be false when VPSMGR_V4_FORWARD=0")
 	}
 }
@@ -276,7 +308,7 @@ func TestParseUserPorts(t *testing.T) {
 		{"10000-15000, 14000-20000", 100, "10000-19999"},              // overlapping → merged
 		{"5000-15000", 50, "10000-14999"},                             // lo below domain clamps to 10000
 		{"20000-40000", 100, "20000-29999"},                           // hi above domain clamps to 29999
-		{"10000-10000", 0, ""},                                         // single port has no whole block
+		{"10000-10000", 0, ""},                                        // single port has no whole block
 		{"5000-6000", 0, ""},                                          // fully outside domain
 		{"10000-20000, 21000-21099", 101, "10000-19999, 21000-21099"}, // adjacent not merged (gap 100)
 	}

@@ -9,6 +9,9 @@ log(){ echo "[40] $*"; }
 die(){ echo "[40] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-download.sh
+source "$SCRIPT_DIR/lib-download.sh"
 REPO="bluebluesoda/vpsmgr"
 
 ensure_go(){
@@ -154,7 +157,7 @@ build_local(){
 }
 
 install_prebuilt(){
-  local arch dir bin_url sum_url
+  local arch dir bin_url sum_url sums
   case "$(uname -m)" in
     x86_64)  arch=amd64 ;;
     aarch64) arch=arm64 ;;
@@ -171,13 +174,36 @@ install_prebuilt(){
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."
   log "  $bin_url"
-  curl -fsSL --max-time 120 -o "$dir/vps-$arch" "$bin_url" \
-    || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
-  if curl -fsSL --max-time 30 -o "$dir/SHA256SUMS" "$sum_url"; then
+  # Metadata (SHA256SUMS) first: short timeout, many retries.
+  sums="$dir/SHA256SUMS"
+  if ! dl_meta "$sum_url" "$sums"; then
+    log "warn: could not fetch checksums, skipping verification"
+    sums=""
+  fi
+  # Prefer a local prebuilt snapshot placed next to the installer run dir if its
+  # checksum matches the release manifest — avoids hitting GitHub when an
+  # operator already fetched the exact binary.
+  local local_pre="${VPSMGR_PREBUILD_LOCAL:-$PWD/vps-prebuild}"
+  if [[ -z "${sums:-}" || -z "${local_pre:-}" ]]; then :; else
+    want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
+    if [[ -n "$want" && -f "$local_pre" ]]; then
+      got=$(sha256sum "$local_pre" | awk '{print $1}')
+      if [[ "$want" == "$got" ]]; then
+        cp "$local_pre" "$dir/vps-$arch"
+        log "using local vps-prebuild ($local_pre, checksum matches latest release)"
+      else
+        log "local vps-prebuild checksum mismatch — downloading the release binary"
+      fi
+    fi
+  fi
+  # Real content download: up to 10 tries, no total timeout (no max-time).
+  if [[ ! -s "$dir/vps-$arch" ]]; then
+    dl_content "$bin_url" "$dir/vps-$arch" \
+      || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
+  fi
+  if [[ -n "${sums:-}" ]]; then
     (cd "$dir" && sha256sum -c --ignore-missing --status SHA256SUMS) \
       || { log "warn: checksum mismatch (corrupt download?), falling back to local build"; rm -rf "$dir"; return 1; }
-  else
-    log "warn: could not fetch checksums, skipping verification"
   fi
   # Replace a running binary (ETXTBSY): stop the units that map it first,
   # then copy, then let the installer re-enable them below. This runs only

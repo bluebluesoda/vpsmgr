@@ -276,15 +276,15 @@ var Fields = []Field{
 			return fmt.Errorf("net.gateway is fixed at install (derived from net.subnet)")
 		}},
 	{"net.v4_forward", KindRuntime, ApplyImmediate,
-		"IPv4 inbound policy: true = SSH/port-block DNAT + the domain proxy, false = IPv6-only containers",
-		"true or false",
-		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.V4Forward) }),
+		"IPv4 inbound policy: true = direct SSH/port DNAT, false = fully off, web-only = public IPv4 plus HAProxy 80/443 domains without direct ports",
+		"true, false, or web-only",
+		getStr(func(c *Config) string { return c.Net.V4Forward.String() }),
 		func(c *Config, v string) error {
-			b, ok := parseBool(v)
-			if !ok {
-				return fmt.Errorf("net.v4_forward must be true/false or 1/0")
+			policy, err := ParseV4Policy(v)
+			if err != nil {
+				return err
 			}
-			c.Net.V4Forward = b
+			c.Net.V4Forward = policy
 			return nil
 		}},
 	{"net.user_ports", KindOperator, ApplyNextAdd,

@@ -280,7 +280,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <tr{{if .Expired}} class="exp"{{end}}>
           <td data-sort="{{.Name}}"><span class="urow">{{if and .Color (not .Expired)}}<span class="udot" style="background:{{.Color}}"></span>{{end}}<button type="button" class="uname"{{if and .Color (not .Expired)}} style="color:{{.Color}}"{{end}} onclick="pickColor('{{.Name}}')">{{.Name}}{{if .Expired}}(-{{.ExpiredDays}}d){{end}}</button></span></td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}{{if and (ne .Status "ready") (ne .Status "")}} <span class="pill down">{{.Status}}</span>{{end}}</td>
-          <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
+          <td>{{if $.DirectV4}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{if eq $.V4Policy "web-only"}}{{if eq $.Lang "zh"}}仅 80/443{{else}}80/443 only{{end}}{{else}}v4 off{{end}}</small>{{end}}</td>
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small><br><small>{{if eq $.Lang "zh"}}有效期{{else}}validity{{end}}: {{if .ExpiresAt}}{{.ExpiresShort}}{{else}}{{if eq $.Lang "zh"}}无限期{{else}}permanent{{end}}{{end}}</small></td>
           <td data-sort="{{.CPUUse}}">{{.CPUUse}}</td>
           <td data-sort="{{.MemUse}}">{{.MemUse}}</td>
