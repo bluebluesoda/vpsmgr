@@ -157,7 +157,7 @@ build_local(){
 }
 
 install_prebuilt(){
-  local arch dir bin_url sum_url sums
+  local arch dir bin_url sum_url sums want got local_pre
   case "$(uname -m)" in
     x86_64)  arch=amd64 ;;
     aarch64) arch=arm64 ;;
@@ -174,33 +174,38 @@ install_prebuilt(){
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."
   log "  $bin_url"
-  # Prefer a local prebuilt snapshot if its checksum matches the
-  # release manifest — avoids hitting GitHub when an operator already
-  # fetched the exact binary.
-  local local_pre="${VPSMGR_PREBUILD_LOCAL:-$PWD/vps-prebuild}"
-  if [[ -f "$local_pre" ]]; then
-    sums="$dir/SHA256SUMS"
-    if dl_meta "$sum_url" "$sums"; then
-      want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
-      got=$(sha256sum "$local_pre" | awk '{print $1}')
-      if [[ -n "$want" && "$want" == "$got" ]]; then
-        cp "$local_pre" "$dir/vps-$arch"
-        log "using local vps-prebuild ($local_pre, checksum matches latest release)"
-      else
-        log "local vps-prebuild checksum mismatch or missing asset — downloading the release binary"
-      fi
+  # Prefer a local vps-prebuild snapshot if its checksum matches the
+  # release manifest; otherwise download the release binary.
+  local_pre="${VPSMGR_PREBUILD_LOCAL:-/root/vps-prebuild}"
+  sums="$dir/SHA256SUMS"
+  if ! dl_meta "$sum_url" "$sums"; then
+    log "warn: could not fetch checksums — checksum verification skipped"
+    sums=""
+  fi
+  if [[ -f "$local_pre" && -s "$sums" ]]; then
+    want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
+    got=$(sha256sum "$local_pre" | awk '{print $1}')
+    if [[ -n "$want" && "$want" == "$got" ]]; then
+      mv "$local_pre" "$dir/vps-$arch"
+      chmod 755 "$dir/vps-$arch"
+      log "using local vps-prebuild ($local_pre, checksum matches latest release)"
     else
-      log "warn: could not fetch checksums, skipping local vps-prebuild verification"
+      log "local vps-prebuild checksum mismatch — downloading the release binary"
     fi
+  elif [[ -f "$local_pre" && ! -s "$sums" ]]; then
+    log "warn: could not fetch checksums, skipping local vps-prebuild"
   fi
   # Real content download: up to 10 tries, no total timeout (no max-time).
   if [[ ! -s "$dir/vps-$arch" ]]; then
     dl_content "$bin_url" "$dir/vps-$arch" \
       || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
   fi
-  if [[ -s "$dir/SHA256SUMS" ]]; then
+  # Checksums are mandatory whenever the manifest was fetched.
+  if [[ -s "$sums" ]]; then
     (cd "$dir" && sha256sum -c --ignore-missing --status SHA256SUMS) \
       || { log "warn: checksum mismatch (corrupt download?), falling back to local build"; rm -rf "$dir"; return 1; }
+  else
+    log "warn: no checksum manifest available — skipping checksum verification"
   fi
   # Replace a running binary (ETXTBSY): stop the units that map it first,
   # then copy, then let the installer re-enable them below. This runs only
@@ -245,27 +250,6 @@ elif [[ "${VPSMGR_BUILD_MODE:-}" == "update" ]]; then
     log "warn: prebuilt update failed — keeping the installed binary ($(/usr/local/bin/vps version))"
   fi
 elif [[ -x /usr/local/bin/vps ]]; then
-  # If a local vps-prebuild snapshot matching the latest release exists,
-  # replace the running binary with it; otherwise keep the installed one.
-  local local_pre="${VPSMGR_PREBUILD_LOCAL:-$PWD/vps-prebuild}"
-  if [[ -f "$local_pre" ]]; then
-    sums="$(mktemp -d /tmp/vpsmgr-dl.XXXXXX)/SHA256SUMS"
-    if dl_meta "https://github.com/$REPO/releases/latest/download/SHA256SUMS" "$sums" 2>/dev/null; then
-      want="$(dl_release_sha "$sums" "vps-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" 2>/dev/null || true)"
-      got="$(sha256sum "$local_pre" | awk '{print $1}')"
-      if [[ -n "$want" && "$want" == "$got" ]]; then
-        stop_holders
-        cp "$local_pre" /usr/local/bin/vps
-        chmod 755 /usr/local/bin/vps
-        log "updated /usr/local/bin/vps from local vps-prebuild (checksum matches latest release)"
-      else
-        log "local vps-prebuild checksum mismatch — keeping the installed binary"
-      fi
-    else
-      log "warn: could not fetch checksums, skipping local vps-prebuild update"
-    fi
-    rm -rf "${sums%/*}"
-  fi
   log "vps already installed, skipping ($(/usr/local/bin/vps version))"
 else
   if install_prebuilt; then
