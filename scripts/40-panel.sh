@@ -174,26 +174,23 @@ install_prebuilt(){
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."
   log "  $bin_url"
-  # Metadata (SHA256SUMS) first: short timeout, many retries.
-  sums="$dir/SHA256SUMS"
-  if ! dl_meta "$sum_url" "$sums"; then
-    log "warn: could not fetch checksums, skipping verification"
-    sums=""
-  fi
-  # Prefer a local prebuilt snapshot placed next to the installer run dir if its
-  # checksum matches the release manifest — avoids hitting GitHub when an
-  # operator already fetched the exact binary.
+  # Prefer a local prebuilt snapshot if its checksum matches the
+  # release manifest — avoids hitting GitHub when an operator already
+  # fetched the exact binary.
   local local_pre="${VPSMGR_PREBUILD_LOCAL:-$PWD/vps-prebuild}"
-  if [[ -z "${sums:-}" || -z "${local_pre:-}" ]]; then :; else
-    want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
-    if [[ -n "$want" && -f "$local_pre" ]]; then
+  if [[ -f "$local_pre" ]]; then
+    sums="$dir/SHA256SUMS"
+    if dl_meta "$sum_url" "$sums"; then
+      want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
       got=$(sha256sum "$local_pre" | awk '{print $1}')
-      if [[ "$want" == "$got" ]]; then
+      if [[ -n "$want" && "$want" == "$got" ]]; then
         cp "$local_pre" "$dir/vps-$arch"
         log "using local vps-prebuild ($local_pre, checksum matches latest release)"
       else
-        log "local vps-prebuild checksum mismatch — downloading the release binary"
+        log "local vps-prebuild checksum mismatch or missing asset — downloading the release binary"
       fi
+    else
+      log "warn: could not fetch checksums, skipping local vps-prebuild verification"
     fi
   fi
   # Real content download: up to 10 tries, no total timeout (no max-time).
@@ -201,7 +198,7 @@ install_prebuilt(){
     dl_content "$bin_url" "$dir/vps-$arch" \
       || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
   fi
-  if [[ -n "${sums:-}" ]]; then
+  if [[ -s "$dir/SHA256SUMS" ]]; then
     (cd "$dir" && sha256sum -c --ignore-missing --status SHA256SUMS) \
       || { log "warn: checksum mismatch (corrupt download?), falling back to local build"; rm -rf "$dir"; return 1; }
   fi
