@@ -40,7 +40,8 @@ type pageData struct {
 	UserCount   int
 	MaxUsers    int
 	CapacityPct int
-	V4Forward   bool
+	V4Policy    cfg.V4Policy
+	DirectV4    bool
 	Lang        string
 	// Colors is the fixed palette of accent colors an admin may assign to a
 	// user (see userColorPalette). Empty when never rendered.
@@ -147,13 +148,15 @@ type userView struct {
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
+	v4Caps := s.mgr.LiveV4Capabilities()
 	d := pageData{
-		Title:     "VPS Manager Admin",
-		Prefix:    s.prefix(),
-		Msg:       msg,
-		Err:       errMsg,
-		V4Forward: s.mgr.V4ForwardLive(),
-		Colors:    append([]string{}, userColorPalette...),
+		Title:    "VPS Manager Admin",
+		Prefix:   s.prefix(),
+		Msg:      msg,
+		Err:      errMsg,
+		V4Policy: s.mgr.LiveV4Policy(),
+		DirectV4: v4Caps.DirectForwarding,
+		Colors:   append([]string{}, userColorPalette...),
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded

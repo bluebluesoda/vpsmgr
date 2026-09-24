@@ -109,11 +109,13 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   independently: `NextFreeIdx` picks the IPv4, `allocUserPortBlock` picks a
   free 100-port block inside the configured ranges (start_port UNIQUE is the
   cross-process backstop).
-- **IPv4 inbound policy (`v4_forward`)**: the SSH/port-block DNAT above only
-  exists while `net.v4_forward` is true. When false (IPv6-only box), no DNAT
-  rules are written and HAProxy is stopped (domains kept but not served); the
-  NAT4 masquerade stays so containers still reach IPv4 outbound. Toggle:
-  `vps config set net.v4_forward true|false` (applied immediately). The SSH/port
+- **IPv4 inbound policy (`v4_forward`)**: `true` enables the SSH/port-block
+  DNAT above. `web-only` removes that direct DNAT but keeps the public IPv4
+  visible and allows HAProxy domain forwarding on host ports 80/443 when
+  `net.haproxy` is enabled. `false` removes the direct DNAT and stops HAProxy
+  (domains are kept but not served). The NAT4 masquerade stays in every mode
+  so containers still reach IPv4 outbound. Toggle at runtime with
+  `vps config set net.v4_forward true|false|web-only` (applied immediately).
 - **Docker compatibility**: on hosts running Docker, Docker's default iptables
   policy (`-P FORWARD DROP`) would otherwise block forwarded traffic from
   `incusbr0`. The installer adds allow rules to the `DOCKER-USER` chain (both

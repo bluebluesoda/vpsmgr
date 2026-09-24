@@ -273,10 +273,10 @@ func TestOverviewShowsMonthlyBandwidth(t *testing.T) {
 func TestOverviewDomSaveHiddenByDefault(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User:      &db.User{Name: "alice"},
-		Prefix:    "/" + testSecret,
-		Domains:   []domainRow{{Domain: "example.com", ProxyProtocol: false}},
-		V4Forward: true,
+		User:            &db.User{Name: "alice"},
+		Prefix:          "/" + testSecret,
+		Domains:         []domainRow{{Domain: "example.com", ProxyProtocol: false}},
+		DirectV4Forward: true,
 	})
 	if !strings.Contains(html, `id="domSave" hidden`) {
 		t.Error("domSave button must be hidden by default")
@@ -294,15 +294,16 @@ func TestOverviewDomSaveHiddenByDefault(t *testing.T) {
 func TestOverviewConnectivityLayout(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User:        &db.User{Name: "alice"},
-		SSHPort:     30351,
-		PublicIP:    "203.0.113.5",
-		Ports:       "10300-10399",
-		PortsPrefix: "103",
-		IPv6:        "2001:db8:1::dddd:1",
-		IPv6Block:   "2001:db8:1::dddd:0/112",
-		V4Forward:   true,
-		Prefix:      "/" + testSecret,
+		User:            &db.User{Name: "alice"},
+		SSHPort:         30351,
+		PublicIP:        "203.0.113.5",
+		Ports:           "10300-10399",
+		PortsPrefix:     "103",
+		IPv6:            "2001:db8:1::dddd:1",
+		IPv6Block:       "2001:db8:1::dddd:0/112",
+		DirectV4Forward: true,
+		ShowPublicIPv4:  true,
+		Prefix:          "/" + testSecret,
 	})
 	// The overview table itself no longer lists the port block: the IPV4 row
 	// carries just the public IP, and the SSH row the DNAT/V6 ports.
@@ -333,12 +334,33 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 		}
 	}
 
+	// web-only keeps the public IPv4 and domain form, but hides direct SSH/ports.
+	web := srv.renderToString(t, "overview.html", pageData{
+		User:            &db.User{Name: "alice"},
+		SSHPort:         30351,
+		PublicIP:        "203.0.113.5",
+		Ports:           "10300-10399",
+		PortsPrefix:     "103",
+		DirectV4Forward: false,
+		ShowPublicIPv4:  true,
+		DomainEnabled:   true,
+		Prefix:          "/" + testSecret,
+	})
+	for _, want := range []string{"IPV4", "203.0.113.5", "not available", "Only 80/443 domain forwarding", "name=\"domain\""} {
+		if !strings.Contains(web, want) {
+			t.Errorf("web-only overview missing %q", want)
+		}
+	}
+	for _, absent := range []string{"30351", "Available:", `class="pf-tail"`} {
+		if strings.Contains(web, absent) {
+			t.Errorf("web-only overview should not show direct ports (%q)", absent)
+		}
+	}
+
 	off := srv.renderToString(t, "overview.html", pageData{
 		User:        &db.User{Name: "alice"},
 		SSHPort:     30351,
 		IPv6:        "2001:db8:1::dddd:1",
-		V4Forward:   false,
-		Ports:       "10300-10399",
 		PortsPrefix: "103",
 		Prefix:      "/" + testSecret,
 	})
@@ -369,12 +391,13 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 	// zh: the port-forwarding card labels the block "可用：10300-10399" with the
 	// 00/99 tails faded.
 	zh := srv.renderToString(t, "overview.html", pageData{
-		User:        &db.User{Name: "alice"},
-		Ports:       "10300-10399",
-		PortsPrefix: "103",
-		V4Forward:   true,
-		Prefix:      "/" + testSecret,
-		Lang:        langZh,
+		User:            &db.User{Name: "alice"},
+		Ports:           "10300-10399",
+		PortsPrefix:     "103",
+		DirectV4Forward: true,
+		ShowPublicIPv4:  true,
+		Prefix:          "/" + testSecret,
+		Lang:            langZh,
 	})
 	for _, want := range []string{"端口转发", "域名转发", "可用：", `<b>103</b><span class="pf-tail">00</span>-<b>103</b><span class="pf-tail">99</span>`} {
 		if !strings.Contains(zh, want) {
@@ -384,12 +407,13 @@ func TestOverviewConnectivityLayout(t *testing.T) {
 
 	// zh v4-off: the same slot explains that IPv4 forwarding is off.
 	zhOff := srv.renderToString(t, "overview.html", pageData{
-		User:        &db.User{Name: "alice"},
-		Ports:       "10300-10399",
-		PortsPrefix: "103",
-		V4Forward:   false,
-		Prefix:      "/" + testSecret,
-		Lang:        langZh,
+		User:            &db.User{Name: "alice"},
+		Ports:           "10300-10399",
+		PortsPrefix:     "103",
+		DirectV4Forward: false,
+		ShowPublicIPv4:  false,
+		Prefix:          "/" + testSecret,
+		Lang:            langZh,
 	})
 	if !strings.Contains(zhOff, "IPv4 转发已关闭") {
 		t.Error("zh v4-off card should say IPv4 转发已关闭")

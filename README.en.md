@@ -40,7 +40,7 @@ If the host already runs other public services and you only need IPv6 inbound ac
 sudo ./install.sh --disable-v4forward
 ```
 
-This option asks for confirmation at the beginning. Once confirmed, it writes `net.v4_forward=false`, skips vpsmgr's reserved-port check, and only needs one randomly selected panel entry port. HAProxy is still installed but remains stopped. IPv4 inbound forwarding can later be restored with `vps config set net.v4_forward true`. The domain proxy can also be disabled on its own with `vps config set net.haproxy false` (renamed from `net.traefik`; the values are unchanged and a pre-rename config is adopted as-is).
+This option asks for confirmation at the beginning. Once confirmed, it writes `net.v4_forward=false`, skips vpsmgr's reserved-port check, and only needs one randomly selected panel entry port. HAProxy is still installed but remains stopped. IPv4 inbound forwarding can later be restored with `vps config set net.v4_forward true`; `vps config set net.v4_forward web-only` instead keeps public IPv4 and HAProxy domain forwarding on 80/443 while leaving direct IPv4 SSH/port forwarding disabled. The domain proxy can also be disabled on its own with `vps config set net.haproxy false` (renamed from `net.traefik`; the values are unchanged and a pre-rename config is adopted as-is).
 
 ZFS is the default storage backend. `btrfs` is supported as an alternative
 (on a btrfs host the pool becomes a native subvolume; elsewhere a loop file)

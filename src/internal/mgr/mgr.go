@@ -676,7 +676,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, fmt.Errorf("db: %w", err)
 	}
 	createdID = u.ID
-	if m.cfg.Net.V4Forward {
+	if m.LiveV4Capabilities().DirectForwarding {
 		if err := m.fw.WriteUser(name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
 			cleanup()
 			return nil, fmt.Errorf("write nft rules: %w", err)
@@ -723,20 +723,21 @@ func (m *Manager) checkIncusConflict(name, ip string) error {
 }
 
 type Result struct {
-	User         *db.User
-	Password     string
-	PublicIP     string
-	State        string
-	Domains      []string
-	PortsPerUser int
-	CPUUse       string
-	MemUse       string
-	UpGB         string
-	DownGB       string
-	IPv6         string // primary global address (the one to connect to)
-	IPv6Block    string // the /112 block the container owns (informational)
-	IPv6Extra    string // whole /64 handed out from the extra prefix ("" = none)
-	V4Forward    bool   // whether IPv4 inbound (ssh/ports/domains) is live
+	User           *db.User
+	Password       string
+	PublicIP       string
+	State          string
+	Domains        []string
+	PortsPerUser   int
+	CPUUse         string
+	MemUse         string
+	UpGB           string
+	DownGB         string
+	IPv6           string // primary global address (the one to connect to)
+	IPv6Block      string // the /112 block the container owns (informational)
+	IPv6Extra      string // whole /64 handed out from the extra prefix ("" = none)
+	V4Policy       cfg.V4Policy
+	V4Capabilities cfg.V4Capabilities
 }
 
 func (m *Manager) ResultFor(u *db.User, pass string) *Result {
@@ -763,11 +764,12 @@ func (m *Manager) resultForState(u *db.User, pass, state string) *Result {
 			block = b.String()
 		}
 	}
+	policy := m.LiveV4Policy()
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: state, Domains: ds, PortsPerUser: cfg.PortsPerUser,
 		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block,
 		IPv6Extra: u.IPv6ExtraBlock,
-		V4Forward: m.cfg.Net.V4Forward}
+		V4Policy:  policy, V4Capabilities: policy.Capabilities()}
 }
 
 func (m *Manager) Del(name string) error {
@@ -837,19 +839,18 @@ func (m *Manager) Del(name string) error {
 	return nil
 }
 
-// ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
-// or removes (when off) every user's DNAT rules, reloads the ruleset, and
-// applies the related HAProxy state. Called by
-// `vps config set net.v4_forward` and at the end of `vps install`. It also
-// records the effective policy in the DB settings so the long-running panel
-// process reflects the toggle without a restart.
+// ApplyV4State enforces the current v4_forward policy: it rewrites direct
+// forwarding rules only for true, removes them otherwise, reloads nftables, and
+// applies the related HAProxy state.
 func (m *Manager) ApplyV4State() error {
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err
 	}
+	policy := m.cfg.Net.V4Forward
+	capabilities := policy.Capabilities()
 	for _, u := range users {
-		if m.cfg.Net.V4Forward {
+		if capabilities.DirectForwarding {
 			if err := m.fw.WriteUser(u.Name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
 				return err
 			}
@@ -862,22 +863,41 @@ func (m *Manager) ApplyV4State() error {
 	if err := m.fw.Reload(); err != nil {
 		return err
 	}
-	if err := m.db.SetSetting(db.SettingV4Forward, strconv.FormatBool(m.cfg.Net.V4Forward)); err != nil {
+	if err := m.db.SetSetting(db.SettingV4Forward, policy.String()); err != nil {
 		return fmt.Errorf("record v4_forward: %w", err)
 	}
 	return m.ApplyHaproxyState()
 }
 
-// V4ForwardLive reports whether IPv4 inbound is currently enabled, preferring
-// the DB setting (written by ApplyV4State) over the manager's in-memory config.
-// The panel process reads its config only at startup, so without this it would
-// keep serving domains for a v4_forward toggle made by `vps config set`.
-func (m *Manager) V4ForwardLive() bool {
+// V4PolicyLive returns the DB-backed runtime policy used by the long-running
+// panel process, falling back to its startup config only when the mirror is
+// absent or unreadable. A present malformed value fails closed.
+func (m *Manager) V4PolicyLive() cfg.V4Policy {
 	v, ok, err := m.db.GetSetting(db.SettingV4Forward)
 	if err != nil || !ok {
 		return m.cfg.Net.V4Forward
 	}
-	return v == "1" || strings.EqualFold(v, "true")
+	policy, err := cfg.ParseV4Policy(v)
+	if err != nil {
+		return cfg.V4Off
+	}
+	return policy
+}
+
+func (m *Manager) LiveV4Policy() cfg.V4Policy {
+	return m.V4PolicyLive()
+}
+
+func (m *Manager) LiveV4Capabilities() cfg.V4Capabilities {
+	return m.LiveV4Policy().Capabilities()
+}
+
+func (m *Manager) V4ForwardLive() bool {
+	return m.LiveV4Capabilities().DirectForwarding
+}
+
+func (m *Manager) LiveDomainProxyEnabled() bool {
+	return m.LiveV4Capabilities().DomainProxyAllowed && m.HaproxyLive()
 }
 
 // HaproxyLive reports the effective domain-proxy toggle, including changes
@@ -900,7 +920,7 @@ func (m *Manager) ApplyHaproxyState() error {
 	if err := m.db.SetSetting(db.SettingHaproxy, strconv.FormatBool(m.cfg.Net.Haproxy)); err != nil {
 		return fmt.Errorf("record haproxy: %w", err)
 	}
-	if m.cfg.Net.V4Forward && m.cfg.Net.Haproxy {
+	if m.cfg.Net.V4Forward.Capabilities().DomainProxyAllowed && m.cfg.Net.Haproxy {
 		if err := systemctl("enable", "--now", cfg.DefaultHaproxyService); err != nil {
 			return fmt.Errorf("start %s: %w", cfg.DefaultHaproxyService, err)
 		}
@@ -1661,8 +1681,8 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
-	if !m.V4ForwardLive() {
-		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
+	if !m.LiveV4Capabilities().DomainProxyAllowed {
+		return errors.New("IPv4 inbound is fully disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true` or use web-only")
 	}
 	if !m.HaproxyLive() {
 		return errors.New("HAProxy is disabled (net.haproxy: false) — domains are not available; re-enable with `vps config set net.haproxy true`")

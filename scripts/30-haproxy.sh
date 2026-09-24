@@ -215,13 +215,13 @@ if ! id -u haproxy >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Effective enablement: v4_forward AND the domain-proxy switch, mirroring
-#    the semantics of the old Traefik-era script exactly.
+# 6. Effective enablement: an IPv4 domain-proxy-eligible policy AND the
+#    domain-proxy switch. web-only qualifies; false does not.
 # ---------------------------------------------------------------------------
-V4ON=1
+V4_PROXY_ALLOWED=1
 case "${VPSMGR_V4_FORWARD:-1}" in
-  1|true|True) V4ON=1 ;;
-  *)           V4ON=0 ;;
+  1|true|True|web-only) V4_PROXY_ALLOWED=1 ;;
+  *)                   V4_PROXY_ALLOWED=0 ;;
 esac
 
 # Proxy switch: installer override first (VPSMGR_HAPROXY, or the legacy
@@ -322,9 +322,9 @@ if ports_busy 80; then CONFLICT="80"; fi
 if ports_busy 443; then CONFLICT="${CONFLICT:+$CONFLICT and }443"; fi
 
 want_start=1
-if [[ "$V4ON" -eq 0 ]]; then
+if [[ "$V4_PROXY_ALLOWED" -eq 0 ]]; then
   want_start=0
-  log "v4 forwarding off — HAProxy installed but disabled (domains kept)"
+  log "IPv4 inbound fully off — HAProxy installed but disabled (domains kept)"
 elif [[ "$PROXY_CFG" != "true" ]]; then
   want_start=0
   log "net.haproxy is false — HAProxy installed but disabled (not started/autostarted; domains kept)"

@@ -167,8 +167,10 @@ type pageData struct {
 	Ports             string // full user-port block, e.g. 10700-10799
 	PortsPrefix       string // whole-hundred block number, e.g. 107 → "10700-10799"
 	SSH               string
-	V4Forward         bool   // false = IPv6-only box: v4 ssh/ports not offered
-	ProxyEnabled      bool   // false = domain proxy (HAProxy) disabled; domains cannot be added
+	ShowPublicIPv4    bool
+	DirectV4Forward   bool
+	DomainEnabled     bool
+	ProxyEnabled      bool
 	InitScript        string // custom init script, run after a reinstall
 	BandwidthQuotaGB  int    // monthly bandwidth quota GiB, 0 = unlimited
 	BandwidthUsedGB   string // used this month (GB, 1 decimal) — only set when limited
@@ -395,6 +397,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		})
 	}
 	groupIndex := mgr.UserGroupLabel(u.Name)
+	v4Caps := s.mgr.LiveV4Capabilities()
 	d := pageData{
 		Title:             "VPS Manager",
 		User:              u,
@@ -409,7 +412,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Ports:             mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
 		PortsPrefix:       itoa(u.StartPort / 100),
 		SSH:               "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
-		V4Forward:         s.mgr.V4ForwardLive(),
+		ShowPublicIPv4:    v4Caps.ShowPublicIPv4,
+		DirectV4Forward:   v4Caps.DirectForwarding,
+		DomainEnabled:     s.mgr.LiveDomainProxyEnabled(),
 		ProxyEnabled:      s.mgr.HaproxyLive(),
 		ShowFooter:        s.cfg.Panel.ShowFooter,
 		WebSSH:            s.cfg.Panel.WebSSH,

@@ -99,7 +99,7 @@ func TestAssignValidators(t *testing.T) {
 		t.Error("session_days=x accepted")
 	}
 
-	for _, v := range []string{"true", "1", "on", "false", "0", "off"} {
+	for _, v := range []string{"true", "1", "on", "false", "0", "off", "web-only"} {
 		if err := FieldFor("net.v4_forward").Assign(c, v); err != nil {
 			t.Errorf("v4_forward=%q: %v", v, err)
 		}

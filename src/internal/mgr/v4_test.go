@@ -12,7 +12,7 @@ import (
 // offered, so adding a domain must be rejected before anything is published.
 func TestAddDomainRejectedWhenV4Off(t *testing.T) {
 	c := cfg.Default()
-	c.Net.V4Forward = false
+	c.Net.V4Forward = cfg.V4Off
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,36 +63,45 @@ func TestHaproxyLive(t *testing.T) {
 	}
 }
 
-// TestV4ForwardLive: the panel's long-running process must reflect a toggle
-// made through `vps config set` (which writes the DB setting via
-// ApplyV4State) even though its in-memory config still says otherwise.
+// TestV4ForwardLive: the panel's long-running process must reflect a policy
+// change made through `vps config set` even though its config still says otherwise.
 func TestV4ForwardLive(t *testing.T) {
 	c := cfg.Default()
-	c.Net.V4Forward = true
+	c.Net.V4Forward = cfg.V4Direct
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
 	m := New(c, d)
-	if !m.V4ForwardLive() {
-		t.Fatal("V4ForwardLive should fall back to the config default")
+	if m.LiveV4Policy() != cfg.V4Direct || !m.V4ForwardLive() {
+		t.Fatal("live policy should fall back to the config default")
 	}
 
-	// A CLI toggle writes the DB setting; the in-memory config is untouched.
-	if err := d.SetSetting(db.SettingV4Forward, "false"); err != nil {
+	for raw, want := range map[string]cfg.V4Policy{
+		"1": cfg.V4Direct, "0": cfg.V4Off, "false": cfg.V4Off, "web-only": cfg.V4WebOnly,
+	} {
+		if err := d.SetSetting(db.SettingV4Forward, raw); err != nil {
+			t.Fatal(err)
+		}
+		if got := m.LiveV4Policy(); got != want {
+			t.Errorf("DB %q policy = %q, want %q", raw, got, want)
+		}
+	}
+	if err := d.SetSetting(db.SettingV4Forward, "web-only"); err != nil {
 		t.Fatal(err)
 	}
-	if m.V4ForwardLive() {
-		t.Fatal("V4ForwardLive should read false from the DB setting")
+	if !m.LiveV4Capabilities().ShowPublicIPv4 || m.LiveV4Capabilities().DirectForwarding {
+		t.Fatal("web-only should show public IPv4 without direct forwarding")
+	}
+	if !m.LiveDomainProxyEnabled() {
+		t.Fatal("web-only with HAProxy enabled should allow domains")
 	}
 
-	// A malformed setting is treated as off (only explicit "true"/"1" enables),
-	// so a bad DB value can never accidentally re-open domain-add.
 	if err := d.SetSetting(db.SettingV4Forward, "garbage"); err != nil {
 		t.Fatal(err)
 	}
-	if m.V4ForwardLive() {
-		t.Fatal("V4ForwardLive should treat a malformed DB setting as off")
+	if m.LiveV4Policy() != cfg.V4Off || m.LiveDomainProxyEnabled() {
+		t.Fatal("malformed DB policy should fail closed")
 	}
 }
