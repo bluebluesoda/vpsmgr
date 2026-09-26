@@ -95,6 +95,7 @@
     this.decoder = new TextDecoder("utf-8");
     this.disposed = false;
     this.exited = false;
+    this._selecting = false;
     this.screen = [];
     for (var i = 0; i < this.rows; i++) this.screen.push(blankLine(this.cols));
     this._buildDom();
@@ -147,20 +148,35 @@
     window.addEventListener("keydown", function (e) {
       if (self.disposed || self.exited) return;
       if (self.mount.contains(document.activeElement)) return; // already ours
+      // With text selected, focus is on the page rather than the hidden input,
+      // and that is exactly what lets the browser's own copy shortcut work.
+      // Focusing the input here would collapse the selection before the
+      // default copy had a chance to run.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey &&
+          (e.key === "c" || e.key === "C") && String(window.getSelection())) return;
       self.input.focus();
       self._onKey(e);
     });
     this.mount.addEventListener("paste", function (e) { self._onPaste(e); });
     this.mount.addEventListener("wheel", function (e) { self._onWheel(e); }, { passive: false });
-    // A click must leave focus on the hidden input, never on the mount itself:
-    // the mount is focusable so it can host the cursor, and the browser's own
-    // focus handling runs after mousedown, hence the deferred call.
-    this.mount.addEventListener("mousedown", function () {
-      setTimeout(function () { self.input.focus(); }, 0);
-    });
-    this.mount.addEventListener("focus", function () { self.input.focus(); });
-    this.mount.addEventListener("focus", function () { self.needFull = true; self._scheduleRender(); });
-    this.mount.addEventListener("blur", function () { self.needFull = true; self._scheduleRender(); });
+    // Selecting text is the browser's own job, so a mouse-down must not move
+    // focus: refocusing the hidden input mid-drag is what collapsed the
+    // selection the drag was building. Leave the gesture alone and pick focus
+    // back up on mouse-up, but only when nothing was selected — after a real
+    // selection focus has to stay away from the input, otherwise the copy
+    // shortcuts would find an empty one.
+    this.mount.addEventListener("mousedown", function () { self._selecting = true; });
+    var endSelect = function () {
+      if (!self._selecting) return;
+      self._selecting = false;
+      self.needFull = true;
+      self._scheduleRender();
+      if (!String(window.getSelection())) self.input.focus();
+    };
+    document.addEventListener("mouseup", endSelect);
+    window.addEventListener("blur", function () { self._selecting = false; });
+    this.input.addEventListener("focus", function () { self.needFull = true; self._scheduleRender(); });
+    this.input.addEventListener("blur", function () { self.needFull = true; self._scheduleRender(); });
     this._ro = new ResizeObserver(function () { self._onResize(); });
     this._ro.observe(this.mount);
   };
@@ -518,6 +534,14 @@
 
   Term.prototype._render = function () {
     if (this.disposed) return;
+    // A mouse drag is choosing text right now: repainting the rows would
+    // replace the nodes under the pointer and drop the selection being built.
+    // The mouse-up handler reschedules this once the drag is over.
+    if (this._selecting) return;
+    // Output can arrive while text is selected, and rewriting a row's markup is
+    // what destroys the browser's selection. Note where it was — as a row and a
+    // character offset — and put it back after the repaint.
+    var sel = this._captureSelection();
     var total = this.sb.length + this.screen.length;
     var maxVy = Math.max(0, total - this.rows);
     if (this.vy > maxVy) this.vy = maxVy;
@@ -540,6 +564,7 @@
     this.dirty.clear();
     this.needFull = false;
     this.lastCursorRow = cursorRow;
+    if (sel) this._restoreSelection(sel);
   };
 
   Term.prototype._rowHtml = function (line, live, focused) {
@@ -563,6 +588,57 @@
       html += '<span style="background:#38bdf8;color:#0f172a;"> </span>';
     }
     return html;
+  };
+
+  // Native selection is what makes the terminal copyable, but a repaint
+  // replaces a row's markup and takes the selection with it. These helpers turn
+  // a live selection into a row/offset pair and back, so it survives a frame of
+  // output. Only selections inside the rows matter; the hidden input's own
+  // selection (IME) is left alone.
+  Term.prototype._captureSelection = function () {
+    var s = window.getSelection();
+    if (!s || s.rangeCount === 0 || s.isCollapsed) return null;
+    var r = s.getRangeAt(0);
+    var a = this._rowOffset(r.startContainer, r.startOffset);
+    if (!a) return null;
+    return { a: a, b: this._rowOffset(r.endContainer, r.endOffset) || a };
+  };
+
+  Term.prototype._rowOffset = function (node, offset) {
+    var el = node.nodeType === 1 ? node : node.parentNode;
+    while (el && el !== this.rowsEl && !(el.classList && el.classList.contains("term-row"))) el = el.parentNode;
+    if (!el || el === this.rowsEl) return null;
+    var row = this.rowEls.indexOf(el);
+    if (row < 0) return null;
+    // Measuring from the top of the row gives the character offset directly,
+    // independent of how the row is split into styled spans.
+    var pre = document.createRange();
+    pre.selectNodeContents(el);
+    try { pre.setEnd(node, offset); } catch (e) { return null; }
+    return { row: row, off: pre.toString().length };
+  };
+
+  Term.prototype._pointAt = function (el, off) {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var n, acc = 0;
+    while ((n = walker.nextNode())) {
+      var len = n.nodeValue.length;
+      if (acc + len >= off) return { node: n, offset: off - acc };
+      acc += len;
+    }
+    return { node: el, offset: el.childNodes.length };
+  };
+
+  Term.prototype._restoreSelection = function (sel) {
+    var elA = this.rowEls[sel.a.row], elB = this.rowEls[sel.b.row];
+    if (!elA || !elB) return;
+    var a = this._pointAt(elA, sel.a.off), b = this._pointAt(elB, sel.b.off);
+    var r = document.createRange();
+    try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); } catch (e) { return; }
+    var s = window.getSelection();
+    if (!s) return;
+    s.removeAllRanges();
+    s.addRange(r);
   };
 
   // ---- input ------------------------------------------------------------

@@ -38,7 +38,8 @@ main>div{height:100%}
 .term{height:100%;outline:none;padding:.5rem .6rem;background:#0f172a;overflow:hidden;cursor:text;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;
       font-size:13px;line-height:1.35;color:#e2e8f0}
-.term-rows{white-space:pre;user-select:text}
+.term-rows{white-space:pre;-webkit-user-select:text;user-select:text}
+.term-rows::selection,.term-rows ::selection{background:#2563eb;color:#fff}
 .term-row{white-space:pre;height:1.35em;overflow:hidden}
 .term-probe{position:absolute;visibility:hidden;white-space:pre;line-height:1.35}
 .term-input{position:absolute;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;
@@ -79,7 +80,7 @@ main>div{height:100%}
   <button type="button" data-ctl="z">^Z</button>
   <button type="button" data-ctl="d">^D</button>
 </div>
-<main><div id="termMount" tabindex="0"></div></main>
+<main><div id="termMount"></div></main>
 <div class="ask" id="ask" hidden>
   <div class="ask-box">
     <p id="askText"></p>
@@ -192,7 +193,6 @@ main>div{height:100%}
   });
 
   start();
-  mount.focus();
 })();
 </script>
 </body>
