@@ -71,14 +71,11 @@ main>div{height:100%}
   <button type="button" data-key="Escape">Esc</button>
   <button type="button" data-key="Tab">Tab</button>
   <span class="sep"></span>
-  <button type="button" data-key="ArrowLeft">←</button>
-  <button type="button" data-key="ArrowUp">↑</button>
-  <button type="button" data-key="ArrowDown">↓</button>
-  <button type="button" data-key="ArrowRight">→</button>
-  <span class="sep"></span>
   <button type="button" data-ctl="c">^C</button>
   <button type="button" data-ctl="z">^Z</button>
   <button type="button" data-ctl="d">^D</button>
+  <span class="sep"></span>
+  <button type="button" id="pasteBtn">{{if eq .Lang "zh"}}粘贴{{else}}Paste{{end}}</button>
 </div>
 <main><div id="termMount"></div></main>
 <div class="ask" id="ask" hidden>
@@ -165,11 +162,28 @@ main>div{height:100%}
   // A control character cannot be written into an HTML attribute, so the
   // buttons carry a name and the byte is looked up here.
   var CTL={c:"\u0003",z:"\u001a",d:"\u0004"};
+  // The clipboard API needs a secure context and the page's permission, and
+  // neither is guaranteed, so a refusal is reported instead of looking dead.
+  function doPaste(){
+    if(!session)return;
+    if(!(navigator.clipboard&&navigator.clipboard.readText)){
+      setStatus(T('此浏览器不能用按钮粘贴，请按 Ctrl+V / Cmd+V','this browser cannot paste from a button — press Ctrl+V'));
+      session.focus();
+      return;
+    }
+    navigator.clipboard.readText().then(function(text){
+      if(text)session.paste(text); else session.focus();
+    }).catch(function(){
+      setStatus(T('无法读取剪贴板，请按 Ctrl+V / Cmd+V','could not read the clipboard — press Ctrl+V'));
+      session.focus();
+    });
+  }
   keys.addEventListener('mousedown',function(e){ e.preventDefault(); });
   keys.addEventListener('click',function(e){
     var b=e.target.closest('button');
     if(!b||!session)return;
-    if(b.dataset.key)session.key(b.dataset.key);
+    if(b.id==='pasteBtn')doPaste();
+    else if(b.dataset.key)session.key(b.dataset.key);
     else if(b.dataset.ctl&&CTL[b.dataset.ctl])session.raw(CTL[b.dataset.ctl]);
   });
 
