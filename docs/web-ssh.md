@@ -52,7 +52,10 @@ Insert/Delete, Tab, Escape and the function keys all send what a terminal sends,
 and the arrows follow the mode a full-screen program asks for.
 
 A small bar above the terminal carries the few keys a browser keeps for itself
-(Ctrl+C, Ctrl+Z, Ctrl+D, Escape, Tab), so they are never out of reach.
+(Ctrl+C, Ctrl+Z, Ctrl+D, Escape, Tab), so they are never out of reach, plus a
+**Paste** button. It reads the clipboard through the browser's clipboard API,
+so it needs a secure context and permission; if either is missing the bar says
+so, and Ctrl+V still works.
 
 Selecting text is left to the browser, so it works like text anywhere: drag
 across the terminal to select, double-click a word, and the selection survives

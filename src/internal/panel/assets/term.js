@@ -664,12 +664,20 @@
     e.preventDefault();
   };
 
+  // paste hands text to the shell the way a browser paste would, including the
+  // bracketed-paste wrapper when the running program asked for it. The toolbar's
+  // Paste button goes through here so it behaves exactly like Ctrl+V.
+  Term.prototype.paste = function (text) {
+    if (!text) return;
+    if (this.modes.bracketed) this._send("\x1b[200~" + text + "\x1b[201~");
+    else this._send(text);
+  };
+
   Term.prototype._onPaste = function (e) {
     var text = (e.clipboardData || window.clipboardData).getData("text");
     if (!text) return;
     e.preventDefault();
-    if (this.modes.bracketed) this._send("\x1b[200~" + text + "\x1b[201~");
-    else this._send(text);
+    this.paste(text);
   };
 
   // keySequence is what a named key sends. The arrows depend on the mode the
@@ -961,6 +969,9 @@
         if (seq !== null) { input(seq); term.focus(); }
       },
       raw: function (text) { input(text); if (term) term.focus(); },
+      // paste is the toolbar's Paste button: clipboard text is delivered the
+      // same way a browser paste is, so bracketed paste still applies.
+      paste: function (text) { if (term) { term.paste(text); term.focus(); } },
       // reconnect is the manual path offered once the retries are exhausted.
       reconnect: function () {
         finished = false;
