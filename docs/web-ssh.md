@@ -52,13 +52,19 @@ Insert/Delete, Tab, Escape and the function keys all send what a terminal sends,
 and the arrows follow the mode a full-screen program asks for.
 
 A small bar above the terminal carries the few keys a browser keeps for itself
-(Ctrl+C, Ctrl+Z, Ctrl+D, Escape, Tab and the arrows), so they are never out of
-reach.
+(Ctrl+C, Ctrl+Z, Ctrl+D, Escape, Tab), so they are never out of reach.
 
-Copy and paste use the platform's own shortcuts — Cmd+C/Cmd+V, Ctrl+V,
-Shift+Insert — and the browser's right-click menu. Pasting a block of several
-lines is handed to the shell exactly as the shell asked for it: a shell that
-enables bracketed paste shows the text in its edit buffer first.
+Selecting text is left to the browser, so it works like text anywhere: drag
+across the terminal to select, double-click a word, and the selection survives
+output arriving underneath it — a repaint puts the highlight back. **Ctrl+C**
+(or **Cmd+C**) copies a selection, and interrupts the running command when
+there is none, which is the rule a desktop terminal follows; the right-click
+menu offers Copy too.
+
+Pasting uses the platform's shortcuts — Cmd+V/Ctrl+V, Shift+Insert — and a
+block of several lines is handed to the shell exactly as the shell asked for
+it: a shell with bracketed paste enabled shows the text in its edit buffer
+first.
 
 ## Turning it off
 
