@@ -172,6 +172,38 @@ func TestPanelTitleFromConfig(t *testing.T) {
 	}
 }
 
+// TestUserPanelShowsExtraIPv6: none mode + a whole /64 — the panel must show the
+// container's IPv6 address and prefix instead of only the IPv4 connection info.
+func TestUserPanelShowsExtraIPv6(t *testing.T) {
+	srv, d := newTestServer(t)
+	srv.cfg.Net.IPv6Mode = cfg.IPv6ModeNone
+	srv.cfg.Net.IPv6Subnet = ""
+	srv.cfg.Net.IPv6ExtraPrefix = "2602:fada:6::/60"
+	hash, err := pw.Hash("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateUserIPv6ExtraBlock(u.ID, "2602:fada:6::/64"); err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	rr := doReq(t, h, http.MethodGet, prefix, nil, cookie)
+	body := rr.Body.String()
+	if !strings.Contains(body, "2602:fada:6::1") {
+		t.Errorf("overview does not show the /64 connect address")
+	}
+	if !strings.Contains(body, "2602:fada:6::/64") {
+		t.Errorf("overview does not show the /64 prefix")
+	}
+}
+
 func TestLoginFlowAndCookiePath(t *testing.T) {
 	srv, d := newTestServer(t)
 	h := srv.Handler()

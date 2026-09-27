@@ -341,6 +341,27 @@ func TestExtraBlockInNoneMode(t *testing.T) {
 	}
 }
 
+// The address the container binds inside its whole /64 is the block's first
+// host; the user panel shows it as the connect address in none mode.
+func TestExtraBlockAddr(t *testing.T) {
+	m := extraTestManager(t, "")
+	for _, c := range []struct {
+		in, want string
+	}{
+		{"2001:db8:1234:8800::/64", "2001:db8:1234:8800::1"},
+		{"2001:db8:4:3::/64", "2001:db8:4:3::1"},
+		{"", ""},
+	} {
+		got, err := m.ExtraBlockAddr(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("ExtraBlockAddr(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	if _, err := m.ExtraBlockAddr("not-a-cidr"); err == nil {
+		t.Error("ExtraBlockAddr accepted an invalid block")
+	}
+}
+
 // A /56 sliced from the middle of a /48 (e.g. 2001:db8:1234:4200::/56 out of 2001:db8:1234::/48)
 // must correctly produce 256 /64 blocks starting at ...4200::/64 and ending at ...42ff::/64.
 func TestExtraBlockMiddleSlice(t *testing.T) {
@@ -381,4 +402,3 @@ func TestExtraBlockMiddleSlice(t *testing.T) {
 		}
 	}
 }
-

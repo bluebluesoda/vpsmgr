@@ -50,6 +50,22 @@ import (
 // depends on it: it scans at most used+reserved+1 indices.
 const extraCountCap = 1 << 32
 
+// ExtraBlockAddr returns the address a container binds inside the whole /64 it
+// owns — the block's first host (net+1), which is what the panel tells the user
+// to connect to in none mode (a routed NIC has no /112 primary address there).
+// Returns "" for an unparsable block so a corrupt row degrades to "no address"
+// instead of failing the page.
+func (m *Manager) ExtraBlockAddr(cidr string) (string, error) {
+	if cidr == "" {
+		return "", nil
+	}
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", fmt.Errorf("parse extra block %s: %w", cidr, err)
+	}
+	return addHostOffset(n.IP, 1).String(), nil
+}
+
 // ExtraPrefixNetwork returns the configured extra prefix, or nil when the
 // feature is off. The registry validates the value on write, so an error here
 // means a hand-edited config.

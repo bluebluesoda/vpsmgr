@@ -463,24 +463,35 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.State = st
 		d.IP = u.IP
 	}
-	if s.cfg.IPv6Enabled() {
-		if s.mgr.IPv6Mode() == cfg.IPv6ModePool {
-			// Pool mode: the address comes from the DB (the assignment), not
-			// derived — and there is no /112 block to show.
-			if u.IPv6Address != "" {
-				d.IPv6 = u.IPv6Address
-			}
-		} else {
+	// IPv6, per mode. The extra /64 comes from the account row (a live DB
+	// value), so it shows even for a container created before the panel was
+	// restarted after the feature was enabled.
+	switch {
+	case s.mgr.IPv6Mode() == cfg.IPv6ModePool:
+		// Pool mode: the address comes from the DB (the assignment), not
+		// derived — and there is no /112 block to show.
+		d.IPv6 = u.IPv6Address
+	default:
+		if s.cfg.IPv6Enabled() { // prefix mode: the /112 and its primary address
 			if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // from the account row, no incus call
 				d.IPv6 = ipv6
 			}
 			if b, _ := s.mgr.IPv6Block(u.Name); b != nil {
 				d.IPv6Block = b.String()
 			}
-			// The whole /64 the account may own (net.ipv6_extra_prefix). Neutral
-			// presentation: it is simply shown, not advertised as something to
-			// ask for.
+		}
+		// The whole /64 the account may own (net.ipv6_extra_prefix). Neutral
+		// presentation: it is simply shown, not advertised as something to ask
+		// for. In none mode it is the container's only IPv6 and its first
+		// address (block::1) is the one bound inside the guest, so it becomes
+		// the connect address.
+		if u.IPv6ExtraBlock != "" {
 			d.IPv6Extra = u.IPv6ExtraBlock
+			if d.IPv6 == "" {
+				if addr, err := s.mgr.ExtraBlockAddr(u.IPv6ExtraBlock); err == nil {
+					d.IPv6 = addr
+				}
+			}
 		}
 	}
 	up, down := s.mgr.BandwidthFor(u.ID) // pure DB read
