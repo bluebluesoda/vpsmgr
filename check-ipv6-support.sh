@@ -351,9 +351,16 @@ worst = 100.0
 ok = 0
 any_ok = 0
 for r in res:
-    st = r.get("result", {}).get("stats", {})
-    loss = st.get("loss", 100.0)
-    if loss is None: loss = 100.0
+    result = r.get("result", {}) or {}
+    stats = result.get("stats") or {}
+    loss = stats.get("loss")
+    if loss is None:
+        # A TCP measurement reports a finished handshake with timings instead
+        # of packet loss: finished + timings = a 0-loss success.
+        if result.get("status") == "finished" and result.get("timings"):
+            loss = 0.0
+        else:
+            loss = 100.0
     if loss < worst: worst = loss
     if loss == 0: ok += 1
     if loss < 100: any_ok += 1
@@ -411,19 +418,22 @@ PING_OK=$(echo "$PING_SUM" | sed -n 's/.* ok=\([0-9]*\).*/\1/p')
 PING_ANY=$(echo "$PING_SUM" | sed -n 's/.* any=\([0-9]*\).*/\1/p')
 log "ICMP ping result (best of 3): $PING_SUM"
 
-# --- test 2: TCP ping (a real TCP handshake to a port we listen on) ---
-# TCP is not subject to ICMPv6 filtering, so it cross-checks the ICMP result.
+# --- test 2: real TCP probe (a TCP handshake to a port we listen on) ---
+# This is a genuine TCP measurement (type "tcp"), NOT a ping with a port: the
+# ping type stays ICMP even when a port is given, so it would report the same
+# ICMP filtering as test 1 and prove nothing about TCP. A provider that drops
+# inbound ICMPv6 but routes the prefix passes here and is correctly VERIFIED.
 PORT=4444
 TCP_SUM="probes=0 ok=0 any=0 worst=100"
 if [[ "$NC_AVAILABLE" -eq 1 ]]; then
-  log "sending TCP ping (port $PORT) to $TEST_ADDR ..."
+  log "sending TCP probe (port $PORT) to $TEST_ADDR ..."
   nc -6 -l "$TEST_ADDR" "$PORT" >/dev/null 2>&1 &
   NCPID=$!
-  TCP_SUM=$(gp_run_test "tcp" "{\"type\":\"ping\",\"target\":\"$TEST_ADDR\",\"locations\":[{\"magic\":\"world\",\"limit\":4}],\"measurementOptions\":{\"packets\":3,\"port\":$PORT}}")
+  TCP_SUM=$(gp_run_test "tcp" "{\"type\":\"tcp\",\"target\":\"$TEST_ADDR\",\"port\":$PORT,\"locations\":[{\"magic\":\"world\",\"limit\":4}]}")
   kill "$NCPID" 2>/dev/null; NCPID=""
   TCP_OK=$(echo "$TCP_SUM" | sed -n 's/.* ok=\([0-9]*\).*/\1/p')
   TCP_ANY=$(echo "$TCP_SUM" | sed -n 's/.* any=\([0-9]*\).*/\1/p')
-  log "TCP ping result (best of 3): $TCP_SUM"
+  log "TCP probe result (best of 3): $TCP_SUM"
 else
   TCP_OK=0
   TCP_ANY=0
