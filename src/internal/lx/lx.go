@@ -644,7 +644,6 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 	return c.EnsureDeviceOptions(name, "eth0", opts)
 }
 
-
 // EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
 // rate limit of a container. Changing only the limits.* keys is applied
 // LIVE by Incus via tc (htb qdisc on the host veth) — it does NOT reset the NIC

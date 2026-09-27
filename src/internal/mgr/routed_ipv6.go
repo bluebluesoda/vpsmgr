@@ -359,7 +359,7 @@ func (m *Manager) extraOnlyContainerScript(block string) (string, error) {
 		return "", err
 	}
 	addr := addHostOffset(n.IP, 1).String()
-	
+
 	return fmt.Sprintf(`set -e
 for i in $(seq 1 40); do
   [ -S /run/systemd/private ] && break
