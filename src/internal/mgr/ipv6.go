@@ -417,7 +417,7 @@ func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
 	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "proxy %s {\n", ext)
 	for _, block := range blocks {
-		// In none mode, there is no bridge, so fallback to eth0 on host if bridge is empty? 
+		// In none mode, there is no bridge, so fallback to eth0 on host if bridge is empty?
 		// Actually the responder just ignores `iface` for prefix mode since it replies to ext_if, but ndppd format expects one.
 		iface := m.cfg.Incus.Bridge
 		if iface == "" {
@@ -549,11 +549,32 @@ func (m *Manager) cleanLegacyKernelProxy() {
 // is just "pool addresses are not bound on the external interface + proxy_ndp
 // / forwarding on" (the routed NICs program their own per-address routes).
 func (m *Manager) RewireAllIPv6() error {
-	if !m.cfg.IPv6Enabled() {
-		return nil
-	}
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		return m.RewireAllIPv6Pool()
+	}
+	if !m.cfg.IPv6Enabled() {
+		// none mode: no bridge, but an extra prefix still needs host plumbing.
+		// A container given a whole /64 gets a ROUTED NIC (the pool layout), so
+		// Incus installs a proxy_ndp entry on the external interface and the
+		// host routes the block to the veth — both require IPv6 forwarding and
+		// kernel proxy_ndp. enableProxyNDP is otherwise only reached from the
+		// pool path, so without this branch the sysctls were never set and a
+		// create failed at the NIC step.
+		if !m.cfg.IPv6ExtraEnabled() {
+			return nil
+		}
+		if err := m.enableForwarding(); err != nil {
+			return fmt.Errorf("enable ipv6 forwarding: %w", err)
+		}
+		if err := m.enableProxyNDP(); err != nil {
+			return fmt.Errorf("enable proxy_ndp: %w", err)
+		}
+		if err := m.writeNDPPD("", ""); err != nil {
+			return err
+		}
+		// The whole /64 blocks are installed by the panel, not by Incus, so
+		// nothing else would bring them back after a reboot.
+		return m.EnsureExtraBlockRoutes()
 	}
 	if err := m.SetupIPv6Bridge(); err != nil {
 		return err

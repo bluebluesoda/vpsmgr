@@ -29,16 +29,35 @@ net.core.wmem_max = 8388608
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 EOF
-# IPv6 pass-through: forwarding must be on so the host relays container v6.
-if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
+# IPv6 pass-through. Only NAME-FREE keys are persisted here: `all.*` is
+# inherited by interfaces created later, while the per-interface value for the
+# EXISTING WAN interface is applied at runtime by `vps ipv6-reapply` / the panel
+# (they know the real interface name — a name hard-coded here would silently
+# miss ens3/enp1s0-style interfaces).
+# proxy_ndp is inert without proxy entries, so it goes in unconditionally (it
+# also future-proofs an extra prefix enabled later on a none-mode host).
+# forwarding is NOT unconditional: on a host whose own IPv6 comes from a router
+# advertisement, forwarding=1 suppresses the RA default route, so it is only set
+# when vpsmgr itself relays container v6 (a base prefix, or a routed mode).
+V6_ROUTED=0
+case "${VPSMGR_IPV6_MODE:-}" in
+  pool|none) V6_ROUTED=1 ;;
+esac
+if [[ -n "${VPSMGR_IPV6_SUBNET:-}" || "$V6_ROUTED" == 1 ]]; then V6_FWD=1; else V6_FWD=0; fi
+cat >> /etc/sysctl.d/99-vpsmgr.conf <<'EOF'
+net.ipv6.conf.all.proxy_ndp=1
+EOF
+if [[ "$V6_FWD" == 1 ]]; then
   cat >> /etc/sysctl.d/99-vpsmgr.conf <<'EOF'
 net.ipv6.conf.all.forwarding=1
 net.ipv6.conf.default.forwarding=1
 EOF
 fi
-log "wrote /etc/sysctl.d/99-vpsmgr.conf (ip_forward + bbr/fq + io_uring_disabled${VPSMGR_IPV6_SUBNET:+ + ipv6 forwarding})"
-SYSCTL_ARGS=(net.ipv4.ip_forward=1 net.core.default_qdisc=fq net.ipv4.tcp_congestion_control=bbr kernel.io_uring_disabled=1)
-[[ -n "${VPSMGR_IPV6_SUBNET:-}" ]] && SYSCTL_ARGS+=(net.ipv6.conf.all.forwarding=1)
+V6_NOTE=" + ipv6 proxy_ndp"
+[[ "$V6_FWD" == 1 ]] && V6_NOTE="$V6_NOTE + ipv6 forwarding"
+log "wrote /etc/sysctl.d/99-vpsmgr.conf (ip_forward + bbr/fq + io_uring_disabled$V6_NOTE)"
+SYSCTL_ARGS=(net.ipv4.ip_forward=1 net.core.default_qdisc=fq net.ipv4.tcp_congestion_control=bbr kernel.io_uring_disabled=1 net.ipv6.conf.all.proxy_ndp=1)
+[[ "$V6_FWD" == 1 ]] && SYSCTL_ARGS+=(net.ipv6.conf.all.forwarding=1)
 if ! sysctl -q -w "${SYSCTL_ARGS[@]}" 2>/dev/null; then
   log "warn: live sysctl apply failed (e.g. kernel too old for bbr/io_uring_disabled); config persisted and will apply on reboot"
 fi

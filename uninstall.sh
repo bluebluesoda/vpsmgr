@@ -62,7 +62,7 @@ if [[ -n "$V6SUBNET" ]]; then
     incus network set incusbr0 ipv6.dhcp.stateful false 2>/dev/null || true
   fi
   # live sysctls back to defaults
-  sysctl -w net.ipv6.conf.all.forwarding=0 net.ipv6.conf.default.forwarding=0 >/dev/null 2>&1 || true
+  sysctl -w net.ipv6.conf.all.forwarding=0 net.ipv6.conf.default.forwarding=0 net.ipv6.conf.all.proxy_ndp=0 >/dev/null 2>&1 || true
 fi
 
 log "removing files..."

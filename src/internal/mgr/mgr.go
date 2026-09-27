@@ -542,37 +542,32 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.checkIncusConflict(name, ip); err != nil {
 		return nil, err
 	}
-	// Either build a fresh container from an image, or clone one from a shared
-	// checkpoint. Cloning cannot be expressed as a normal launch: the API needs
-	// the source instance plus snapshot name, and leaves the result stopped.
-	provisionImage := image
-	cloned := cloneOwner != ""
-	if cloned {
-		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
-			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, ipv6, blockStr, poolAddr,
-			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
-			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
+	// A routed IPv6 NIC (pool mode, and none mode with a whole /64 — poolAddr is
+	// set in exactly those cases) makes Incus add a proxy_ndp entry on the
+	// external interface, and the host route the block to the veth. Both need
+	// IPv6 forwarding and kernel proxy_ndp ON before the NIC is created, or the
+	// launch fails. Ensure them here so a create never depends on a prior
+	// `vps install` / `vps ipv6-reapply`; both go through the sudoers
+	// whitelist, so the unprivileged panel create path is covered too.
+	if poolAddr != "" {
+		if err := m.enableForwarding(); err != nil {
+			return nil, fmt.Errorf("enable ipv6 forwarding: %w", err)
 		}
-		// A clone always originates from a vpsmgr image, so provisioning must
-		// take the managed alias rather than the configured/fallback one.
-		provisionImage = m.cfg.Incus.Image
-	} else {
-		// Make sure the image is present locally (a remote-qualified fallback
-		// like "images:debian/13" is pulled first; the API cannot auto-fetch it
-		// inside the create call the way the old `incus launch` CLI did).
-		if err := m.lx.EnsureImage(image); err != nil {
-			return nil, fmt.Errorf("ensure image %s: %w", image, err)
-		}
-		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
-			return nil, fmt.Errorf("launch container: %w", err)
+		if err := m.enableProxyNDP(); err != nil {
+			return nil, fmt.Errorf("enable proxy_ndp: %w", err)
 		}
 	}
-	// From here on any failure must roll the container and its host-side
+	// Any failure from here on must roll the container and its host-side
 	// plumbing back. Cleanup distinguishes a SUCCESSFUL rollback (delete the DB
 	// record, resources are reusable) from a FAILED one (keep the record marked
 	// 'failed' so the operator can see the orphan instead of a silent leak —
 	// deleting the row would make the leftover container/IP invisible and let
 	// NextFreeIdx hand them out again).
+	//
+	// It is declared BEFORE the create on purpose: Incus can leave a partially
+	// built instance behind when the NIC or the start step fails, and without
+	// this the leftover would hold the name and every later attempt would be
+	// refused with "already exists (orphan?)".
 	var createdID int64
 	cleanup := func() {
 		unwireErr := m.UnwireIPv6(name)
@@ -592,6 +587,33 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 				return
 			}
 			_ = m.db.DeleteUser(createdID)
+		}
+	}
+	// Either build a fresh container from an image, or clone one from a shared
+	// checkpoint. Cloning cannot be expressed as a normal launch: the API needs
+	// the source instance plus snapshot name, and leaves the result stopped.
+	provisionImage := image
+	cloned := cloneOwner != ""
+	if cloned {
+		if err := m.lx.CloneFromSnapshot(cloneOwner, cloneSnap, name,
+			m.cfg.Incus.Pool, m.cfg.Incus.Bridge, ip, ipv6, blockStr, poolAddr,
+			m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("clone shared checkpoint: %w", err)
+		}
+		// A clone always originates from a vpsmgr image, so provisioning must
+		// take the managed alias rather than the configured/fallback one.
+		provisionImage = m.cfg.Incus.Image
+	} else {
+		// Make sure the image is present locally (a remote-qualified fallback
+		// like "images:debian/13" is pulled first; the API cannot auto-fetch it
+		// inside the create call the way the old `incus launch` CLI did).
+		if err := m.lx.EnsureImage(image); err != nil {
+			return nil, fmt.Errorf("ensure image %s: %w", image, err)
+		}
+		if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, poolAddr, m.cfg.Net.ExtIF, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("launch container: %w", err)
 		}
 	}
 	// Enable ZFS recursive-rollback restore on the root volume so restoring to
@@ -713,7 +735,7 @@ func (m *Manager) checkIncusConflict(name, ip string) error {
 	}
 	for n, v := range ips {
 		if n == name {
-			return fmt.Errorf("container name %q already exists in Incus (orphan?); choose another name", name)
+			return fmt.Errorf("container name %q already exists in Incus (orphan from a failed create?); remove it with `incus delete %s` and retry", name, name)
 		}
 		if v == ip {
 			return fmt.Errorf("IPv4 %s already assigned to live container %q (orphan?); choose another name", ip, n)
