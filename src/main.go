@@ -409,32 +409,11 @@ func cmdInstall() error {
 	if err := writeUnit("vps-nft.service", nftUnit); err != nil {
 		return err
 	}
-	// IPv6 pass-through boot unit. Prefix mode runs the long-lived in-tree NDP
-	// responder (ipv6ProxyUnit); pool mode re-applies routes/proxy at boot via
-	// the oneshot ipv6Unit. Stop the old unit before replacing it so an upgrade
-	// from the previous oneshot/ndppd implementation actually starts the new
-	// responder, and (for the prefix responder) so a bad ext_if fails the
-	// install clearly instead of the service hot-looping under Restart=always.
-	_ = exec.Command("systemctl", "disable", "--now", "vps-ipv6.service").Run()
-	proxyUsable := true
-	if c.IPv6Enabled() || c.IPv6ExtraEnabled() {
-		unit := ipv6Unit
-		if c.IPv6ModeEffective() == cfg.IPv6ModePrefix || (c.IPv6ModeEffective() == cfg.IPv6ModeNone && c.IPv6ExtraEnabled()) {
-			unit = ipv6ProxyUnit
-			if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
-				log.Printf("warning: prefix-mode/extra-prefix IPv6 needs an Ethernet ext_if (%s): %v — NDP responder not enabled; fix net.ext_if and re-run `vps install`", c.Net.ExtIF, err)
-				proxyUsable = false
-			}
-		}
-		if proxyUsable {
-			if err := writeUnit("vps-ipv6.service", unit); err != nil {
-				return err
-			}
-		} else {
-			_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
-		}
-	} else {
-		_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
+	// IPv6 pass-through boot unit: see syncIPv6BootUnit. It is started below,
+	// after daemon-reload.
+	proxyUsable, err := syncIPv6BootUnit(c)
+	if err != nil {
+		return err
 	}
 	// Prefix mode uses the vpsmgr raw NDP responder; a distro ndppd or npd6
 	// listener would emit competing (link-local-source) NAs, so disable both
@@ -546,6 +525,55 @@ func writeUnit(name, content string) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// syncIPv6BootUnit (re)installs vps-ipv6.service to match the current IPv6
+// config. Prefix mode and none+extra run the long-lived in-tree NDP responder
+// (ipv6ProxyUnit); any other IPv6 passes through the oneshot reapply
+// (ipv6Unit); no IPv6 at all removes the unit. The old unit is stopped before
+// it is replaced so an upgrade from the previous oneshot/ndppd implementation
+// actually starts the new responder, and so a bad ext_if fails clearly instead
+// of hot-looping under Restart=always. Returns whether the responder unit is
+// usable (a non-Ethernet ext_if cannot answer NDP). Root-only: it writes into
+// /etc/systemd/system, so a runtime caller must be root and should treat a
+// failure as a warning (run `vps install`) rather than lose a saved config.
+func syncIPv6BootUnit(c *cfg.Config) (proxyUsable bool, err error) {
+	_ = exec.Command("systemctl", "disable", "--now", "vps-ipv6.service").Run()
+	if !c.IPv6Enabled() && !c.IPv6ExtraEnabled() {
+		_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
+		return false, nil
+	}
+	unit := ipv6Unit
+	if c.IPv6ModeEffective() == cfg.IPv6ModePrefix || (c.IPv6ModeEffective() == cfg.IPv6ModeNone && c.IPv6ExtraEnabled()) {
+		unit = ipv6ProxyUnit
+		if _, err := ethernetMAC(c.Net.ExtIF); err != nil {
+			log.Printf("warning: prefix-mode/extra-prefix IPv6 needs an Ethernet ext_if (%s): %v — NDP responder not enabled; fix net.ext_if and re-run `vps install`", c.Net.ExtIF, err)
+			_ = os.Remove("/etc/systemd/system/vps-ipv6.service")
+			return false, nil
+		}
+	}
+	if err := writeUnit("vps-ipv6.service", unit); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// applyIPv6BootUnit is syncIPv6BootUnit plus the systemd reload/enable steps,
+// for callers outside `vps install` (a runtime config change).
+func applyIPv6BootUnit(c *cfg.Config) error {
+	proxyUsable, err := syncIPv6BootUnit(c)
+	if err != nil {
+		return err
+	}
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("daemon-reload: %s", strings.TrimSpace(string(out)))
+	}
+	if (c.IPv6Enabled() || c.IPv6ExtraEnabled()) && proxyUsable {
+		if out, err := exec.Command("systemctl", "enable", "--now", "vps-ipv6.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("enable vps-ipv6: %s", strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 // ethernetMAC returns the 6-byte hardware address of iface by name, or an
@@ -1069,6 +1097,29 @@ func configSet(args []string) error {
 	case cfg.ApplyImmediate:
 		// Config-owned runtime settings the panel reads live: write the DB mirror
 		// (the channel to the long-running panel) and apply now. No restart.
+		if key == "net.ipv6_extra_prefix" {
+			// Host wiring first (forwarding, proxy_ndp, NDP rules, block routes),
+			// then make the boot unit match, then restart the panel: it holds its
+			// config from startup, so without the restart the create form would
+			// keep showing the old extra-prefix state (no /64 checkbox).
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				return fmt.Errorf("config saved, but applying it failed: %w", err)
+			}
+			m := mgr.New(c, d)
+			if err := m.RewireAllIPv6(); err != nil {
+				fmt.Printf("warning: host IPv6 was not fully rewired: %v\n", err)
+			}
+			d.Close()
+			if err := applyIPv6BootUnit(c); err != nil {
+				fmt.Printf("warning: the IPv6 boot unit was not updated (%v) — run `vps install`\n", err)
+			}
+			if err := restartPanel(); err != nil {
+				fmt.Printf("warning: the panel was not restarted: %v\n", err)
+			}
+			fmt.Printf("%s updated and applied (host IPv6 rewired, panel restarted).\n", key)
+			return nil
+		}
 		if key == "snapshots.share" {
 			d, err := db.Open(c.Panel.DB)
 			if err != nil {
@@ -1195,6 +1246,8 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 			what = "starts/stops HAProxy immediately and changes whether new domains may be added"
 		case "incus.swap_ratio":
 			what = "re-applies the swap allowance of every existing container (no restart)"
+		case "net.ipv6_extra_prefix":
+			what = "rewires host IPv6 plumbing (forwarding / proxy_ndp / NDP rules), (re)installs the IPv6 boot unit and restarts the panel"
 		default:
 			what = "applies immediately"
 		}
