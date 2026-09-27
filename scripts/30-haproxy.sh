@@ -219,9 +219,10 @@ fi
 #    domain-proxy switch. web-only qualifies; false does not.
 # ---------------------------------------------------------------------------
 V4_PROXY_ALLOWED=1
-case "${VPSMGR_V4_FORWARD:-1}" in
-  1|true|True|web-only) V4_PROXY_ALLOWED=1 ;;
-  *)                   V4_PROXY_ALLOWED=0 ;;
+V4_FWD_EFFECTIVE="${VPSMGR_V4_FORWARD:-1}"
+case "${V4_FWD_EFFECTIVE,,}" in
+  1|true|web-only) V4_PROXY_ALLOWED=1 ;;
+  *)               V4_PROXY_ALLOWED=0 ;;
 esac
 
 # Proxy switch: installer override first (VPSMGR_HAPROXY, or the legacy

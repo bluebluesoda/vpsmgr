@@ -10,8 +10,10 @@ die(){ echo "[40] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DOWNLOAD="$SCRIPT_DIR/lib-download.sh"
+[[ -f "$LIB_DOWNLOAD" ]] || die "missing $LIB_DOWNLOAD (incomplete checkout?)"
 # shellcheck source=lib-download.sh
-source "$SCRIPT_DIR/lib-download.sh"
+source "$LIB_DOWNLOAD"
 REPO="bluebluesoda/vpsmgr"
 
 ensure_go(){
@@ -186,7 +188,9 @@ install_prebuilt(){
     want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
     got=$(sha256sum "$local_pre" | awk '{print $1}')
     if [[ -n "$want" && "$want" == "$got" ]]; then
-      mv "$local_pre" "$dir/vps-$arch"
+      # Copy, not move: the prebuild is the only copy on the box, so a later
+      # failure must not take it with the temp dir.
+      cp "$local_pre" "$dir/vps-$arch"
       chmod 755 "$dir/vps-$arch"
       log "using local vps-prebuild ($local_pre, checksum matches latest release)"
     else
@@ -195,15 +199,23 @@ install_prebuilt(){
   elif [[ -f "$local_pre" && ! -s "$sums" ]]; then
     log "warn: could not fetch checksums, skipping local vps-prebuild"
   fi
-  # Real content download: up to 10 tries, no total timeout (no max-time).
+  # Real content download: up to 10 tries, no total cap (a big binary may take
+  # a while) but a stalled transfer is aborted so the retry can take over.
   if [[ ! -s "$dir/vps-$arch" ]]; then
     dl_content "$bin_url" "$dir/vps-$arch" \
       || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
   fi
-  # Checksums are mandatory whenever the manifest was fetched.
+  # Checksums are mandatory whenever the manifest was fetched. Look the entry up
+  # explicitly: `sha256sum -c --ignore-missing` would quietly succeed when the
+  # manifest has no line for this arch, which is worse than not checking at all.
   if [[ -s "$sums" ]]; then
-    (cd "$dir" && sha256sum -c --ignore-missing --status SHA256SUMS) \
-      || { log "warn: checksum mismatch (corrupt download?), falling back to local build"; rm -rf "$dir"; return 1; }
+    want=$(dl_release_sha "$sums" "vps-$arch" 2>/dev/null || true)
+    got=$(sha256sum "$dir/vps-$arch" | awk '{print $1}')
+    if [[ -z "$want" || "$want" != "$got" ]]; then
+      log "warn: checksum mismatch or no entry for vps-$arch (corrupt download?), falling back to local build"
+      rm -rf "$dir"
+      return 1
+    fi
   else
     log "warn: no checksum manifest available — skipping checksum verification"
   fi
