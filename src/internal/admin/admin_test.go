@@ -1278,12 +1278,13 @@ func TestUserBatchStatus(t *testing.T) {
 }
 
 // TestOverviewBatchUI checks the batch entry point and form render, including
-// the admin-key checkboxes and the empty-store hint.
+// the admin-key checkboxes and the empty-store hint, and that the entry point
+// is hidden while snapshot sharing is off (a batch clones from a share code).
 func TestOverviewBatchUI(t *testing.T) {
 	srv, _ := newTestServer(t)
 
 	withKeys := srv.renderToString(t, "admin_overview.html", pageData{
-		Prefix: "/" + testAdminSecret, Lang: langEn,
+		Prefix: "/" + testAdminSecret, Lang: langEn, ShareEnabled: true,
 		AdminKeys: []sshKeyRow{{ID: 5, Name: "ops-host", Key: "ssh-ed25519 AAAABODY ops-host", Active: true}},
 	})
 	for _, want := range []string{
@@ -1293,6 +1294,11 @@ func TestOverviewBatchUI(t *testing.T) {
 		if !strings.Contains(withKeys, want) {
 			t.Errorf("batch UI missing %q", want)
 		}
+	}
+	// Snapshot sharing off (the default): no invitation to start a batch.
+	hidden := srv.renderToString(t, "admin_overview.html", pageData{Prefix: "/" + testAdminSecret, Lang: langEn})
+	if strings.Contains(hidden, `id="batchBtn"`) {
+		t.Error("batch entry point must be hidden while snapshot sharing is off")
 	}
 	// "No keys yet" also appears (hidden) in the pre-existing SSH-keys modal,
 	// so assert on this form's own wording.

@@ -449,7 +449,7 @@ var Fields = []Field{
 			return nil
 		}},
 	{"snapshots.share", KindOperator, ApplyImmediate,
-		"allow users to share a checkpoint behind a code and install a container from it (default true); stored codes are kept when turned off",
+		"allow users to share a checkpoint behind a code and install a container from it (off by default; explicit opt-in); stored codes are kept when turned off",
 		"true or false",
 		getStr(func(c *Config) string { return strconv.FormatBool(c.Snapshots.Share) }),
 		func(c *Config, v string) error {

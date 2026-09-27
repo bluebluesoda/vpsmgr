@@ -64,6 +64,10 @@ type pageData struct {
 	// BatchID, when set, is a running/recent batch create the page should show
 	// the progress modal for (carried through the redirect after submitting).
 	BatchID string
+	// ShareEnabled gates the batch-create entry point: a batch clones every user
+	// from a shared snapshot code, so with snapshot sharing off there is nothing
+	// to create from (the handler refuses the same way).
+	ShareEnabled bool
 	// Global dynamic CPU limit rule, edited by the card below (the DB is the
 	// single source of truth — there is no config.yaml / CLI equivalent). The
 	// Active list is the containers currently capped by it.
@@ -150,13 +154,14 @@ type userView struct {
 func (s *Server) buildPageData(msg, errMsg string) pageData {
 	v4Caps := s.mgr.LiveV4Capabilities()
 	d := pageData{
-		Title:    "VPS Manager Admin",
-		Prefix:   s.prefix(),
-		Msg:      msg,
-		Err:      errMsg,
-		V4Policy: s.mgr.LiveV4Policy(),
-		DirectV4: v4Caps.DirectForwarding,
-		Colors:   append([]string{}, userColorPalette...),
+		Title:        "VPS Manager Admin",
+		Prefix:       s.prefix(),
+		Msg:          msg,
+		Err:          errMsg,
+		V4Policy:     s.mgr.LiveV4Policy(),
+		DirectV4:     v4Caps.DirectForwarding,
+		ShareEnabled: s.mgr.SnapshotShareEnabled(),
+		Colors:       append([]string{}, userColorPalette...),
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded

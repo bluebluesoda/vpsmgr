@@ -223,7 +223,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
-    <div style="margin:-4px 0 10px"><button type="button" class="btn" id="batchBtn">{{if eq .Lang "zh"}}批量创建用户{{else}}Batch create{{end}}</button></div>
+    {{if .ShareEnabled}}<div style="margin:-4px 0 10px"><button type="button" class="btn" id="batchBtn">{{if eq .Lang "zh"}}批量创建用户{{else}}Batch create{{end}}</button></div>{{end}}
     <div class="plans" id="plans"></div>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field create-field name-field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" id="cfName" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="31" autocomplete="off" required title="{{if eq .Lang "zh"}}小写字母开头和结尾，仅含小写字母、数字和连字符{{else}}start/end with a lowercase letter; lowercase letters, digits, hyphens only{{end}}"><small id="cfNameHint" style="color:#6b7280;display:block;margin-top:4px;min-height:1em">{{if eq .Lang "zh"}}自动转为小写{{else}}Folded to lowercase{{end}}</small></div>
