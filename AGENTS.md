@@ -102,4 +102,13 @@ Keep the top-level READMEs concise; technical detail belongs in `docs/`
 - One commit per small bug/feature; short subject + bullet body.
 - Run `git log --oneline -10` for the current commit style before writing a
   message.
+- **Never put a real IP address in the repo.** Tests, fixtures, examples, docs
+  and commit messages use the documentation ranges only: IPv4 RFC 5737
+  (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) and IPv6 RFC 3849
+  (`2001:db8::/32`). Test fixtures are where this leaks most often, and a real
+  prefix names an operator's live allocation (their provider block). The block
+  arithmetic is length-driven, so a doc-range prefix substitutes unchanged.
+  Scrubbing a leak afterwards means rewriting published history — force-pushed
+  tags and every fork/clone broken — so it must never get in. Host addresses,
+  credentials and provider/ASN names belong in the same bucket.
 - The test environment has ~2 GiB RAM; keep CI/local test workloads light.
