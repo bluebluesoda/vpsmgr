@@ -8,6 +8,7 @@ panel:
   public_ip: AUTO          # NIC IPv4 used by firewall/routing (private on NAT-ing clouds like AWS/Alibaba)
   display_ip: AUTO         # optional: address shown to users (panel URL / SSH hints); any string without spaces (IP or domain)
                            # auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
+  title: VPS Manager       # name on the login page and in the panel header; empty = "VPS Manager"
   session_days: 3
   url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install
   admin_url_path: AUTO     # 10-char random secret prefix for the ADMIN panel; can be

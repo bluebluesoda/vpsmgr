@@ -118,6 +118,10 @@ const (
 	// with suffix). ThrottleDisplay is what the user panel shows.
 	ThrottleRate    = "1Mbit"
 	ThrottleDisplay = "1Mbps"
+
+	// DefaultTitle is the panel name shown on the login page and in the panel
+	// header when panel.title leaves it unset.
+	DefaultTitle = "VPS Manager"
 )
 
 // GeneratedBanner is prepended to every file the panel generates, telling
@@ -143,7 +147,11 @@ type PanelCfg struct {
 	// SSH hints). On NAT-ing clouds (AWS/Alibaba) public_ip is a private NIC
 	// address and this holds the publicly reachable one. Empty = fall back to
 	// PublicIP. Never used by the firewall or routing.
-	DisplayIP   string `yaml:"display_ip,omitempty"`
+	DisplayIP string `yaml:"display_ip,omitempty"`
+	// Title is the name shown on the login page and at the top of the user
+	// panel. Empty = DefaultTitle, so a config written before this field
+	// existed (or one that clears it) keeps the historical name.
+	Title       string `yaml:"title,omitempty"`
 	SessionDays int    `yaml:"session_days"`
 	// URLPath is the immutable secret prefix protecting the whole panel
 	// (e.g. /Ab1_cdE-9x). Generated once on first install.
@@ -379,7 +387,7 @@ type SnapshotsCfg struct {
 
 func Default() *Config {
 	c := &Config{}
-	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3, ShowFooter: true, WebSSH: true, BandwidthResetDay: 1}
+	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, Title: DefaultTitle, SessionDays: 3, ShowFooter: true, WebSSH: true, BandwidthResetDay: 1}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: V4Direct, Haproxy: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
 	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}
@@ -740,6 +748,15 @@ func (c *Config) EnsurePaths() {
 		c.Panel.URLPath = pw.URLSafe(10)
 		c.Panel.AdminPath = pw.URLSafe(12)
 	}
+}
+
+// PanelTitle is the operator-facing name of the panel: the login page heading
+// and the header after login. Blank falls back to DefaultTitle.
+func (c *Config) PanelTitle() string {
+	if t := strings.TrimSpace(c.Panel.Title); t != "" {
+		return t
+	}
+	return DefaultTitle
 }
 
 // DisplayIP returns the address shown to users (panel URL, SSH hints,

@@ -175,6 +175,21 @@ var Fields = []Field{
 			c.Panel.DisplayIP = v
 			return nil
 		}},
+	{"panel.title", KindOperator, ApplyRestart,
+		"name shown on the login page and in the panel header; empty = \"VPS Manager\"",
+		"VPS Manager",
+		getStr(func(c *Config) string { return c.Panel.Title }),
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if strings.ContainsAny(v, "\n\r\t") {
+				return fmt.Errorf("panel.title must be a single line")
+			}
+			if len([]rune(v)) > 60 {
+				return fmt.Errorf("panel.title must be at most 60 characters")
+			}
+			c.Panel.Title = v
+			return nil
+		}},
 	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
 		"3",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),

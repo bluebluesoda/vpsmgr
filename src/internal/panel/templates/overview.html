@@ -275,7 +275,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <body>
 <div class="wrap">
 <div class="top">
-<h1>VPS Manager</h1>
+<h1>{{.Title}}</h1>
 <div class="actions">
 {{if eq .Lang "zh"}}<a class="btn" href="{{.Prefix}}/?lang=en">English</a>{{else}}<a class="btn" href="{{.Prefix}}/?lang=zh">中文</a>{{end}}
 <button class="btn" id="pwBtn">{{if eq .Lang "zh"}}改密{{else}}Change password{{end}}</button>

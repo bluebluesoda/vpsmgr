@@ -143,6 +143,35 @@ func TestPanelRoutesBehindPrefix(t *testing.T) {
 	}
 }
 
+// TestPanelTitleFromConfig: panel.title renames the login page heading and the
+// panel header instead of the built-in "VPS Manager".
+func TestPanelTitleFromConfig(t *testing.T) {
+	srv, d := newTestServer(t)
+	hash, err := pw.Hash("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.Panel.Title = "Acme Cloud"
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	rr := doReq(t, h, http.MethodGet, prefix+"/login", nil, nil)
+	if body := rr.Body.String(); !strings.Contains(body, "Acme Cloud Login") {
+		t.Errorf("login page missing the configured title")
+	} else if strings.Contains(body, "VPS Manager") {
+		t.Errorf("login page still shows the default title")
+	}
+
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+	rr = doReq(t, h, http.MethodGet, prefix, nil, cookie)
+	if !strings.Contains(rr.Body.String(), "<h1>Acme Cloud</h1>") {
+		t.Errorf("panel header does not use the configured title")
+	}
+}
+
 func TestLoginFlowAndCookiePath(t *testing.T) {
 	srv, d := newTestServer(t)
 	h := srv.Handler()

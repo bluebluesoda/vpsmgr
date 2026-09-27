@@ -171,7 +171,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.limiter.prune()
 		if !s.limiter.allowed(ip) {
 			s.renderStatus(w, r, http.StatusTooManyRequests, "login.html",
-				pageData{Title: "Login", Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
+				pageData{Title: s.cfg.PanelTitle(), Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -199,10 +199,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.render(w, r, "login.html", pageData{Title: "Login", Prefix: s.prefix(), Err: s.t(r, "err_bad_login")})
+		s.render(w, r, "login.html", pageData{Title: s.cfg.PanelTitle(), Prefix: s.prefix(), Err: s.t(r, "err_bad_login")})
 		return
 	}
-	s.render(w, r, "login.html", pageData{Title: "Login", Prefix: s.prefix()})
+	s.render(w, r, "login.html", pageData{Title: s.cfg.PanelTitle(), Prefix: s.prefix()})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

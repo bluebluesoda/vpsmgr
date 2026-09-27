@@ -399,7 +399,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	groupIndex := mgr.UserGroupLabel(u.Name)
 	v4Caps := s.mgr.LiveV4Capabilities()
 	d := pageData{
-		Title:             "VPS Manager",
+		Title:             s.cfg.PanelTitle(),
 		User:              u,
 		GroupUsers:        groupRows,
 		GroupIndex:        groupIndex,

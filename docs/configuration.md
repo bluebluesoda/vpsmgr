@@ -31,6 +31,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.db` | operator | re-run `vps install` | SQLite database path |
 | `panel.public_ip` | operator | re-run `vps install` | NIC IPv4 used by firewall/routing; cert is regenerated |
 | `panel.display_ip` | operator | restart panel | address shown to users (panel URL / SSH hints); any string without spaces (IP or domain), or empty = fall back to `public_ip` |
+| `panel.title` | operator | restart panel | name on the login page and in the panel header; empty = `VPS Manager` |
 | `panel.session_days` | operator | restart panel | login session lifetime (days) |
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
 | `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |

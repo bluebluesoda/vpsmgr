@@ -32,7 +32,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </head>
 <body>
 <div class="card">
-<h1>{{if eq .Lang "zh"}}VPS Manager 登录{{else}}VPS Manager Login{{end}}</h1>
+<h1>{{.Title}} {{if eq .Lang "zh"}}登录{{else}}Login{{end}}</h1>
 <form method="post" action="{{.Prefix}}/login">
 <label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="username" autofocus required>
 <label>{{if eq .Lang "zh"}}密码{{else}}Password{{end}}</label><input type="password" name="password" required>

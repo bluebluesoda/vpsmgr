@@ -221,6 +221,36 @@ func TestV4PolicyYAMLCompatibility(t *testing.T) {
 	}
 }
 
+func TestPanelTitle(t *testing.T) {
+	c := Default()
+	if got := c.PanelTitle(); got != DefaultTitle {
+		t.Fatalf("default title = %q, want %q", got, DefaultTitle)
+	}
+	c.Panel.Title = "   "
+	if got := c.PanelTitle(); got != DefaultTitle {
+		t.Fatalf("blank title must fall back to the default, got %q", got)
+	}
+	if err := FieldFor("panel.title").Assign(c, "  Acme Cloud  "); err != nil {
+		t.Fatalf("assign panel.title: %v", err)
+	}
+	if c.Panel.Title != "Acme Cloud" || c.PanelTitle() != "Acme Cloud" {
+		t.Fatalf("title not stored/trimmed: %q", c.Panel.Title)
+	}
+	if err := FieldFor("panel.title").Assign(c, "two\nlines"); err == nil {
+		t.Error("a multi-line panel.title was accepted")
+	}
+	if err := FieldFor("panel.title").Assign(c, strings.Repeat("x", 61)); err == nil {
+		t.Error("an over-long panel.title was accepted")
+	}
+	// Clearing goes back to the default (usable as a reset).
+	if err := FieldFor("panel.title").Assign(c, ""); err != nil {
+		t.Fatalf("clearing panel.title: %v", err)
+	}
+	if c.PanelTitle() != DefaultTitle {
+		t.Fatalf("cleared title = %q, want the default", c.PanelTitle())
+	}
+}
+
 func TestFillAutoV4ForwardEnv(t *testing.T) {
 	c := Default()
 	c.Net.ExtIF = "eth0"
