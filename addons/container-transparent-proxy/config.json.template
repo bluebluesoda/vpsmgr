@@ -4,16 +4,20 @@
     "timestamp": true
   },
   "dns": {
+    "optimistic": {
+      "enabled": true,
+      "timeout": "7d"    
+    },
     "servers": [
       {
         "type": "https",
-        "tag": "doh-cn",
-        "server": "__DOH_IP__",
+        "tag": "dns-main",
+        "server": "223.6.6.6",
         "server_port": 443,
         "path": "/dns-query",
         "tls": {
           "enabled": true,
-          "server_name": "__DOH_SERVER_NAME__"
+          "server_name": "__doh_sni_name__"
         }
       },
       {
@@ -30,21 +34,26 @@
       },
       {
         "action": "evaluate",
-        "server": "doh-cn",
-        "tag": "cn-response"
+        "server": "dns-main",
+        "tag": "main-response"
       },
       {
-        "match_response": "cn-response",
+        "match_response": "main-response",
         "rule_set": ["geoip-cn"],
         "action": "respond"
       },
       {
-        "match_response": "cn-response",
+        "match_response": "main-response",
+        "ip_accept_any": true,
+        "action": "route",
+        "server": "fakeip"
+      },
+      {
         "action": "route",
         "server": "fakeip"
       }
     ],
-    "final": "doh-cn",
+    "final": "dns-main",
     "strategy": "ipv4_only",
     "reverse_mapping": true
   },
@@ -52,7 +61,7 @@
     {
       "type": "direct",
       "tag": "dns-in",
-      "listen": "__GATEWAY__",
+      "listen": "10.115.0.1",
       "listen_port": 1053
     },
     {
@@ -60,7 +69,7 @@
       "tag": "tun-in",
       "interface_name": "vpsmgr-tun",
       "address": ["172.31.0.1/30"],
-      "mtu": 1500,
+      "mtu": 1400,
       "auto_route": false,
       "strict_route": false,
       "stack": "system",
@@ -74,19 +83,12 @@
       "tag": "direct"
     },
     {
-      "type": "hysteria2",
-      "tag": "proxy",
-      "server": "__PROXY_SERVER_IP__",
-      "server_port": 443,
-      "password": "__PROXY_PASSWORD__",
-      "tls": {
-        "enabled": true,
-        "server_name": "__PROXY_SERVER_NAME__"
-      }
+      "type": "vless",
+      "tag": "proxy"
     }
   ],
   "route": {
-    "default_domain_resolver": "doh-cn",
+    "default_domain_resolver": "dns-main",
     "rule_set": [
       {
         "tag": "geoip-cn",
@@ -101,14 +103,24 @@
         "action": "hijack-dns"
       },
       {
-        "ip_cidr": ["__PROXY_SERVER_IP__/32"],
+        "network": "udp",
+        "port": 443,
+        "action": "reject",
+        "method": "drop"
+      },
+      {
+        "ip_cidr": [
+          "199.165.136.0/24"
+        ],
         "action": "route",
         "outbound": "direct"
       },
       {
-        "ip_cidr": ["198.18.0.0/15"],
+        "domain_suffix": [
+          "tailscale.com"
+        ],
         "action": "route",
-        "outbound": "proxy"
+        "outbound": "direct"
       },
       {
         "ip_is_private": true,
