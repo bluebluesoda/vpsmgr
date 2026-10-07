@@ -95,6 +95,27 @@ log "storage backend: $STORAGE"
 #     fails at runtime. visudo ships with the sudo package.
 KERNEL_REL=$(uname -r)
 BASE_DEPS="sudo ca-certificates python3 tar xz-utils nftables zstd curl gpg"
+
+# zfsutils-linux and zfs-dkms live in Debian's 'contrib' component (ZFS's
+# CDDL license is not DFSG-free), but a minimal Debian install enables only
+# 'main' (plus 'non-free-firmware' when firmware was selected). Without
+# contrib, 'apt-get install zfsutils-linux' fails with "has no installation
+# candidate" and zfs-dkms is never pulled in, so no module can be built and
+# the pool cannot be created. Enable contrib idempotently, covering both the
+# deb822 (*.sources) and the classic one-line formats. Only the Debian
+# archive itself is touched — appending contrib to a third-party repo would
+# make 'apt-get update' fail.
+enable_debian_contrib(){
+  local f
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if grep -qE '^URIs:.*deb\.debian\.org' "$f"; then
+      sed -i -E '/^Components:/ { /[[:space:]]main([[:space:]]|$)/ { /contrib/! s/[[:space:]]*$/ contrib/ } }' "$f"
+    fi
+    sed -i -E '/^deb[[:space:]].*deb\.debian\.org/ { /[[:space:]]main([[:space:]]|$)/ { /contrib/! s/[[:space:]]*$/ contrib/ } }' "$f"
+  done < <(ls /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null)
+}
+
 if [[ "$STORAGE" == "zfs" ]]; then
   BASE_DEPS="$BASE_DEPS zfsutils-linux"
   if [[ "$ID" == "debian" ]]; then
@@ -104,6 +125,11 @@ if [[ "$STORAGE" == "zfs" ]]; then
     esac
     BASE_DEPS="$BASE_DEPS $KERNEL_HEADERS_PKG build-essential"
     log "Debian detected — ZFS module will be DKMS-compiled (headers: $KERNEL_HEADERS_PKG)"
+    if ! grep -rhE '^[^#].*\bcontrib\b' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
+      log "enabling the Debian contrib component (needed for zfsutils-linux / zfs-dkms)"
+      enable_debian_contrib
+      apt-get update -qq
+    fi
   else
     log "Ubuntu detected — ZFS module is prebuilt in the kernel, no compilation"
     # Ubuntu minimal/cloud images often ship with only the 'main' component; the
@@ -157,7 +183,10 @@ fi
 if [[ "$STORAGE" == "zfs" ]]; then
   if ! modprobe zfs 2>/dev/null; then
     log "ZFS module missing for $KERNEL_REL — rebuilding via dkms (takes a minute)..."
-    DKMS_VERSIONS=$(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{print $2}' | sort -u)
+    # A module whose postinst ran before the headers existed is registered
+    # without a kernel ("zfs/<ver>: added"); the field carries a trailing
+    # colon there, so strip it (dkms build rejects "zfs/<ver>:").
+    DKMS_VERSIONS=$(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^zfs\//{v=$2; sub(/:$/,"",v); if(v!="") print v}' | sort -u)
     [[ -n "$DKMS_VERSIONS" ]] || die "no ZFS DKMS version found — check 'dkms status'"
     for v in $DKMS_VERSIONS; do
       if ! DKMS_OUT=$(dkms build "zfs/$v" -k "$KERNEL_REL" 2>&1); then
