@@ -101,18 +101,51 @@ BASE_DEPS="sudo ca-certificates python3 tar xz-utils nftables zstd curl gpg"
 # 'main' (plus 'non-free-firmware' when firmware was selected). Without
 # contrib, 'apt-get install zfsutils-linux' fails with "has no installation
 # candidate" and zfs-dkms is never pulled in, so no module can be built and
-# the pool cannot be created. Enable contrib idempotently, covering both the
-# deb822 (*.sources) and the classic one-line formats. Only the Debian
-# archive itself is touched — appending contrib to a third-party repo would
-# make 'apt-get update' fail.
+# the pool cannot be created.
+#
+# Enable contrib idempotently, touching only the Debian archive entries.
+# Matching a hostname is not enough: a netinst describes the archive through
+# a 'mirror+file://' indirection, and the mirror may be a regional/hoster
+# one — while third-party repos (tailscale, docker, ...) sign with their own
+# keyring and must NOT be given a contrib they lack ('apt-get update' would
+# then 404). So a stanza/line counts as Debian when its Signed-By names the
+# Debian archive keyring, or when it has none (the default trusted keys).
 enable_debian_contrib(){
-  local f
+  local f tmp
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if grep -qE '^URIs:.*deb\.debian\.org' "$f"; then
-      sed -i -E '/^Components:/ { /[[:space:]]main([[:space:]]|$)/ { /contrib/! s/[[:space:]]*$/ contrib/ } }' "$f"
-    fi
-    sed -i -E '/^deb[[:space:]].*deb\.debian\.org/ { /[[:space:]]main([[:space:]]|$)/ { /contrib/! s/[[:space:]]*$/ contrib/ } }' "$f"
+    case "$f" in
+      *.sources)
+        tmp="$f.vpsmgr-tmp"
+        if awk '
+          function emit(){
+            if (n == 0) return
+            deb = 1
+            for (i = 1; i <= n; i++)
+              if (buf[i] ~ /^[ \t]*Signed-By:/ && buf[i] !~ /debian-archive-keyring/) deb = 0
+            if (deb)
+              for (i = 1; i <= n; i++)
+                if (buf[i] ~ /^[ \t]*Components:/ && buf[i] ~ /(^|[ \t])main([ \t]|$)/ && buf[i] !~ /contrib/) buf[i] = buf[i] " contrib"
+            for (i = 1; i <= n; i++) print buf[i]
+            n = 0
+          }
+          /^[ \t]*$/ { emit(); print ""; next }
+          { buf[++n] = $0 }
+          END { emit() }
+        ' "$f" > "$tmp"; then
+          cat "$tmp" > "$f"; rm -f "$tmp"
+        else
+          rm -f "$tmp"
+        fi
+        ;;
+      *)
+        sed -i -E '
+          /^deb[[:space:]]/!b
+          /signed-by=/ { /signed-by=[^]]*debian-archive-keyring/!b }
+          /[[:space:]]main([[:space:]]|$)/ { /contrib/! s/[[:space:]]*$/ contrib/ }
+        ' "$f"
+        ;;
+    esac
   done < <(ls /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null)
 }
 
