@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,6 +179,12 @@ func (m *Manager) SetupIPv6Bridge() error {
 		return err
 	}
 	bridge := m.cfg.Incus.Bridge
+	// Pin the bridge MAC before touching anything else. Every container's guest
+	// config pins this MAC as its static fe80::1 gateway neighbor, and a changed
+	// MAC strands its IPv6 until the config is rewritten (see pinBridgeMAC).
+	if err := m.pinBridgeMAC(bridge); err != nil {
+		return fmt.Errorf("pin bridge MAC on %s: %w", bridge, err)
+	}
 	for _, kv := range []string{
 		"ipv6.address=" + gw + "/" + strconv.Itoa(bridgeOnes),
 		"ipv6.nat=false",
@@ -413,6 +420,11 @@ func (m *Manager) ndppdConf(fresh, drop string) (string, error) {
 		return "", nil
 	}
 	sort.Strings(blocks)
+	// A block can land here twice: the loop above already added every existing
+	// account's block, and `fresh` adds the same block again for a container
+	// whose account row already exists (a reinstall). Harmless for matching, but
+	// a duplicated rule is wrong to render.
+	blocks = slices.Compact(blocks)
 	var b strings.Builder
 	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "proxy %s {\n", ext)

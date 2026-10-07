@@ -351,3 +351,37 @@ func TestPickIPv6IndexSkipsGatewayBlock(t *testing.T) {
 		}
 	}
 }
+
+// ndppdConf must render exactly one rule per block. A reinstall passes the
+// container's block explicitly as `fresh` while its account row already exists,
+// so the block is seen twice and would otherwise be emitted twice.
+func TestNDPPDConfDeduplicatesRules(t *testing.T) {
+	m := ipv6TestManager(t, "2001:db8::/64", map[string]int64{"alice": legacyAlice})
+	m.cfg.Net.ExtIF = "eth0"
+	block, err := m.IPv6Block("alice")
+	if err != nil || block == nil {
+		t.Fatalf("IPv6Block = %v, %v", block, err)
+	}
+	conf, err := m.ndppdConf(block.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(conf, "rule "+block.String()+" {"); got != 1 {
+		t.Errorf("want exactly 1 rule for %s, got %d:\n%s", block, got, conf)
+	}
+}
+
+// A container created before its account row exists is passed as `fresh`; its
+// rule must still be rendered.
+func TestNDPPDConfEmitsFreshBlock(t *testing.T) {
+	m := ipv6TestManager(t, "2001:db8::/64", nil)
+	m.cfg.Net.ExtIF = "eth0"
+	const block = "2001:db8::2bd8:6c9:0/112"
+	conf, err := m.ndppdConf(block, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "rule "+block+" {") {
+		t.Errorf("fresh block missing from:\n%s", conf)
+	}
+}

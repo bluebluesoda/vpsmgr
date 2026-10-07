@@ -81,6 +81,15 @@ that the host can see is already taken:
 The conflicting prefix route Incus auto-creates on the bridge is deleted (eth0
 keeps the authoritative route), and IPv6 forwarding is enabled.
 
+`SetupIPv6Bridge` also **pins the bridge's MAC** (`bridge.hwaddr`) to the value
+already in use. Incus assigns a managed bridge a random MAC and does not persist
+it, so a host reboot recreates the bridge with a new one. That matters because
+every container pins the bridge MAC as its static gateway neighbor (see below),
+and a container that boots with the old MAC keeps its address but loses all
+IPv6. Pinning makes the guest pins valid for the life of the host; the write is
+idempotent, and because it stores the MAC already in use the bridge is never
+re-created by the change.
+
 ## Per-container wiring
 
 For each container:
@@ -95,6 +104,13 @@ For each container:
   DHCPv6 would hand the recreated container a *dynamic* address instead, which
   falls outside the routed /112 and is dropped by `ipv6_filtering`. Binding the
   /128 directly makes IPv6 survive reinstalls.
+- The gateway (`fe80::1`, the bridge) is **pinned as a static neighbor** in the
+  guest. The guest cannot resolve it by NDP: `security.ipv6_filtering` drops a
+  neighbor solicitation whose source is outside the routed /112, and that
+  solicitation is sourced from the guest's link-local. The pinned MAC is the
+  bridge's own, which is exactly why the bridge MAC is pinned (see the bridge
+  setup above) — a stale pin leaves the container with its address but no
+  working IPv6, which is the symptom to look for first.
 - DHCPv6 is turned off on Debian (`DHCP=ipv4` plus `[IPv6AcceptRA] DHCPv6Client=no`
   — the RA's Managed flag would otherwise start the DHCPv6 client regardless of
   `DHCP=`), and the RA is told to generate no SLAAC address, so the container

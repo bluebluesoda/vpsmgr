@@ -462,6 +462,18 @@ func (c *Client) State(name string) (string, error) {
 
 // ---- mutations ----
 
+// NetworkGet returns one config option of a managed Incus network, or "" when
+// the option is unset. Used to read back bridge.hwaddr before pinning it.
+func (c *Client) NetworkGet(network, key string) (string, error) {
+	var net struct {
+		Config map[string]string `json:"config"`
+	}
+	if err := c.get("/1.0/networks/"+url.PathEscape(network), &net); err != nil {
+		return "", err
+	}
+	return net.Config[key], nil
+}
+
 // NetworkSet sets one key=value config option on a managed Incus network
 // (e.g. incusbr0). Used for IPv6 pass-through bridge configuration.
 func (c *Client) NetworkSet(network, kv string) error {
