@@ -49,6 +49,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.ipv6_mode` | **fixed at install** | — | IPv6 allocation mode: `none` / `prefix` (/112 blocks) / `pool` (per-container address) |
 | `net.ipv6_pool` | operator | `vps config set` needs `--apply`; admin-panel changes apply immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
 | `net.ipv6_extra_prefix` | operator | applied immediately (rewires host IPv6 + restarts the panel); admin-panel changes apply immediately too | optional extra prefix (prefix mode alongside /112, or IPv4-only none mode as standalone routed /64) that a container can be given a whole /64 out of, e.g. `2001:1c00:b1b:7f0::/60`; empty = feature off (the default, including on every upgrade). Accepted as-is — the /64 this host itself uses is never handed out |
+| `net.ipv6_pin_gateway` | operator | **applied immediately** (host IPv6 rewired; no panel restart) | pin the host's upstream link-local default gateway as a **permanent** neighbour, working around a provider router that answers neighbour solicitations unreliably (the host's default route otherwise drops to `INCOMPLETE` and every container loses IPv6 with it). **Off by default**: a permanent entry is never re-resolved, so a gateway that moves to another MAC is then missed |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool (backend selected at install via `VPSMGR_STORAGE=zfs\|btrfs\|dir`) |
@@ -130,6 +131,11 @@ net:
                                # (/48, /56, /60 ...). Works in prefix mode or IPv4-only
                                # (none) mode. Empty = off (the default). The /64 this host
                                # uses itself is never handed out. See docs/ipv6.md
+  ipv6_pin_gateway: false      # optional: pin the host's upstream link-local default
+                               # gateway as a PERMANENT neighbour, working around a
+                               # provider router that answers NDP unreliably. Off by
+                               # default — a permanent entry is never re-resolved.
+                               # See docs/ipv6.md
 
 incus:
   image: "vpsmgr/debian-sshd"
@@ -333,6 +339,17 @@ goes away when the panel is uninstalled.
   routes) is rewired, the boot unit is refreshed and the panel is restarted so
   the create form updates. A value that holds no whole /64 (a /64 or longer)
   simply leaves the feature inert.
+- `net.ipv6_pin_gateway` is **optional and off by default**. It makes the host's
+  own upstream default gateway — only when that gateway is a link-local address
+  — a permanent neighbour entry, so the kernel stops probing it. That works
+  around providers whose router answers neighbour solicitations unreliably: the
+  host's default nexthop otherwise falls to `INCOMPLETE`, and every forwarded
+  packet, every container's IPv6 included, is answered with *address
+  unreachable* until it recovers. It is re-applied by `vps ipv6-reapply` and
+  `vps install`, touches only that one gateway, and does nothing while the
+  gateway is unresolved. Turning the key off drops the permanent entry again.
+  The trade-off is why the default is off: a permanent entry is never
+  re-resolved, so a gateway that later moves to a different MAC is not picked up.
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
   address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.

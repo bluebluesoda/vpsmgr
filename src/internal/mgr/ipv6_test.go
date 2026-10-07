@@ -385,3 +385,27 @@ func TestNDPPDConfEmitsFreshBlock(t *testing.T) {
 		t.Errorf("fresh block missing from:\n%s", conf)
 	}
 }
+
+// Only a link-local default gateway qualifies for net.ipv6_pin_gateway: a
+// global gateway is resolved by routing (nothing to pin), and IPv4 default
+// routes are irrelevant.
+func TestParseUpstreamLinkLocalGateway(t *testing.T) {
+	cases := []struct {
+		name    string
+		out     string
+		wantGW  string
+		wantDev string
+		wantOK  bool
+	}{
+		{"link-local", "default via fe80::1 dev eth0 proto static metric 1024 onlink pref medium\n", "fe80::1", "eth0", true},
+		{"global", "default via 2001:db8::1 dev eth0 proto static metric 1024 pref medium\n", "", "", false},
+		{"ipv4", "default via 198.51.100.1 dev eth0 proto static metric 1024 pref medium\n", "", "", false},
+		{"none", "", "", "", false},
+	}
+	for _, tc := range cases {
+		gw, dev, ok := parseUpstreamLinkLocalGateway(tc.out)
+		if gw != tc.wantGW || dev != tc.wantDev || ok != tc.wantOK {
+			t.Errorf("%s: got (%q,%q,%v), want (%q,%q,%v)", tc.name, gw, dev, ok, tc.wantGW, tc.wantDev, tc.wantOK)
+		}
+	}
+}

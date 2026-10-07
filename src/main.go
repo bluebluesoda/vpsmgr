@@ -1097,6 +1097,22 @@ func configSet(args []string) error {
 	case cfg.ApplyImmediate:
 		// Config-owned runtime settings the panel reads live: write the DB mirror
 		// (the channel to the long-running panel) and apply now. No restart.
+		if key == "net.ipv6_pin_gateway" {
+			// Host-level neighbour plumbing only: rewire (the pin is applied by
+			// RewireAllIPv6), no panel restart needed.
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				return fmt.Errorf("config saved, but applying it failed: %w", err)
+			}
+			m := mgr.New(c, d)
+			err = m.RewireAllIPv6()
+			d.Close()
+			if err != nil {
+				return fmt.Errorf("config saved, but rewiring host IPv6 failed: %w", err)
+			}
+			fmt.Printf("%s updated and applied (host IPv6 rewired).\n", key)
+			return nil
+		}
 		if key == "net.ipv6_extra_prefix" {
 			// Host wiring first (forwarding, proxy_ndp, NDP rules, block routes),
 			// then make the boot unit match, then restart the panel: it holds its
@@ -1248,6 +1264,8 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 			what = "re-applies the swap allowance of every existing container (no restart)"
 		case "net.ipv6_extra_prefix":
 			what = "rewires host IPv6 plumbing (forwarding / proxy_ndp / NDP rules), (re)installs the IPv6 boot unit and restarts the panel"
+		case "net.ipv6_pin_gateway":
+			what = "pins (or, when turned off, clears) the host's upstream gateway neighbour as a PERMANENT entry — a permanent entry is never re-resolved, so a gateway that moves to another MAC is then missed"
 		default:
 			what = "applies immediately"
 		}

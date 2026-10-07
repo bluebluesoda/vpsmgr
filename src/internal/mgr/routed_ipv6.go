@@ -283,37 +283,6 @@ func (m *Manager) bridgeMAC() string {
 	return mac.String()
 }
 
-// pinBridgeMAC records the bridge's current MAC in bridge.hwaddr so it stays
-// stable for the life of the host.
-//
-// Incus assigns a random MAC to a managed bridge and does not persist it, so a
-// host reboot recreates the bridge with a new one. Every container's guest
-// config pins that MAC as its static fe80::1 gateway neighbor — the guest
-// cannot resolve the gateway by NDP, because security.ipv6_filtering drops its
-// neighbor solicitation (the NS is sourced from the guest's link-local, which
-// is outside the routed /112 that the per-NIC source filter allows). A
-// container that boots with a stale pinned MAC therefore keeps its address but
-// loses all IPv6, and the boot-time reapply only heals it once the container is
-// running — a container that starts after the reapply pass comes up broken.
-// Pinning the MAC removes the failure: the guest pins never go stale.
-//
-// Idempotent: it writes only when bridge.hwaddr is unset, and it writes the MAC
-// already in use, so the bridge is never re-created by the change.
-func (m *Manager) pinBridgeMAC(bridge string) error {
-	mac := m.bridgeMAC()
-	if mac == "" {
-		return nil
-	}
-	cur, err := m.lx.NetworkGet(bridge, "bridge.hwaddr")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(cur) != "" {
-		return nil
-	}
-	return m.lx.NetworkSet(bridge, "bridge.hwaddr="+mac)
-}
-
 // poolContainerScript renders the guest-side network config for a pool
 // container, on whichever stack the image ships:
 //

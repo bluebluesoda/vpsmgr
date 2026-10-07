@@ -28,13 +28,15 @@ import (
 //	route-del      <ipv6-addr> <iface>     ip -6 route del <addr>/128 dev <iface>
 //	neigh-del-proxy <ipv6-addr> <iface>    ip -6 neigh del proxy <addr> dev <iface>
 //	neigh-add-proxy <ipv6-addr> <iface>    ip -6 neigh add proxy <addr> dev <iface>
+//	neigh-pin      <ipv6-addr> <iface>     make <addr>'s current lladdr permanent on <iface>
+//	neigh-unpin    <ipv6-addr> <iface>     drop a PERMANENT neighbour entry for <addr>
 //	proxy-ndp-on   <iface> <iface>         sysctl -w net.ipv6.conf.<iface>.proxy_ndp=1
 //
 // Every non-op argument must be a valid IPv6 address/CIDR and a valid Linux
 // interface name — nothing else can reach `ip`.
 func cmdIP6(args []string) error {
 	if len(args) != 3 {
-		return fmt.Errorf("usage: vps ip6 <route-add|addr-add|addr-del|route-del|neigh-del-proxy|neigh-add-proxy|proxy-ndp-on> <addr-or-cidr> <iface>")
+		return fmt.Errorf("usage: vps ip6 <route-add|addr-add|addr-del|route-del|neigh-del-proxy|neigh-add-proxy|neigh-pin|neigh-unpin|proxy-ndp-on> <addr-or-cidr> <iface>")
 	}
 	op, val, dev := args[0], args[1], args[2]
 
@@ -111,9 +113,71 @@ func cmdIP6(args []string) error {
 			return fmt.Errorf("neigh-add-proxy: %q is not an IPv6 address", val)
 		}
 		return runIP("-6", "neigh", "add", "proxy", val, "dev", dev)
+	case "neigh-pin":
+		// Make the upstream default gateway's neighbour entry permanent, so its
+		// MAC is never re-probed. The MAC comes from the current neighbour
+		// table; when the gateway is not resolved right now we leave the table
+		// alone rather than pin a guessed MAC.
+		ip := net.ParseIP(val)
+		if ip == nil || ip.To4() != nil {
+			return fmt.Errorf("neigh-pin: %q is not an IPv6 address", val)
+		}
+		_, lladdr, err := neighborEntry(dev, val)
+		if err != nil {
+			return err
+		}
+		if lladdr == "" {
+			return nil
+		}
+		return runIP("-6", "neigh", "replace", val, "lladdr", lladdr, "nud", "permanent", "dev", dev)
+	case "neigh-unpin":
+		// Drop a PERMANENT entry only — a normal kernel-learned one is left for
+		// the kernel to manage.
+		ip := net.ParseIP(val)
+		if ip == nil || ip.To4() != nil {
+			return fmt.Errorf("neigh-unpin: %q is not an IPv6 address", val)
+		}
+		state, _, err := neighborEntry(dev, val)
+		if err != nil {
+			return err
+		}
+		if state != "PERMANENT" {
+			return nil
+		}
+		return runIP("-6", "neigh", "del", val, "dev", dev)
 	default:
 		return fmt.Errorf("unknown ip6 operation %q", op)
 	}
+}
+
+// neighborEntry reports the state ("PERMANENT", "REACHABLE", ...) and lladdr of
+// the neighbour entry for addr on dev, as `ip -6 neigh show` prints them. Both
+// are "" when no entry exists yet.
+func neighborEntry(dev, addr string) (state, lladdr string, err error) {
+	out, err := exec.Command("/sbin/ip", "-6", "neigh", "show", "dev", dev, "to", addr).CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("ip -6 neigh show %s: %s", addr, strings.TrimSpace(string(out)))
+	}
+	state, lladdr = parseNeighborEntry(string(out))
+	return state, lladdr, nil
+}
+
+// parseNeighborEntry extracts the state and lladdr from `ip -6 neigh show`
+// output; both are "" when the entry carries none. Pure, so it is tested
+// without a live neighbour table.
+func parseNeighborEntry(out string) (state, lladdr string) {
+	fields := strings.Fields(out)
+	for i, f := range fields {
+		switch f {
+		case "lladdr":
+			if i+1 < len(fields) {
+				lladdr = fields[i+1]
+			}
+		case "PERMANENT", "REACHABLE", "STALE", "DELAY", "PROBE", "INCOMPLETE", "FAILED", "NOARP":
+			state = f
+		}
+	}
+	return state, lladdr
 }
 
 // runIP executes the ip command (this process is already root via sudo).

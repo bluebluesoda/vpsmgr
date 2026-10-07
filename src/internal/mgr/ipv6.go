@@ -179,12 +179,6 @@ func (m *Manager) SetupIPv6Bridge() error {
 		return err
 	}
 	bridge := m.cfg.Incus.Bridge
-	// Pin the bridge MAC before touching anything else. Every container's guest
-	// config pins this MAC as its static fe80::1 gateway neighbor, and a changed
-	// MAC strands its IPv6 until the config is rewritten (see pinBridgeMAC).
-	if err := m.pinBridgeMAC(bridge); err != nil {
-		return fmt.Errorf("pin bridge MAC on %s: %w", bridge, err)
-	}
 	for _, kv := range []string{
 		"ipv6.address=" + gw + "/" + strconv.Itoa(bridgeOnes),
 		"ipv6.nat=false",
@@ -354,6 +348,69 @@ func (m *Manager) enableProxyNDP() error {
 	}
 	_, err := su.IP6("proxy-ndp-on", ext, ext)
 	return err
+}
+
+// pinUpstreamGateway pins (or clears) the HOST's upstream default-gateway
+// neighbour permanently when net.ipv6_pin_gateway is set.
+//
+// Some providers' routers answer neighbour solicitations unreliably: the host's
+// default nexthop drops to INCOMPLETE, and every forwarded packet — every
+// container's IPv6 included — is answered with "address unreachable" until it
+// recovers. A permanent entry removes the probe entirely. Off by default,
+// because a permanent entry is never re-resolved: a gateway that later moves to
+// another MAC would be missed. Only the host's own link-local upstream gateway
+// is touched, and only while it is resolved (the neigh-pin helper reads the MAC
+// from the live table and does nothing when it is absent).
+func (m *Manager) pinUpstreamGateway() error {
+	gw, dev, ok := m.upstreamLinkLocalGateway()
+	if !ok {
+		return nil
+	}
+	if m.cfg.Net.IPv6PinGateway {
+		_, err := su.IP6("neigh-pin", gw, dev)
+		return err
+	}
+	// Feature off: clear a permanent entry an earlier run may have left, so
+	// turning the key off actually reverts the host.
+	_, err := su.IP6("neigh-unpin", gw, dev)
+	return err
+}
+
+// upstreamLinkLocalGateway returns the host's default IPv6 gateway when it is a
+// link-local address — the only case net.ipv6_pin_gateway applies to — together
+// with the interface it is reached over.
+func (m *Manager) upstreamLinkLocalGateway() (addr, dev string, ok bool) {
+	out, err := exec.Command("ip", "-6", "route", "show", "default").CombinedOutput()
+	if err != nil {
+		return "", "", false
+	}
+	return parseUpstreamLinkLocalGateway(string(out))
+}
+
+// parseUpstreamLinkLocalGateway picks the first link-local default gateway out
+// of `ip -6 route show default`, with the interface it is reached over. Pure,
+// so the choice is tested without a live route table.
+func parseUpstreamLinkLocalGateway(out string) (addr, dev string, ok bool) {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		var gw, d string
+		for i, tok := range f {
+			if i+1 >= len(f) {
+				break
+			}
+			switch tok {
+			case "via":
+				gw = f[i+1]
+			case "dev":
+				d = f[i+1]
+			}
+		}
+		ip := net.ParseIP(gw)
+		if ip != nil && ip.To4() == nil && ip.IsLinkLocalUnicast() && d != "" {
+			return ip.String(), d, true
+		}
+	}
+	return "", "", false
 }
 
 // ndppdConfPath is where vpsmgr renders the ndppd rules. It lives inside
@@ -561,6 +618,11 @@ func (m *Manager) cleanLegacyKernelProxy() {
 // is just "pool addresses are not bound on the external interface + proxy_ndp
 // / forwarding on" (the routed NICs program their own per-address routes).
 func (m *Manager) RewireAllIPv6() error {
+	// The upstream gateway pin is host-level and mode-independent, so it runs
+	// for every mode (including a plain V4-only host that opted in).
+	if err := m.pinUpstreamGateway(); err != nil {
+		return fmt.Errorf("pin upstream gateway neighbor: %w", err)
+	}
 	if m.cfg.IPv6ModeEffective() == cfg.IPv6ModePool {
 		return m.RewireAllIPv6Pool()
 	}

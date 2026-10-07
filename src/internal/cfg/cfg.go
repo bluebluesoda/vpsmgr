@@ -315,6 +315,15 @@ type NetCfg struct {
 	// may hand us only a slice of what the provider gave them and asserts it is
 	// theirs. The /64 the host itself uses is never handed to a container.
 	IPv6ExtraPrefix string `yaml:"ipv6_extra_prefix,omitempty"`
+	// IPv6PinGateway pins the HOST's upstream default gateway as a permanent
+	// neighbour on the external interface. Some providers' routers answer
+	// neighbour solicitations unreliably, so the host's default nexthop drops to
+	// INCOMPLETE and every forwarded packet — every container's IPv6 included —
+	// is answered with "address unreachable" until it recovers. A permanent
+	// entry skips the probe entirely. OFF by default, and deliberately so: a
+	// permanent entry is never re-resolved, so a gateway that moves to another
+	// MAC afterwards is missed. Only for hosts that actually see the flapping.
+	IPv6PinGateway bool `yaml:"ipv6_pin_gateway,omitempty"`
 }
 
 // IPv6 mode values.

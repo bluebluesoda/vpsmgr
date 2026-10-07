@@ -412,6 +412,18 @@ var Fields = []Field{
 			}
 			return nil
 		}},
+	{"net.ipv6_pin_gateway", KindOperator, ApplyImmediate,
+		"pin the HOST's upstream link-local default gateway as a permanent neighbour, so the host's default route stops losing it to a failed neighbour probe — some provider routers answer neighbour solicitations unreliably, and then the host, and with it every container, loses IPv6 until it recovers. Off by default: a permanent entry is never re-resolved, so a gateway that moves to another MAC is not picked up on its own",
+		"true or false",
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.IPv6PinGateway) }),
+		func(c *Config, v string) error {
+			b, ok := parseBool(v)
+			if !ok {
+				return fmt.Errorf("net.ipv6_pin_gateway must be true/false or 1/0")
+			}
+			c.Net.IPv6PinGateway = b
+			return nil
+		}},
 	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",
 		getStr(func(c *Config) string { return c.Incus.Image }),

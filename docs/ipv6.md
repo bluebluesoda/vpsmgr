@@ -81,15 +81,6 @@ that the host can see is already taken:
 The conflicting prefix route Incus auto-creates on the bridge is deleted (eth0
 keeps the authoritative route), and IPv6 forwarding is enabled.
 
-`SetupIPv6Bridge` also **pins the bridge's MAC** (`bridge.hwaddr`) to the value
-already in use. Incus assigns a managed bridge a random MAC and does not persist
-it, so a host reboot recreates the bridge with a new one. That matters because
-every container pins the bridge MAC as its static gateway neighbor (see below),
-and a container that boots with the old MAC keeps its address but loses all
-IPv6. Pinning makes the guest pins valid for the life of the host; the write is
-idempotent, and because it stores the MAC already in use the bridge is never
-re-created by the change.
-
 ## Per-container wiring
 
 For each container:
@@ -105,12 +96,10 @@ For each container:
   falls outside the routed /112 and is dropped by `ipv6_filtering`. Binding the
   /128 directly makes IPv6 survive reinstalls.
 - The gateway (`fe80::1`, the bridge) is **pinned as a static neighbor** in the
-  guest. The guest cannot resolve it by NDP: `security.ipv6_filtering` drops a
-  neighbor solicitation whose source is outside the routed /112, and that
-  solicitation is sourced from the guest's link-local. The pinned MAC is the
-  bridge's own, which is exactly why the bridge MAC is pinned (see the bridge
-  setup above) — a stale pin leaves the container with its address but no
-  working IPv6, which is the symptom to look for first.
+  guest — the bridge's MAC is baked in at provisioning time. The guest cannot
+  resolve it by NDP: `security.ipv6_filtering` drops a neighbor solicitation
+  whose source is outside the routed /112, and that solicitation is sourced from
+  the guest's link-local.
 - DHCPv6 is turned off on Debian (`DHCP=ipv4` plus `[IPv6AcceptRA] DHCPv6Client=no`
   — the RA's Managed flag would otherwise start the DHCPv6 client regardless of
   `DHCP=`), and the RA is told to generate no SLAAC address, so the container
@@ -130,6 +119,33 @@ by `vps-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
 rules survive reboots. `vps ipv6-reapply` also re-applies the per-container
 routed-IPv6 config (self-healing: containers created before the host-routed
 scheme, or whose networkd config was corrupted, are repaired on every boot).
+
+## Upstream gateway neighbour pin (`net.ipv6_pin_gateway`, optional)
+
+Off by default. A container's IPv6 rides on the host's own IPv6: the host reaches
+the internet through a default route whose nexthop is the provider's link-local
+gateway, and a container's packets are forwarded through it. Some providers'
+routers answer neighbour solicitations unreliably, so the host's neighbour entry
+for that gateway drops to `INCOMPLETE` — and until it recovers, the host answers
+every forwarded packet, the containers' included, with *address unreachable*.
+
+The symptom is distinctive: the container keeps its address, can ping the
+bridge, but **nothing off-link works, intermittently** (and the host's own IPv6
+drops at the same moments). No container-side config fixes it, because the
+container is not at fault.
+
+`net.ipv6_pin_gateway: true` makes that gateway's neighbour entry **permanent**,
+so the kernel never probes it again and the failure cannot occur.
+`RewireAllIPv6` applies it — so it is re-applied at boot by
+`vps-ipv6.service` and by `vps install` — and it only ever touches the host's own
+**link-local default gateway**, and only while that gateway is resolved (the MAC
+is read from the live neighbour table; an unresolved gateway is left alone).
+Turning the key off again drops the permanent entry on the next pass.
+
+The catch, and the reason it is opt-in: a permanent entry is never re-resolved,
+so a gateway that later moves to a **different MAC** would be missed and the
+host's upstream would black-hole silently. On a provider that behaves, the
+default (off) is the right setting.
 
 ## Installer flow
 
