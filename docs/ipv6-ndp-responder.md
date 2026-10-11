@@ -74,6 +74,42 @@ re-reads `/etc/vpsmgr/ndppd.conf` while it runs:
 
 As a result `vps add` / `vps del` never restart `vps-ipv6.service`.
 
+## Answering is not enough: proactive announcements
+
+Answering an upstream NS is reactive, and it only helps once the router decides
+to *ask*. A router that already holds a stale or wrong neighbour entry for a
+container address does not ask again until its own timers fire — and until then
+it sends the container's replies to the wrong MAC, so the container's off-link
+traffic is black-holed. This is a real, observed failure: the container keeps
+its address and can ping the bridge, but **nothing off-link works** — packets
+leave the host's NIC and no reply ever comes back — for minutes, until the
+router finally re-probes. It is the same class of symptom as the gateway-pin
+case above, but the stale entry is the upstream's, for the *container's*
+address, so nothing on the host can be "pinned" to fix it.
+
+The responder therefore also **announces**. Whenever a block first appears it
+sends a gratuitous Neighbor Advertisement for the block's primary address
+(`network + 1` — the address the container sources its traffic from), and every
+block is re-announced once a minute:
+
+- the advertisement's **source is the advertised address**, its target
+  link-layer option is the host `eth0` MAC, and the **Override** flag is set —
+  so a router replaces even a *REACHABLE* entry it already holds, not just a
+  stale one;
+- a **new block is announced within the same second** it appears; a block that
+  is removed is forgotten, so re-adding it announces again;
+- a `/128` rule announces that address, a wider rule announces its first host
+  address.
+
+Because the trigger is the same rule file the responder already re-reads while
+it runs, no new plumbing is needed: `vps add`, `vps ipv6-reapply` and the boot
+unit each publish a fresh rule set and the announcement follows. Announcements
+are confined to the operator's routed prefix exactly like NS replies (`allowed`
+in `ndp.Run`), so the responder still cannot be turned into an NDP spoofer for
+arbitrary addresses. It is the same idea as a gratuitous ARP/NA refresh: the
+host tells the link where its routed addresses live, instead of waiting to be
+asked.
+
 ## Design hardening (beyond the original report)
 
 Two issues found while reviewing became part of the accepted design.
@@ -105,7 +141,7 @@ itself also exits cleanly (no-op) when IPv6 is disabled or the mode is not prefi
 
 | File | Change |
 |---|---|
-| `internal/ndp/proxy.go` | the responder (raw socket, NS→NA, `allowed` confinement) |
+| `internal/ndp/proxy.go` | the responder (raw socket, NS→NA, `allowed` confinement, proactive gratuitous-NA announcements) |
 | `internal/ndp/proxy_test.go` | wire-format + `filterRules` tests |
 | `main.go` | `vps ipv6-proxy` command, prefix `vps-ipv6.service` unit, `ethernetMAC` install check; removed ndppd daemon sudoers grants |
 | `internal/mgr/ipv6.go` | `writeNDPPD` rewritten **atomically** (unique temp file + `os.Rename`); all ndppd daemon management (restart/stop/link/pid/alive) removed |
@@ -225,6 +261,12 @@ routed prefix:
 8. **Guest gateway neighbor + local route** — inside a container,
    `ip neigh` shows `fe80::1` pinned to the bridge MAC and
    `ip -6 route show table local` contains the /112.
+9. **Announcement on the wire** — on the external interface, `tcpdump -n icmp6`
+   shows a gratuitous NA for each block's `network + 1` when a block is added
+   (and once a minute thereafter), sourced from the block address to `ff02::1`
+   with the Override bit set. On a host whose upstream holds a wrong neighbour
+   entry for a container, that first announcement must repair reachability with
+   no manual step.
 
 ## References
 

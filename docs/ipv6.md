@@ -107,15 +107,22 @@ For each container:
   `UseOnLinkPrefix=false` / `UseRoutePrefix=false` keep the parent prefix
   off-link, so a container reaches a peer through the host (its default
   gateway) instead of direct L2 neighbour discovery.
-- `ndppd` proxies Neighbor Discovery on the **external** interface for every
-  /112: an upstream neighbor solicitation for an address in a block is relayed
-  to the bridge, the container answers, and ndppd relays the NA back. Kernel
+- Neighbor Discovery on the **external** interface is answered by vpsmgr's own
+  in-tree responder (`vps ipv6-proxy`, see
+  [ipv6-ndp-responder.md](ipv6-ndp-responder.md)), not the distro `ndppd`: for
+  every address in a container's block it replies to an upstream neighbor
+  solicitation with an advertisement sourced from the advertised global address
+  (some providers reject a link-local source). The responder also **announces**
+  each block's primary address gratuitously — on `add`/boot and once a minute —
+  so an upstream that holds a stale or wrong neighbour entry for a container
+  recovers immediately instead of black-holing its off-link traffic. Kernel
   `proxy_ndp` is not used for prefixes — it only answers single addresses
   (route-covered or prefix queries are ignored).
 
-vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
-restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
-by `vps-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
+vpsmgr renders `/etc/vpsmgr/ndppd.conf` (one `rule <block>::/112` per
+container), which the in-tree responder re-reads while it runs, so `add`/`del`
+never restart `vps-ipv6.service`; the file is rebuilt from the DB at boot by
+`vps-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
 rules survive reboots. `vps ipv6-reapply` also re-applies the per-container
 routed-IPv6 config (self-healing: containers created before the host-routed
 scheme, or whose networkd config was corrupted, are repaired on every boot).
