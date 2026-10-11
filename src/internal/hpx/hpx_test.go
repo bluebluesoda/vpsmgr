@@ -70,16 +70,21 @@ func TestPublishRendersHTTPAndTLSBackends(t *testing.T) {
 	got := readCurrent(t, p, "domains.cfg")
 
 	// HTTP backend: plain reverse proxy to :80, no PROXY protocol.
-	if !strings.Contains(got, "backend be_h_api_example_com\n    mode http\n    option forwardfor\n    server s  10.115.0.2:80 check") {
+	if !strings.Contains(got, "backend be_h_api_example_com\n    mode http\n    option forwardfor\n    server s  10.115.0.2:80\n") {
 		t.Errorf("missing HTTP backend:\n%s", got)
 	}
 	// TLS backend with PROXY protocol v2 enabled.
-	if !strings.Contains(got, "server s  10.115.0.2:443 check send-proxy-v2") {
+	if !strings.Contains(got, "server s  10.115.0.2:443 send-proxy-v2") {
 		t.Errorf("missing send-proxy-v2 on the 443 backend:\n%s", got)
 	}
 	// TLS backend without it.
-	if !strings.Contains(got, "server s  10.115.0.3:443 check\n") {
+	if !strings.Contains(got, "server s  10.115.0.3:443\n") {
 		t.Errorf("missing plain 443 backend:\n%s", got)
+	}
+	// No health check on any server: a DOWN transition makes HAProxy emit the
+	// "no server available" message that journald broadcasts to every terminal.
+	if strings.Contains(got, " check") {
+		t.Errorf("a backend server must not carry a health check:\n%s", got)
 	}
 	// Routing lives in the generation's maps: host -> backend, SNI -> backend.
 	httpMap := readCurrent(t, p, "maps/http.map")

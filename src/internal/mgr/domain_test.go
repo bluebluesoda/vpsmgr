@@ -116,10 +116,10 @@ func TestAddDomainPublishesRoute(t *testing.T) {
 	if !strings.Contains(got, "backend be_t_api_example_com") {
 		t.Errorf("missing TCP backend:\n%s", got)
 	}
-	if !strings.Contains(got, "server s  10.115.0.2:443 check send-proxy-v2") {
+	if !strings.Contains(got, "server s  10.115.0.2:443 send-proxy-v2") {
 		t.Errorf("missing send-proxy-v2 on the 443 backend:\n%s", got)
 	}
-	if strings.Contains(got, "10.115.0.2:80 check send-proxy-v2") {
+	if strings.Contains(got, "10.115.0.2:80 send-proxy-v2") {
 		t.Errorf("PROXY protocol must never be sent on :80:\n%s", got)
 	}
 	if !strings.Contains(currentMap(t, dir, "http.map"), "api.example.com be_h_api_example_com") {

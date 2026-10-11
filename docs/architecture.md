@@ -210,6 +210,13 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `X-Forwarded-For`, which HAProxy adds via `option forwardfor`.
   Backend names are `sanitizeDomain(domain)` (dots → underscores), which is
   collision-free across the `[a-z0-9.-]` domain charset.
+  Servers carry **no `check`**: a health check would mark a container port down
+  and make HAProxy emit its "no server available" message, which it sends to the
+  syslog socket at EMERG/ALERT priority — and systemd-journald then broadcasts
+  that to every logged-in terminal. A container with nothing listening is an
+  ordinary state (a domain is often published before the service exists), and a
+  closed port already answers ECONNREFUSED immediately, so the client sees the
+  same 503 or closed connection either way.
   **DB and configuration are updated sequentially, not atomically**: a domain
   mutation writes the DB first, then republishes AND reloads (`systemctl reload
   haproxy.service`), and rolls the DB back if either fails; a crash or full

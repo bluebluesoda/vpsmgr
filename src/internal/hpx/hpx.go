@@ -421,6 +421,17 @@ func renderManifest(gen int, domains []Domain) string {
 // This file therefore only declares the backends. They are reachable solely
 // through the maps, which is why every one of them looks "unused" to a reader
 // of the entry config.
+//
+// The servers carry NO `check`. A health check would mark a server DOWN and
+// make HAProxy emit "backend ... has no server available!" — and HAProxy sends
+// that internal message to the syslog socket at EMERG/ALERT priority, which
+// systemd-journald's ForwardToWall then broadcasts to every logged-in terminal.
+// A container whose service is not running is an ordinary state here (a domain
+// is published before the user has started anything, or the service is simply
+// down), and the check buys nothing: a connection to a closed port already
+// fails immediately with ECONNREFUSED, so the client sees the same 503 or
+// closed connection with or without it. No check means no DOWN transition, so
+// no broadcast.
 func renderDomains(domains []Domain) string {
 	var b bytes.Buffer
 	b.WriteString(cfg.GeneratedBanner)
@@ -440,7 +451,7 @@ func renderDomains(domains []Domain) string {
 		fmt.Fprintf(&b, "backend %s\n", hb)
 		b.WriteString("    mode http\n")
 		b.WriteString("    option forwardfor\n")
-		fmt.Fprintf(&b, "    server s  %s:80 check\n\n", d.IP)
+		fmt.Fprintf(&b, "    server s  %s:80\n\n", d.IP)
 
 		fmt.Fprintf(&b, "backend %s\n", tb)
 		b.WriteString("    mode tcp\n")
@@ -449,9 +460,9 @@ func renderDomains(domains []Domain) string {
 			// sent on :80 (where X-Forwarded-For carries the client address).
 			// The container's TLS listener must support it, or the handshake
 			// fails — this mirrors the per-domain toggle the panel exposes.
-			fmt.Fprintf(&b, "    server s  %s:443 check send-proxy-v2\n\n", d.IP)
+			fmt.Fprintf(&b, "    server s  %s:443 send-proxy-v2\n\n", d.IP)
 		} else {
-			fmt.Fprintf(&b, "    server s  %s:443 check\n\n", d.IP)
+			fmt.Fprintf(&b, "    server s  %s:443\n\n", d.IP)
 		}
 	}
 	return b.String()
