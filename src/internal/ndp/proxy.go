@@ -37,11 +37,6 @@ const (
 	// whose cache points at the wrong MAC — the case that otherwise black-holes
 	// a container's off-link traffic until the router re-probes on its own.
 	naFlagsUnsolicited = uint32(0xa0000000)
-
-	// announceInterval is how often every known block is re-announced while the
-	// responder is idle. A block that first appears is announced immediately,
-	// regardless of this interval.
-	announceInterval = 60 * time.Second
 )
 
 // Run listens for IPv6 Neighbor Solicitations on external and emits a
@@ -52,10 +47,17 @@ const (
 // space, so a compromised writer of the rules file cannot turn the host into an
 // NDP spoofer for arbitrary external addresses.
 //
+// Besides answering, the responder also *announces*: a block that first appears
+// is sent a gratuitous advertisement immediately, and when announce > 0 every
+// block is re-announced at that interval. announce == 0 keeps only the
+// announce-on-appearance behaviour (the least traffic that still lets an
+// upstream with a stale cache recover). A failed send is logged (rate-limited)
+// and the block is left for the next pass — there is no tight retry loop.
+//
 // The rules file is reread at most once per second while idle, and its mtime is
 // checked when an NS arrives. This makes an add/del take effect for that very
 // first solicitation without restarting this long-running process.
-func Run(configPath, external string, allowed *net.IPNet) error {
+func Run(configPath, external string, allowed *net.IPNet, announce time.Duration) error {
 	iface, err := net.InterfaceByName(external)
 	if err != nil {
 		return fmt.Errorf("find external interface %s: %w", external, err)
@@ -86,7 +88,7 @@ func Run(configPath, external string, allowed *net.IPNet) error {
 	var rulesAt time.Time
 	var rulesModTime time.Time
 	var lastRuleError time.Time
-	announced := &announceState{last: map[string]time.Time{}}
+	announced := &announceState{last: map[string]time.Time{}, interval: announce}
 	packet := make([]byte, 4096)
 	for {
 		if time.Since(rulesAt) >= time.Second {
@@ -101,12 +103,16 @@ func Run(configPath, external string, allowed *net.IPNet) error {
 					rules = nil
 					rulesAt = time.Now()
 					rulesModTime = time.Time{}
-				} else if time.Since(lastRuleError) >= 10*time.Second {
-					// A config write is atomic from the daemon's point of view
-					// in normal operation, but tolerate the brief empty or
-					// truncated window and keep the last known-good rules.
-					log.Printf("IPv6 NDP rule reload: %v", loadErr)
-					lastRuleError = time.Now()
+				} else {
+					// rulesAt is bumped even on a read error so the reload stays
+					// on the once-a-second tick: without it a persistent read
+					// error would re-read (and re-announce) on every received
+					// packet instead of once a second.
+					rulesAt = time.Now()
+					if time.Since(lastRuleError) >= 10*time.Second {
+						log.Printf("IPv6 NDP rule reload: %v", loadErr)
+						lastRuleError = time.Now()
+					}
 				}
 			} else {
 				rules = filterRules(next, allowed)
@@ -116,11 +122,11 @@ func Run(configPath, external string, allowed *net.IPNet) error {
 				}
 			}
 			// Announcement pass, at most once a second: a block that just
-			// appeared is announced at once, and every block is refreshed every
-			// announceInterval. This is what lets an upstream router whose
-			// neighbour cache for a container is stale or missing recover
-			// immediately, instead of black-holing the container's off-link
-			// traffic until its own slow neighbour probe happens to succeed.
+			// appeared is announced at once, and (when an interval is set) every
+			// block is refreshed on that period. This is what lets an upstream
+			// router whose neighbour cache for a container is stale or missing
+			// recover immediately, instead of black-holing the container's
+			// off-link traffic until its own slow neighbour probe succeeds.
 			announced.sync(rules, func(target net.IP) error {
 				return sendUnsolicitedAdvertisement(fd, iface.Index, mac, target)
 			})
@@ -338,22 +344,32 @@ func buildNA(sourceMAC [6]byte, target16, dstIP16 net.IP, dstMAC [6]byte, flags 
 	return frame, nil
 }
 
-// announceState records when each block was last announced so that a block
-// which first appears is announced once immediately and every block is
-// refreshed periodically.
+// announceState records when each block was last announced. A block that first
+// appears is announced once immediately; when interval > 0 every block is also
+// re-announced once per interval (interval == 0 disables the periodic refresh,
+// leaving only the announce-on-appearance pass — the least traffic that still
+// lets an upstream with a stale cache recover).
 type announceState struct {
-	last map[string]time.Time
-	at   time.Time
+	last     map[string]time.Time
+	at       time.Time
+	interval time.Duration
+	// lastErr rate-limits the failure log so a persistently failing send (e.g.
+	// the interface is down) cannot flood the journal.
+	lastErr time.Time
 }
 
 // sync announces the primary address of every rule that is new since the last
-// pass, and re-announces every rule once announceInterval has elapsed. send is
-// injected so the decision logic is unit-testable without a raw socket; a rule
-// whose send fails stays unannounced and is retried on the next pass.
+// pass, and (when interval > 0) re-announces every rule once the interval has
+// elapsed. send is injected so the decision logic is unit-testable without a
+// raw socket.
+//
+// A failed send is recorded exactly like a successful one — it is logged (at
+// most once every 10s) and the block is left for the next scheduled pass, so a
+// broken path cannot produce a tight retry loop.
 func (a *announceState) sync(rules []net.IPNet, send func(net.IP) error) {
 	now := time.Now()
 	present := make(map[string]bool, len(rules))
-	refresh := now.Sub(a.at) >= announceInterval
+	refresh := a.interval > 0 && now.Sub(a.at) >= a.interval
 	for i := range rules {
 		key := rules[i].String()
 		present[key] = true
@@ -364,9 +380,9 @@ func (a *announceState) sync(rules []net.IPNet, send func(net.IP) error) {
 		if target == nil {
 			continue
 		}
-		if err := send(target); err != nil {
+		if err := send(target); err != nil && time.Since(a.lastErr) >= 10*time.Second {
 			log.Printf("IPv6 NDP announcement for %s: %v", target, err)
-			continue
+			a.lastErr = now
 		}
 		a.last[key] = now
 	}

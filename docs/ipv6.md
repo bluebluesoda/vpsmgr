@@ -113,7 +113,8 @@ For each container:
   every address in a container's block it replies to an upstream neighbor
   solicitation with an advertisement sourced from the advertised global address
   (some providers reject a link-local source). The responder also **announces**
-  each block's primary address gratuitously — on `add`/boot and once a minute —
+  each block's primary address gratuitously — when a block appears (add/boot)
+  and, if `net.ipv6_announce_minutes` is set, on that period —
   so an upstream that holds a stale or wrong neighbour entry for a container
   recovers immediately instead of black-holing its off-link traffic. Kernel
   `proxy_ndp` is not used for prefixes — it only answers single addresses

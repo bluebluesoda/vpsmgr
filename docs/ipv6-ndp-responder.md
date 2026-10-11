@@ -89,8 +89,7 @@ address, so nothing on the host can be "pinned" to fix it.
 
 The responder therefore also **announces**. Whenever a block first appears it
 sends a gratuitous Neighbor Advertisement for the block's primary address
-(`network + 1` — the address the container sources its traffic from), and every
-block is re-announced once a minute:
+(`network + 1` — the address the container sources its traffic from):
 
 - the advertisement's **source is the advertised address**, its target
   link-layer option is the host `eth0` MAC, and the **Override** flag is set —
@@ -100,6 +99,17 @@ block is re-announced once a minute:
   is removed is forgotten, so re-adding it announces again;
 - a `/128` rule announces that address, a wider rule announces its first host
   address.
+
+That announce-on-appearance pass is the whole default: it is the least traffic
+that still repairs a stale upstream, and on a shared access link (many customers
+on one L2 domain) the periodic multicast would otherwise be paid by everyone.
+An operator who wants a shorter self-heal window can additionally refresh every
+block on a period with `net.ipv6_announce_minutes` — `0` means appearance only
+(the default), `N >= 1` also re-announces every block every N minutes. The value
+is read when the responder starts, so `vps install` (which restarts the unit)
+applies a change. A send that fails is logged (rate-limited) and the block is
+left for the next pass; there is deliberately no tight retry, so a broken send
+path cannot turn the once-a-second pass into a storm.
 
 Because the trigger is the same rule file the responder already re-reads while
 it runs, no new plumbing is needed: `vps add`, `vps ipv6-reapply` and the boot
@@ -263,10 +273,10 @@ routed prefix:
    `ip -6 route show table local` contains the /112.
 9. **Announcement on the wire** — on the external interface, `tcpdump -n icmp6`
    shows a gratuitous NA for each block's `network + 1` when a block is added
-   (and once a minute thereafter), sourced from the block address to `ff02::1`
-   with the Override bit set. On a host whose upstream holds a wrong neighbour
-   entry for a container, that first announcement must repair reachability with
-   no manual step.
+   (and, when `net.ipv6_announce_minutes` is set, again on that period), sourced
+   from the block address to `ff02::1` with the Override bit set. On a host
+   whose upstream holds a wrong neighbour entry for a container, that first
+   announcement must repair reachability with no manual step.
 
 ## References
 

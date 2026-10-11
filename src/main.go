@@ -621,8 +621,11 @@ func cmdIPv6Proxy() error {
 		return err
 	}
 	// n is the parent routed prefix; hand it to the responder as the only
-	// address space it may advertise into.
-	return ndp.Run("/etc/vpsmgr/ndppd.conf", c.Net.ExtIF, n)
+	// address space it may advertise into. The announce interval is read once
+	// here (0 = announce only when a block appears); changing it takes effect
+	// when this unit is restarted, which `vps install` does.
+	interval := time.Duration(c.Net.IPv6AnnounceMinutes) * time.Minute
+	return ndp.Run("/etc/vpsmgr/ndppd.conf", c.Net.ExtIF, n, interval)
 }
 
 // ensureVPSUser sets up the unprivileged 'vps' account the panel daemon runs

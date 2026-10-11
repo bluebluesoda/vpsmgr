@@ -50,6 +50,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.ipv6_pool` | operator | `vps config set` needs `--apply`; admin-panel changes apply immediately | pool-mode address list (bare global addresses or `/128`); editable via the admin panel's IPv6 Pool page |
 | `net.ipv6_extra_prefix` | operator | applied immediately (rewires host IPv6 + restarts the panel); admin-panel changes apply immediately too | optional extra prefix (prefix mode alongside /112, or IPv4-only none mode as standalone routed /64) that a container can be given a whole /64 out of, e.g. `2001:1c00:b1b:7f0::/60`; empty = feature off (the default, including on every upgrade). Accepted as-is — the /64 this host itself uses is never handed out |
 | `net.ipv6_pin_gateway` | operator | **applied immediately** (host IPv6 rewired; no panel restart) | pin the host's upstream link-local default gateway as a **permanent** neighbour, working around a provider router that answers neighbour solicitations unreliably (the host's default route otherwise drops to `INCOMPLETE` and every container loses IPv6 with it). **Off by default**: a permanent entry is never re-resolved, so a gateway that moves to another MAC is then missed |
+| `net.ipv6_announce_minutes` | operator | re-run `vps install` (restarts the responder) | how often, in **minutes**, the prefix-mode NDP responder re-announces each container block upstream as a gratuitous neighbour advertisement (which repairs a router whose neighbour cache is stale or wrong). `0` = announce only when a block first appears, at `add`/boot — the **default** and the least traffic; `N` ≥ `1` = also refresh every block every N minutes |
 | `incus.image` | operator | next `vps add` / reinstall | container image alias |
 | `incus.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `incus.pool` | **fixed at install** | — | storage pool (backend selected at install via `VPSMGR_STORAGE=zfs\|btrfs\|dir`) |
@@ -136,6 +137,12 @@ net:
                                # provider router that answers NDP unreliably. Off by
                                # default — a permanent entry is never re-resolved.
                                # See docs/ipv6.md
+  ipv6_announce_minutes: 0     # optional: re-announce every container's block to the
+                               # upstream link every N minutes (a gratuitous neighbour
+                               # advertisement for a router with a stale cache).
+                               # 0 = only when a block appears (default, least traffic)
+                               # Applied by `vps install` (restarts the responder).
+                               # See docs/ipv6-ndp-responder.md
 
 incus:
   image: "vpsmgr/debian-sshd"
@@ -350,6 +357,18 @@ goes away when the panel is uninstalled.
   gateway is unresolved. Turning the key off drops the permanent entry again.
   The trade-off is why the default is off: a permanent entry is never
   re-resolved, so a gateway that later moves to a different MAC is not picked up.
+- `net.ipv6_announce_minutes` is **optional and `0` by default**. The
+  prefix-mode NDP responder always sends one gratuitous neighbour advertisement
+  when a container block first appears (at `vps add`, at boot, on
+  `vps ipv6-reapply`), which is what repairs an upstream router that holds a
+  stale or wrong neighbour cache for a container address — without it such a
+  router keeps sending the container's replies to the wrong MAC, and the
+  container's off-link traffic (egress included) is black-holed until the router
+  re-probes on its own. A positive value additionally re-announces every block
+  on that period, trading periodic multicast on a shared access link for a
+  shorter self-heal window. The responder reads it once at start, so a change is
+  applied by `vps install` (which restarts it). See
+  [ipv6-ndp-responder.md](ipv6-ndp-responder.md).
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
   address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.

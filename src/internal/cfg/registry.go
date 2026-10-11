@@ -424,6 +424,18 @@ var Fields = []Field{
 			c.Net.IPv6PinGateway = b
 			return nil
 		}},
+	{"net.ipv6_announce_minutes", KindOperator, ApplyInstall,
+		"how often the IPv6 NDP responder re-announces each container's block to the upstream link (a gratuitous neighbour advertisement that repairs a router whose neighbour cache is stale or wrong), in minutes: 0 = only when a block appears at add/boot (default, least traffic); N >= 1 = also refresh every block every N minutes. Applied by `vps install`, which restarts the responder",
+		"0",
+		getStr(func(c *Config) string { return strconv.Itoa(c.Net.IPv6AnnounceMinutes) }),
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 {
+				return fmt.Errorf("net.ipv6_announce_minutes must be a non-negative integer (minutes; 0 = announce only when a block appears)")
+			}
+			c.Net.IPv6AnnounceMinutes = n
+			return nil
+		}},
 	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",
 		getStr(func(c *Config) string { return c.Incus.Image }),

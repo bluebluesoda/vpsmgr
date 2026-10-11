@@ -324,6 +324,14 @@ type NetCfg struct {
 	// permanent entry is never re-resolved, so a gateway that moves to another
 	// MAC afterwards is missed. Only for hosts that actually see the flapping.
 	IPv6PinGateway bool `yaml:"ipv6_pin_gateway,omitempty"`
+	// IPv6AnnounceMinutes is how often, in minutes, the prefix-mode NDP
+	// responder re-announces every container block to the upstream link. 0 — the
+	// default, and the state of every existing install — announces a block only
+	// when it first appears (at add/boot/reapply): the least traffic that still
+	// repairs an upstream whose neighbour cache is stale or wrong. A positive
+	// value additionally refreshes every block on that period, trading periodic
+	// multicast on a shared access link for a shorter self-heal window.
+	IPv6AnnounceMinutes int `yaml:"ipv6_announce_minutes,omitempty"`
 }
 
 // IPv6 mode values.

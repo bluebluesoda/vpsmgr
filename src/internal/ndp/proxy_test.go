@@ -237,11 +237,10 @@ func TestAnnounceTargetUsesBlockPrimary(t *testing.T) {
 }
 
 // A block is announced once when it appears — not on every pass — every block
-// is refreshed after announceInterval, and a removed block is forgotten so a
-// re-add announces it again. A failed send leaves the block unannounced so it
-// is retried rather than silently dropped.
+// is refreshed once the interval elapses, and a removed block is forgotten so a
+// re-add announces it again.
 func TestAnnounceStateSyncsNewBlocksAndRefreshes(t *testing.T) {
-	a := &announceState{last: map[string]time.Time{}, at: time.Now()}
+	a := &announceState{last: map[string]time.Time{}, interval: time.Minute, at: time.Now()}
 	var sent []string
 	send := func(ip net.IP) error {
 		sent = append(sent, ip.String())
@@ -267,7 +266,7 @@ func TestAnnounceStateSyncsNewBlocksAndRefreshes(t *testing.T) {
 		t.Fatalf("new-block pass sent %v, want [2001:db8:2::1]", sent)
 	}
 
-	a.at = time.Now().Add(-announceInterval - time.Second)
+	a.at = time.Now().Add(-2 * time.Minute)
 	sent = nil
 	a.sync(rules, send)
 	if len(sent) != 2 {
@@ -284,13 +283,44 @@ func TestAnnounceStateSyncsNewBlocksAndRefreshes(t *testing.T) {
 	if len(sent) != 1 || sent[0] != "2001:db8:2::1" {
 		t.Fatalf("re-add pass sent %v, want [2001:db8:2::1]", sent)
 	}
+}
 
-	failing := &announceState{last: map[string]time.Time{}, at: time.Now()}
+// interval == 0 keeps only the announce-on-appearance pass: an unchanged set is
+// announced exactly once however much time passes, which is the least traffic
+// that still lets an upstream with a stale cache recover.
+func TestAnnounceStateZeroIntervalAnnouncesOnlyOnChange(t *testing.T) {
+	a := &announceState{last: map[string]time.Time{}, interval: 0}
 	calls := 0
-	fail := func(net.IP) error { calls++; return errors.New("boom") }
-	failing.sync(rules[:1], fail)
-	failing.sync(rules[:1], fail)
+	send := func(net.IP) error { calls++; return nil }
+	rules := []net.IPNet{*mustCIDR(t, "2001:db8:1::/112")}
+
+	a.sync(rules, send)
+	a.at = time.Now().Add(-24 * time.Hour)
+	a.sync(rules, send)
+	if calls != 1 {
+		t.Fatalf("interval 0 announced %d times, want 1 (only on appearance)", calls)
+	}
+}
+
+// A failed send must not be retried on every pass: it is recorded like a
+// success and left for the next scheduled pass, so a broken send path cannot
+// turn the once-a-second sync into a storm.
+func TestAnnounceStateFailingSendIsNotRetriedEveryPass(t *testing.T) {
+	a := &announceState{last: map[string]time.Time{}, interval: time.Hour}
+	calls := 0
+	send := func(net.IP) error { calls++; return errors.New("boom") }
+	rules := []net.IPNet{*mustCIDR(t, "2001:db8:1::/112")}
+
+	for i := 0; i < 5; i++ {
+		a.sync(rules, send)
+	}
+	if calls != 1 {
+		t.Fatalf("failing send attempted %d times across 5 passes, want 1", calls)
+	}
+
+	a.at = time.Now().Add(-2 * time.Hour)
+	a.sync(rules, send)
 	if calls != 2 {
-		t.Fatalf("failed sends = %d, want 2 (block retried while unannounced)", calls)
+		t.Fatalf("failing send attempted %d times after the interval, want 2", calls)
 	}
 }
