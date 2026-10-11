@@ -114,7 +114,9 @@ For each container:
   solicitation with an advertisement sourced from the advertised global address
   (some providers reject a link-local source). The responder also **announces**
   each block's primary address gratuitously — when a block appears (add/boot)
-  and, if `net.ipv6_announce_minutes` is set, on that period —
+  and, if `net.ipv6_announce_minutes` is set, on that period — in both forms a
+  router may need (all-nodes multicast with Solicited clear, and unicast to the
+  upstream router with Solicited set)
   so an upstream that holds a stale or wrong neighbour entry for a container
   recovers immediately instead of black-holing its off-link traffic. Kernel
   `proxy_ndp` is not used for prefixes — it only answers single addresses

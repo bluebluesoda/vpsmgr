@@ -623,9 +623,62 @@ func cmdIPv6Proxy() error {
 	// n is the parent routed prefix; hand it to the responder as the only
 	// address space it may advertise into. The announce interval is read once
 	// here (0 = announce only when a block appears); changing it takes effect
-	// when this unit is restarted, which `vps install` does.
+	// when this unit is restarted, which `vps install` does. The upstream
+	// gateways let the responder address an advertisement at the routers
+	// directly, which is the only form some of them learn a new address from.
 	interval := time.Duration(c.Net.IPv6AnnounceMinutes) * time.Minute
-	return ndp.Run("/etc/vpsmgr/ndppd.conf", c.Net.ExtIF, n, interval)
+	return ndp.Run("/etc/vpsmgr/ndppd.conf", c.Net.ExtIF, n, interval, upstreamGateways(c.Net.ExtIF))
+}
+
+// upstreamGateways returns the host's IPv6 default-route nexthops together with
+// their link-layer addresses, for the NDP responder to announce new container
+// blocks to. A nexthop that is not resolved right now is skipped: an
+// advertisement can only be unicast to a known MAC (the same rule the
+// `neigh-pin` helper follows). A host with no default route yields nil, and the
+// responder then only sends the multicast form.
+func upstreamGateways(extIF string) []ndp.Gateway {
+	out, err := exec.Command("/sbin/ip", "-6", "route", "show", "default").Output()
+	if err != nil {
+		return nil
+	}
+	var gws []ndp.Gateway
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		for i, tok := range f {
+			if tok != "via" || i+1 >= len(f) {
+				continue
+			}
+			addr := net.ParseIP(f[i+1])
+			if addr == nil || addr.To4() != nil || seen[addr.String()] {
+				continue
+			}
+			seen[addr.String()] = true
+			if mac := neighbourMAC(extIF, f[i+1]); mac != nil {
+				gws = append(gws, ndp.Gateway{Addr: addr, MAC: mac})
+			}
+		}
+	}
+	return gws
+}
+
+// neighbourMAC returns the link-layer address of the neighbour entry for addr
+// on dev, or nil when there is no resolved entry.
+func neighbourMAC(dev, addr string) net.HardwareAddr {
+	out, err := exec.Command("/sbin/ip", "-6", "neigh", "show", "to", addr, "dev", dev).Output()
+	if err != nil {
+		return nil
+	}
+	f := strings.Fields(string(out))
+	for i, tok := range f {
+		if tok != "lladdr" || i+1 >= len(f) {
+			continue
+		}
+		if mac, err := net.ParseMAC(f[i+1]); err == nil && len(mac) == 6 {
+			return mac
+		}
+	}
+	return nil
 }
 
 // ensureVPSUser sets up the unprivileged 'vps' account the panel daemon runs

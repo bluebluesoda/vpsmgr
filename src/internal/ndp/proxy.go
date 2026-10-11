@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -37,7 +38,25 @@ const (
 	// whose cache points at the wrong MAC — the case that otherwise black-holes
 	// a container's off-link traffic until the router re-probes on its own.
 	naFlagsUnsolicited = uint32(0xa0000000)
+
+	// announceStaggerMax caps the delay between two blocks' announcements. It
+	// only applies when a refresh interval leaves room: with an interval set,
+	// the delay is derived from it so a full pass always finishes inside it
+	// (see announceState.staggerFor). The cap keeps a host with few containers
+	// from announcing them in an unnecessary burst.
+	announceStaggerMax = 200 * time.Millisecond
+
+	// announceStaggerMin floors the derived delay, so a pathological block
+	// count cannot turn the sender into a busy loop.
+	announceStaggerMin = time.Millisecond
 )
+
+// Gateway is one upstream router the responder announces new blocks to
+// directly (its address and link-layer address). See Run.
+type Gateway struct {
+	Addr net.IP
+	MAC  net.HardwareAddr
+}
 
 // Run listens for IPv6 Neighbor Solicitations on external and emits a
 // Neighbor Advertisement for targets covered by the CIDR rules in configPath.
@@ -48,16 +67,27 @@ const (
 // NDP spoofer for arbitrary external addresses.
 //
 // Besides answering, the responder also *announces*: a block that first appears
-// is sent a gratuitous advertisement immediately, and when announce > 0 every
-// block is re-announced at that interval. announce == 0 keeps only the
+// is sent an advertisement immediately, and when announce > 0 every block is
+// re-announced at that interval. announce == 0 keeps only the
 // announce-on-appearance behaviour (the least traffic that still lets an
-// upstream with a stale cache recover). A failed send is logged (rate-limited)
-// and the block is left for the next pass — there is no tight retry loop.
+// upstream with a stale cache recover). Each announcement goes out twice, in
+// both the forms routers are known to accept:
+//
+//   - the RFC 4861 unsolicited form — Solicited clear, multicast to the
+//     all-nodes group — which a conforming router learns from; and
+//   - a unicast copy to every Gateway with the Solicited flag *set*, which is
+//     what some provider routers require: they install a mapping only from an
+//     advertisement they read as the reply to a solicitation, so the standard
+//     multicast form alone leaves a new container unreachable until the router
+//     happens to re-probe (seconds to tens of seconds).
+//
+// A failed send is logged (rate-limited) and the block is left for the next
+// pass — there is no tight retry loop.
 //
 // The rules file is reread at most once per second while idle, and its mtime is
 // checked when an NS arrives. This makes an add/del take effect for that very
 // first solicitation without restarting this long-running process.
-func Run(configPath, external string, allowed *net.IPNet, announce time.Duration) error {
+func Run(configPath, external string, allowed *net.IPNet, announce time.Duration, gateways []Gateway) error {
 	iface, err := net.InterfaceByName(external)
 	if err != nil {
 		return fmt.Errorf("find external interface %s: %w", external, err)
@@ -88,6 +118,20 @@ func Run(configPath, external string, allowed *net.IPNet, announce time.Duration
 	var rulesAt time.Time
 	var rulesModTime time.Time
 	var lastRuleError time.Time
+	stop := make(chan struct{})
+	defer close(stop)
+	ann := newAnnouncer(func(target net.IP) error {
+		if err := sendUnsolicitedAdvertisement(fd, iface.Index, mac, target); err != nil {
+			return err
+		}
+		for _, g := range gateways {
+			if err := sendGatewayAdvertisement(fd, iface.Index, mac, target, g); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	go ann.run(stop)
 	announced := &announceState{last: map[string]time.Time{}, interval: announce}
 	packet := make([]byte, 4096)
 	for {
@@ -122,14 +166,15 @@ func Run(configPath, external string, allowed *net.IPNet, announce time.Duration
 				}
 			}
 			// Announcement pass, at most once a second: a block that just
-			// appeared is announced at once, and (when an interval is set) every
-			// block is refreshed on that period. This is what lets an upstream
-			// router whose neighbour cache for a container is stale or missing
-			// recover immediately, instead of black-holing the container's
-			// off-link traffic until its own slow neighbour probe succeeds.
-			announced.sync(rules, func(target net.IP) error {
-				return sendUnsolicitedAdvertisement(fd, iface.Index, mac, target)
-			})
+			// appeared is queued at once, and (when an interval is set) every
+			// block is re-queued on that period. The queue is drained by a
+			// separate goroutine, so a large backlog never blocks the receive
+			// loop, and the sends are staggered (see announceStagger). This is
+			// what lets an upstream router whose neighbour cache for a
+			// container is stale or missing recover immediately, instead of
+			// black-holing the container's off-link traffic until its own slow
+			// neighbour probe succeeds.
+			announced.sync(rules, ann.enqueue)
 		}
 
 		n, _, recvErr := unix.Recvfrom(fd, packet, 0)
@@ -258,6 +303,35 @@ func sendUnsolicitedAdvertisement(fd, ifindex int, sourceMAC [6]byte, target net
 	return sendFrame(fd, ifindex, frame, dstMAC)
 }
 
+// sendGatewayAdvertisement sends a unicast advertisement for target to one
+// upstream router, with the SOLICITED flag set (naFlags carries R+S+O).
+//
+// Some provider routers install a mapping only from an advertisement they read
+// as the reply to a solicitation, and only from one addressed to them: the
+// standard, Solicited-clear multicast of sendUnsolicitedAdvertisement is
+// ignored, and a newly created container's traffic is dropped until the router
+// re-probes on its own (seconds to tens of seconds). A copy in this form is
+// what those routers accept; a router that never needs it simply ignores an
+// advertisement for an address it did not ask about. A gateway whose MAC is not
+// resolved is skipped — there is nothing to address the frame to.
+func sendGatewayAdvertisement(fd, ifindex int, sourceMAC [6]byte, target net.IP, g Gateway) error {
+	if len(g.MAC) != 6 {
+		return nil
+	}
+	target16 := target.To16()
+	dst16 := g.Addr.To16()
+	if target16 == nil || dst16 == nil {
+		return nil
+	}
+	var dstMAC [6]byte
+	copy(dstMAC[:], g.MAC)
+	frame, err := buildNA(sourceMAC, target16, dst16, dstMAC, naFlags)
+	if err != nil {
+		return err
+	}
+	return sendFrame(fd, ifindex, frame, dstMAC)
+}
+
 func sendFrame(fd, ifindex int, frame []byte, dstMAC [6]byte) error {
 	addr := &unix.SockaddrLinklayer{Ifindex: ifindex, Halen: 6, Protocol: htons(etherTypeIPv6)}
 	copy(addr.Addr[:], dstMAC[:])
@@ -345,31 +419,32 @@ func buildNA(sourceMAC [6]byte, target16, dstIP16 net.IP, dstMAC [6]byte, flags 
 }
 
 // announceState records when each block was last announced. A block that first
-// appears is announced once immediately; when interval > 0 every block is also
-// re-announced once per interval (interval == 0 disables the periodic refresh,
-// leaving only the announce-on-appearance pass — the least traffic that still
-// lets an upstream with a stale cache recover).
+// appears is announced once; when interval > 0 every block is also re-announced
+// once per interval (interval == 0 disables the periodic refresh, leaving only
+// the announce-on-appearance pass — the least traffic that still lets an
+// upstream with a stale cache recover).
+//
+// sync only decides WHICH blocks to announce and hands each to enqueue; the
+// sending is done asynchronously (see announcer), so the receive loop is never
+// blocked and the traffic is staggered.
 type announceState struct {
 	last     map[string]time.Time
 	at       time.Time
 	interval time.Duration
-	// lastErr rate-limits the failure log so a persistently failing send (e.g.
-	// the interface is down) cannot flood the journal.
-	lastErr time.Time
 }
 
-// sync announces the primary address of every rule that is new since the last
-// pass, and (when interval > 0) re-announces every rule once the interval has
-// elapsed. send is injected so the decision logic is unit-testable without a
-// raw socket.
+// sync queues the primary address of every rule that is new since the last
+// pass, and (when interval > 0) of every rule once the interval has elapsed.
+// enqueue is injected so the decision logic is unit-testable without a socket.
 //
-// A failed send is recorded exactly like a successful one — it is logged (at
-// most once every 10s) and the block is left for the next scheduled pass, so a
-// broken path cannot produce a tight retry loop.
-func (a *announceState) sync(rules []net.IPNet, send func(net.IP) error) {
+// A block is recorded as dealt with whether or not its send later succeeds: a
+// failed send is only logged, and the block waits for its next scheduled pass,
+// so a broken path cannot produce a tight retry loop.
+func (a *announceState) sync(rules []net.IPNet, enqueue func(net.IP, time.Duration)) {
 	now := time.Now()
 	present := make(map[string]bool, len(rules))
 	refresh := a.interval > 0 && now.Sub(a.at) >= a.interval
+	delay := a.staggerFor(len(rules))
 	for i := range rules {
 		key := rules[i].String()
 		present[key] = true
@@ -380,10 +455,7 @@ func (a *announceState) sync(rules []net.IPNet, send func(net.IP) error) {
 		if target == nil {
 			continue
 		}
-		if err := send(target); err != nil && time.Since(a.lastErr) >= 10*time.Second {
-			log.Printf("IPv6 NDP announcement for %s: %v", target, err)
-			a.lastErr = now
-		}
+		enqueue(target, delay)
 		a.last[key] = now
 	}
 	if refresh {
@@ -394,6 +466,117 @@ func (a *announceState) sync(rules []net.IPNet, send func(net.IP) error) {
 	for key := range a.last {
 		if !present[key] {
 			delete(a.last, key)
+		}
+	}
+}
+
+// staggerFor returns the delay between two announcements of a pass that has to
+// send n blocks.
+//
+// With no periodic refresh (interval == 0) there is no deadline, only the wish
+// not to burst, so the cap is used. With one, the pass is kept to at most half
+// the interval even at the largest block count a host can have — every account
+// at the container ceiling, two blocks each — so a pass always finishes well
+// before the next one is due and can never accumulate into it. A host with the
+// shortest interval and the most blocks therefore drains in half of it, and a
+// host with few blocks is capped at the same small delay as ever.
+func (a *announceState) staggerFor(n int) time.Duration {
+	d := announceStaggerMax
+	if a.interval > 0 && n > 1 {
+		d = (a.interval / 2) / time.Duration(n)
+		if d > announceStaggerMax {
+			d = announceStaggerMax
+		}
+	}
+	if d < announceStaggerMin {
+		d = announceStaggerMin
+	}
+	return d
+}
+
+// queuedAnnouncement is one block waiting to be announced, together with the
+// delay the sender leaves before the next one (see announceState.staggerFor).
+type queuedAnnouncement struct {
+	target net.IP
+	delay  time.Duration
+}
+
+// announcer serialises block announcements onto a single goroutine: sync queues
+// a block and returns at once (the receive loop stays free to answer
+// solicitations), and the queue is drained with a per-block delay, so
+// announcing every block at boot or on a periodic refresh is a steady trickle
+// rather than a burst. The delay is carried by each item because it depends on
+// how many blocks the pass has to send. A target already queued is not queued
+// twice; a send that fails is logged (rate-limited) and dropped, never retried.
+type announcer struct {
+	send    func(net.IP) error
+	mu      sync.Mutex
+	pending map[string]queuedAnnouncement
+	wake    chan struct{}
+	// lastErr rate-limits the failure log so a persistently failing send (for
+	// instance the interface being down) cannot flood the journal.
+	lastErr time.Time
+}
+
+func newAnnouncer(send func(net.IP) error) *announcer {
+	return &announcer{
+		send:    send,
+		pending: map[string]queuedAnnouncement{},
+		wake:    make(chan struct{}, 1),
+	}
+}
+
+// enqueue schedules target for announcement with the given inter-block delay.
+// It never blocks. A target that is already queued keeps the tighter of the two
+// delays and is not queued again.
+func (a *announcer) enqueue(target net.IP, delay time.Duration) {
+	key := target.String()
+	a.mu.Lock()
+	if prev, ok := a.pending[key]; ok && prev.delay <= delay {
+		a.mu.Unlock()
+		return
+	}
+	a.pending[key] = queuedAnnouncement{target: target, delay: delay}
+	a.mu.Unlock()
+	select {
+	case a.wake <- struct{}{}:
+	default: // the drain loop is already awake
+	}
+}
+
+// pop takes one queued announcement, or reports false when the queue is empty.
+func (a *announcer) pop() (queuedAnnouncement, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for key, q := range a.pending {
+		delete(a.pending, key)
+		return q, true
+	}
+	return queuedAnnouncement{}, false
+}
+
+// run drains the queue until stop is closed.
+func (a *announcer) run(stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case <-a.wake:
+			for {
+				q, ok := a.pop()
+				if !ok {
+					break
+				}
+				if err := a.send(q.target); err != nil && time.Since(a.lastErr) >= 10*time.Second {
+					log.Printf("IPv6 NDP announcement for %s: %v", q.target, err)
+					a.lastErr = time.Now()
+				}
+				select {
+				case <-stop:
+					return
+				case <-time.After(q.delay):
+				}
+			}
 		}
 	}
 }

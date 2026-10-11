@@ -88,13 +88,26 @@ case above, but the stale entry is the upstream's, for the *container's*
 address, so nothing on the host can be "pinned" to fix it.
 
 The responder therefore also **announces**. Whenever a block first appears it
-sends a gratuitous Neighbor Advertisement for the block's primary address
-(`network + 1` — the address the container sources its traffic from):
+sends a Neighbor Advertisement for the block's primary address (`network + 1` —
+the address the container sources its traffic from), in **two forms**, because
+routers differ in what they accept:
 
-- the advertisement's **source is the advertised address**, its target
-  link-layer option is the host `eth0` MAC, and the **Override** flag is set —
-  so a router replaces even a *REACHABLE* entry it already holds, not just a
-  stale one;
+- the **RFC 4861 unsolicited form** — Solicited clear, multicast to the
+  all-nodes group — which a conforming router learns from; and
+- a **unicast copy to every upstream router** (the host's default-route
+  nexthops, with their MACs read when the responder starts) **with the Solicited
+  flag set**. Some provider routers install a mapping *only* from an
+  advertisement they read as the reply to a solicitation, and only when it is
+  addressed to them: the multicast form alone leaves a newly created
+  container's traffic dropped until the router re-probes on its own — measured
+  at ~6s to ~25s on such a host, and gone with the unicast form. A router that
+  does not need it ignores an advertisement for an address it did not ask about.
+
+Both forms share the rest of the shape: the advertisement's **source is the
+advertised address**, its target link-layer option is the host `eth0` MAC, and
+the **Override** flag is set — so a router replaces even a *REACHABLE* entry it
+already holds, not just a stale one. And:
+
 - a **new block is announced within the same second** it appears; a block that
   is removed is forgotten, so re-adding it announces again;
 - a `/128` rule announces that address, a wider rule announces its first host
@@ -107,9 +120,20 @@ An operator who wants a shorter self-heal window can additionally refresh every
 block on a period with `net.ipv6_announce_minutes` — `0` means appearance only
 (the default), `N >= 1` also re-announces every block every N minutes. The value
 is read when the responder starts, so `vps install` (which restarts the unit)
-applies a change. A send that fails is logged (rate-limited) and the block is
-left for the next pass; there is deliberately no tight retry, so a broken send
-path cannot turn the once-a-second pass into a storm.
+applies a change.
+
+Announcements are **queued, not sent inline**: a separate goroutine drains the
+queue with a delay between blocks, so the receive loop that answers
+solicitations is never blocked and a pass that has to announce every block (a
+boot, or a periodic refresh) is a steady trickle rather than a burst. The delay
+is **derived from the refresh interval** — the whole pass is kept to at most
+half of it even at the largest block count a host can have (every account at the
+container ceiling, two blocks each) — so a pass always finishes well before the
+next is due and can never accumulate into it. With the interval off there is no
+deadline and the delay is simply capped. A send that fails is logged
+(rate-limited) and the block is left for the next scheduled pass; there is
+deliberately no tight retry, so a broken send path cannot turn the once-a-second
+pass into a storm.
 
 Because the trigger is the same rule file the responder already re-reads while
 it runs, no new plumbing is needed: `vps add`, `vps ipv6-reapply` and the boot
@@ -272,11 +296,12 @@ routed prefix:
    `ip neigh` shows `fe80::1` pinned to the bridge MAC and
    `ip -6 route show table local` contains the /112.
 9. **Announcement on the wire** — on the external interface, `tcpdump -n icmp6`
-   shows a gratuitous NA for each block's `network + 1` when a block is added
-   (and, when `net.ipv6_announce_minutes` is set, again on that period), sourced
-   from the block address to `ff02::1` with the Override bit set. On a host
-   whose upstream holds a wrong neighbour entry for a container, that first
-   announcement must repair reachability with no manual step.
+   shows, for each block's `network + 1` when a block is added (and, when
+   `net.ipv6_announce_minutes` is set, again on that period), **both** an
+   all-nodes-multicast NA with Solicited clear and a unicast NA to the upstream
+   router with Solicited set (Override set in both). On a host whose upstream
+   holds a wrong neighbour entry for a container, that first announcement must
+   repair reachability with no manual step.
 
 ## References
 

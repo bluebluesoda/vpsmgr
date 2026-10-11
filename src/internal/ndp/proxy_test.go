@@ -3,7 +3,6 @@ package ndp
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -146,6 +145,22 @@ func TestSendAdvertisementUsesTargetAsSource(t *testing.T) {
 	}
 }
 
+// The two announcement forms differ exactly in the Solicited flag: the
+// multicast form clears it (RFC 4861 unsolicited), the per-router unicast form
+// sets it — some provider routers install a mapping only from an advertisement
+// carrying that flag, so the pair is what keeps both classes of router working.
+func TestAnnouncementFlagForms(t *testing.T) {
+	if naFlags&0x40000000 == 0 || naFlags&0x20000000 == 0 {
+		t.Fatal("naFlags (per-router unicast form) must set Solicited and Override")
+	}
+	if naFlagsUnsolicited&0x40000000 != 0 {
+		t.Fatal("naFlagsUnsolicited (multicast form) must clear Solicited")
+	}
+	if naFlagsUnsolicited&0x20000000 == 0 {
+		t.Fatal("naFlagsUnsolicited must set Override")
+	}
+}
+
 // A gratuitous advertisement must be a valid NA a router can act on: the
 // advertised address as the IPv6 source, the all-nodes group as destination,
 // Solicited clear, Override set (so even a REACHABLE-but-wrong cache entry is
@@ -242,9 +257,8 @@ func TestAnnounceTargetUsesBlockPrimary(t *testing.T) {
 func TestAnnounceStateSyncsNewBlocksAndRefreshes(t *testing.T) {
 	a := &announceState{last: map[string]time.Time{}, interval: time.Minute, at: time.Now()}
 	var sent []string
-	send := func(ip net.IP) error {
+	send := func(ip net.IP, _ time.Duration) {
 		sent = append(sent, ip.String())
-		return nil
 	}
 	rules := []net.IPNet{*mustCIDR(t, "2001:db8:1::/112")}
 
@@ -291,7 +305,7 @@ func TestAnnounceStateSyncsNewBlocksAndRefreshes(t *testing.T) {
 func TestAnnounceStateZeroIntervalAnnouncesOnlyOnChange(t *testing.T) {
 	a := &announceState{last: map[string]time.Time{}, interval: 0}
 	calls := 0
-	send := func(net.IP) error { calls++; return nil }
+	send := func(net.IP, time.Duration) { calls++ }
 	rules := []net.IPNet{*mustCIDR(t, "2001:db8:1::/112")}
 
 	a.sync(rules, send)
@@ -302,25 +316,62 @@ func TestAnnounceStateZeroIntervalAnnouncesOnlyOnChange(t *testing.T) {
 	}
 }
 
-// A failed send must not be retried on every pass: it is recorded like a
-// success and left for the next scheduled pass, so a broken send path cannot
-// turn the once-a-second sync into a storm.
-func TestAnnounceStateFailingSendIsNotRetriedEveryPass(t *testing.T) {
-	a := &announceState{last: map[string]time.Time{}, interval: time.Hour}
-	calls := 0
-	send := func(net.IP) error { calls++; return errors.New("boom") }
-	rules := []net.IPNet{*mustCIDR(t, "2001:db8:1::/112")}
+// The announcer delivers every queued block exactly once — a duplicate queued
+// before the first is drained collapses — and does it off the caller's
+// goroutine, so a large backlog never blocks the receive loop.
+func TestAnnouncerDeliversQueuedBlocksOnce(t *testing.T) {
+	got := make(chan string, 8)
+	a := newAnnouncer(func(ip net.IP) error {
+		got <- ip.String()
+		return nil
+	})
+	stop := make(chan struct{})
+	defer close(stop)
+	go a.run(stop)
 
-	for i := 0; i < 5; i++ {
-		a.sync(rules, send)
-	}
-	if calls != 1 {
-		t.Fatalf("failing send attempted %d times across 5 passes, want 1", calls)
-	}
+	a.enqueue(net.ParseIP("2001:db8:1::1"), 0)
+	a.enqueue(net.ParseIP("2001:db8:1::1"), 0) // collapses with the one above
+	a.enqueue(net.ParseIP("2001:db8:2::1"), 0)
 
-	a.at = time.Now().Add(-2 * time.Hour)
-	a.sync(rules, send)
-	if calls != 2 {
-		t.Fatalf("failing send attempted %d times after the interval, want 2", calls)
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case s := <-got:
+			seen[s] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("drained %d of 2 announcements: %v", i, seen)
+		}
+	}
+	if !seen["2001:db8:1::1"] || !seen["2001:db8:2::1"] {
+		t.Fatalf("announced %v, want both distinct targets", seen)
+	}
+	select {
+	case s := <-got:
+		t.Fatalf("extra announcement %s (a queued duplicate was not collapsed)", s)
+	case <-time.After(2 * announceStaggerMax):
+	}
+}
+
+// A pass must fit inside the refresh interval even at the largest block count a
+// host can have (every account at the container ceiling, two blocks each), so a
+// staggered pass can never run into the next one.
+func TestStaggerFitsInsideTheRefreshInterval(t *testing.T) {
+	a := &announceState{interval: time.Minute}
+	for _, n := range []int{1, 2, 100, 200, 400, 1000} {
+		d := a.staggerFor(n)
+		if d <= 0 {
+			t.Fatalf("n=%d: delay %v must be positive", n, d)
+		}
+		if pass := time.Duration(n) * d; pass > a.interval {
+			t.Errorf("n=%d: pass takes %v, longer than the %v interval", n, pass, a.interval)
+		}
+	}
+	if d := a.staggerFor(2); d > announceStaggerMax {
+		t.Errorf("few blocks: delay %v exceeds the cap %v", d, announceStaggerMax)
+	}
+	// With the periodic refresh off there is no deadline, only the cap.
+	off := &announceState{}
+	if d := off.staggerFor(400); d != announceStaggerMax {
+		t.Errorf("interval off: delay %v, want the cap %v", d, announceStaggerMax)
 	}
 }

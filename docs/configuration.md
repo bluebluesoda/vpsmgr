@@ -364,10 +364,16 @@ goes away when the panel is uninstalled.
   stale or wrong neighbour cache for a container address — without it such a
   router keeps sending the container's replies to the wrong MAC, and the
   container's off-link traffic (egress included) is black-holed until the router
-  re-probes on its own. A positive value additionally re-announces every block
-  on that period, trading periodic multicast on a shared access link for a
-  shorter self-heal window. The responder reads it once at start, so a change is
-  applied by `vps install` (which restarts it). See
+  re-probes on its own. It goes out in both the forms routers accept — all-nodes
+  multicast with Solicited clear, and a unicast copy to the upstream router with
+  Solicited set (some routers only learn from the latter). A positive value
+  additionally re-announces every block on that period, trading periodic
+  multicast on a shared access link for a shorter self-heal window. The
+  announcements are queued and sent from a separate goroutine, staggered by a
+  delay derived from the period, so a pass that has to announce every block
+  neither blocks the responder nor arrives as a burst, and always finishes well
+  inside the period. The responder reads the setting once at start, so a change
+  is applied by `vps install` (which restarts it). See
   [ipv6-ndp-responder.md](ipv6-ndp-responder.md).
 - Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
   the next `vps install`; it does not remove IPv6 already in place (bridge
