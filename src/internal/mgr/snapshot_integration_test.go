@@ -70,6 +70,10 @@ func TestSnapshotIntegrationIncus(t *testing.T) {
 	if err := m.SetSnapshotSchedule(name, true, 1); err != nil {
 		t.Fatal(err)
 	}
+	snaps, err := m.SnapshotList(name)
+	if err != nil || len(snaps) != 1 || !snaps[0].Automatic {
+		t.Fatal("enabling did not immediately create an automatic checkpoint")
+	}
 	if err := m.SnapshotCreate(name); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +82,7 @@ func TestSnapshotIntegrationIncus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	snaps, err := m.SnapshotList(name)
+	snaps, err = m.SnapshotList(name)
 	if err != nil || len(snaps) != 5 || fixedSnapshotCount(snaps) != 1 {
 		t.Fatalf("initial quota: count=%d, fixed=%d, error=%v", len(snaps), fixedSnapshotCount(snaps), err)
 	}
@@ -147,11 +151,15 @@ func TestSnapshotIntegrationIncus(t *testing.T) {
 	if err := m.SetSnapshotSchedule(name, true, 1); err != nil {
 		t.Fatal(err)
 	}
+	snaps, err = m.SnapshotList(name)
+	if err != nil || len(snaps) != 5 || fixedSnapshotCount(snaps) != 4 {
+		t.Fatal("re-enabling did not immediately fill the free position")
+	}
 	if err := m.SnapshotCreate(name); err == nil {
 		t.Fatal("manual create consumed the reserved automatic position")
 	}
 	if err := m.UpdateSnapshotLimit(name, 4); err == nil {
-		t.Fatal("quota reduction consumed the reservation before automatic creation")
+		t.Fatal("quota reduction went below the immediate checkpoint count")
 	}
 	fresh, err := d.GetUserByName(name)
 	if err != nil || fresh.SnapshotLimit != 5 {
@@ -382,13 +390,32 @@ func TestSnapshotIntegrationHTTP(t *testing.T) {
 	if err != nil || schedule == nil || !schedule.Enabled || schedule.IntervalHours != 1 {
 		t.Fatal("HTTPS enable did not persist the policy")
 	}
-	request("/snapshot-schedule", url.Values{"enabled": {"1"}, "hours": {"1.5"}})
+	snaps, err := m.SnapshotList(name)
+	if err != nil || len(snaps) != 1 || !snaps[0].Automatic || schedule.LastSuccessAt == 0 {
+		t.Fatal("HTTPS enable did not immediately create the first automatic checkpoint")
+	}
+	initialName := snaps[0].Name
+	request("/snapshot-schedule", url.Values{"enabled": {"1"}, "hours": {"1"}})
 	unchanged, _ := m.SnapshotSchedule(name)
-	if unchanged.IntervalHours != 1 || unchanged.NextRunAt != schedule.NextRunAt {
+	if unchanged.NextRunAt != schedule.NextRunAt {
+		t.Fatal("unchanged HTTPS interval postponed the schedule")
+	}
+	request("/snapshot-schedule", url.Values{"enabled": {"1"}, "hours": {"2"}})
+	schedule, err = m.SnapshotSchedule(name)
+	if err != nil || schedule.IntervalHours != 2 || schedule.NextRunAt < time.Now().Add(2*time.Hour-time.Minute).Unix() {
+		t.Fatal("HTTPS interval edit did not restart the countdown")
+	}
+	snaps, err = m.SnapshotList(name)
+	if err != nil || len(snaps) != 1 || snaps[0].Name != initialName {
+		t.Fatal("HTTPS interval saves created an extra checkpoint")
+	}
+	request("/snapshot-schedule", url.Values{"enabled": {"1"}, "hours": {"1.5"}})
+	unchanged, _ = m.SnapshotSchedule(name)
+	if unchanged.IntervalHours != 2 || unchanged.NextRunAt != schedule.NextRunAt {
 		t.Fatal("invalid HTTPS interval changed the policy")
 	}
 	if adminQuota != nil {
-		adminQuota(0, false) // Empty catalog still needs the enabled reservation.
+		adminQuota(0, false) // The immediate checkpoint and reservation block zero quota.
 		adminQuota(2, true)
 		adminQuota(1, true)
 	}
@@ -410,7 +437,11 @@ func TestSnapshotIntegrationHTTP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if schedule.LastSuccessAt > 0 {
+		snaps, err = m.SnapshotList(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if schedule.LastError == "" && len(snaps) == 1 && snaps[0].Automatic && snaps[0].Name != initialName {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -418,9 +449,9 @@ func TestSnapshotIntegrationHTTP(t *testing.T) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	snaps, err := m.SnapshotList(name)
-	if err != nil || len(snaps) != 1 || !snaps[0].Automatic {
-		t.Fatal("service scheduler did not create a classified automatic checkpoint")
+	snaps, err = m.SnapshotList(name)
+	if err != nil || len(snaps) != 1 || !snaps[0].Automatic || snaps[0].Name == initialName {
+		t.Fatal("service scheduler did not rotate the immediate automatic checkpoint")
 	}
 	cliQuota(0, false) // The actual automatic checkpoint also blocks reduction.
 	if adminQuota != nil {
@@ -462,5 +493,5 @@ func TestSnapshotIntegrationHTTP(t *testing.T) {
 		adminQuota(0, true)
 		adminQuota(1, true)
 	}
-	t.Log("verified deployed bilingual HTTPS user/admin UI, installed CLI quotas, reservation/count rejection, live scheduler, disable conversion and safe zero quota")
+	t.Log("verified deployed bilingual HTTPS user/admin UI, immediate first checkpoint, interval edits without creation, subsequent service rotation, CLI quotas, disable conversion and safe zero quota")
 }

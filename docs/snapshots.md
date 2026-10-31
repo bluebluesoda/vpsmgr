@@ -41,14 +41,19 @@ there is no time-zone or daylight-saving ambiguity. The technical maximum is
 2,562,047 hours (Go's duration limit).
 
 - Enabling requires at least one currently unused position in the account's quota.
-- The first attempt is N hours after enabling. Changing N starts a new countdown;
-  saving an unchanged policy does not postpone the existing countdown.
+- Enabling immediately attempts to create the first automatic checkpoint, then
+  subsequent attempts run every N hours. Changing N starts a new countdown
+  without creating an extra checkpoint; saving an unchanged policy does not
+  postpone the existing countdown.
 - The scheduler checks every 30 seconds and executes at most one automatic
   operation at a time. Long-running lifecycle operations may delay execution.
 - The deadline and automatic-snapshot intent are persisted before creation.
   Restarting `vps.service` retains policies and classification. Missed intervals
   are not replayed: an overdue policy gets one attempt, then waits N hours.
 - A failed or skipped attempt also waits N hours; there is no tight retry loop.
+  If the initial attempt fails, enabling returns an explicit error but the policy
+  remains enabled with its failure recorded and a retry scheduled. Existing
+  checkpoints are preserved.
 - Expired or non-ready accounts, an account quota of zero, a storage pool at
   least 90% full, and unreadable pool/snapshot information prevent creation.
   A normally stopped, ready container can still receive disk-only checkpoints.

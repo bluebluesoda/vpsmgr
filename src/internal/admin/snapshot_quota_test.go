@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -125,24 +126,59 @@ func TestOverviewSnapshotQuotaUI(t *testing.T) {
 	if len(data.Users) != 1 || data.Users[0].SnapshotLimit != 4 {
 		t.Fatalf("per-user view=%+v", data.Users)
 	}
-	for _, limit := range []int{0, 4} {
-		data.Users[0].SnapshotLimit = limit
-		html := srv.renderToString(t, "admin_overview.html", data)
-		for _, want := range []string{
-			`id="cfSnapshots"`, `id="quotaSnapshots"`, `placeholder="9"`,
-			`Blank = default 9; 0 = no new snapshots`,
-			`snapshot limit: ` + strconv.Itoa(limit),
-			`document.getElementById('quotaSnapshots').value = parseInt(snapshots)`,
-		} {
-			if !strings.Contains(html, want) {
-				t.Errorf("limit=%d missing %q", limit, want)
-			}
-		}
-		if got := strings.Count(html, `name="snapshot_limit"`); got != 3 {
-			t.Errorf("snapshot inputs=%d, want create/edit/batch", got)
-		}
-		if limit == 0 && !strings.Contains(html, "snapshot limit: 0 (no new snapshots)") {
-			t.Error("zero quota does not clearly disable new snapshots")
+	fields := regexp.MustCompile(`(?s)<div class="field[^"]*"><label>(?:快照配额|Snapshot limit)</label>(.*?)</div>`)
+	for _, lang := range []string{langEn, langZh} {
+		for _, limit := range []int{0, 4} {
+			t.Run(lang+"/"+strconv.Itoa(limit), func(t *testing.T) {
+				data.Lang = lang
+				data.Users[0].SnapshotLimit = limit
+				html := srv.renderToString(t, "admin_overview.html", data)
+				label, disabled := "snapshot limit: ", "no new snapshots"
+				if lang == langZh {
+					label, disabled = "快照配额: ", "禁止新建"
+				}
+				for _, want := range []string{
+					`id="cfSnapshots"`, `id="quotaSnapshots"`,
+					label + strconv.Itoa(limit),
+					`document.getElementById('quotaSnapshots').value = parseInt(snapshots)`,
+				} {
+					if !strings.Contains(html, want) {
+						t.Errorf("missing %q", want)
+					}
+				}
+				for _, removed := range []string{
+					"留空使用默认值", "Blank = default", "0 = 禁止新建快照", "0 = no new snapshots",
+					"不能低于已有快照和自动快照预留数量", "cannot be below existing snapshots and automatic reservation",
+				} {
+					if strings.Contains(html, removed) {
+						t.Errorf("obsolete snapshot helper remains: %q", removed)
+					}
+				}
+				matches := fields.FindAllStringSubmatch(html, -1)
+				if len(matches) != 3 {
+					t.Fatalf("snapshot fields=%d, want create/edit/batch", len(matches))
+				}
+				for _, field := range matches {
+					if strings.Contains(field[1], "<small") || strings.Count(field[1], "<input") != 1 {
+						t.Errorf("snapshot field should contain only its numeric input: %s", field[0])
+					}
+					for _, want := range []string{`name="snapshot_limit"`, `type="number"`, `min="0"`, `step="1"`} {
+						if !strings.Contains(field[1], want) {
+							t.Errorf("snapshot input lost %q: %s", want, field[1])
+						}
+					}
+					if strings.Contains(field[1], `id="quotaSnapshots"`) {
+						if !strings.Contains(field[1], " required") {
+							t.Error("quota edit input must remain required")
+						}
+					} else if !strings.Contains(field[1], `placeholder="9"`) || strings.Contains(field[1], " required") {
+						t.Error("create/batch inputs must remain optional with the configured default placeholder")
+					}
+				}
+				if limit == 0 && !strings.Contains(html, label+"0 ("+disabled+")") {
+					t.Error("zero quota does not clearly disable new snapshots")
+				}
+			})
 		}
 	}
 }

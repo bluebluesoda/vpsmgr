@@ -233,7 +233,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
-      <div class="field create-field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="cfSnapshots" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"><small>{{if eq .Lang "zh"}}留空使用默认值 {{.DefaultSnapshotLimit}}；0 = 禁止新建快照{{else}}Blank = default {{.DefaultSnapshotLimit}}; 0 = no new snapshots{{end}}</small></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="cfSnapshots" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}天数，0 = 无限期{{else}}days; 0 = permanent{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
@@ -432,7 +432,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="quotaBandwidth" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="quotaSnapshots" type="number" min="0" step="1" required><small>{{if eq .Lang "zh"}}0 = 禁止新建快照；不能低于已有快照和自动快照预留数量{{else}}0 = no new snapshots; cannot be below existing snapshots and automatic reservation{{end}}</small></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="quotaSnapshots" type="number" min="0" step="1" required></div>
       {{if .IPv6PoolMode}}
       <!-- Offered only for a container that has no pool address: an address,
            once given to a customer, is theirs until the account is deleted. -->
@@ -565,7 +565,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" type="number" min="0" step="1" value="0"></div>
-        <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"><small>{{if eq .Lang "zh"}}留空使用默认值 {{.DefaultSnapshotLimit}}；0 = 禁止新建快照{{else}}Blank = default {{.DefaultSnapshotLimit}}; 0 = no new snapshots{{end}}</small></div>
+        <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"></div>
         <div class="field"><label>{{if eq .Lang "zh"}}有效期天数{{else}}Validity days{{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
       </div>
       {{if .ExtraConfigured}}

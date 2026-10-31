@@ -57,9 +57,9 @@ func (m *Manager) SnapshotSchedule(name string) (*db.SnapshotSchedule, error) {
 	return m.db.GetSnapshotSchedule(u.ID)
 }
 
-// SetSnapshotSchedule reserves one position for automatic checkpoints, without
-// removing or reclassifying existing fixed checkpoints. Disabling atomically
-// fixes all automatic checkpoints and does not need a working Incus connection.
+// SetSnapshotSchedule reserves a position and immediately creates the first
+// automatic checkpoint when enabling. Interval edits do not create another point.
+// Disabling atomically fixes automatic checkpoints without an Incus connection.
 func (m *Manager) SetSnapshotSchedule(name string, enabled bool, hours int) error {
 	unlock, err := m.lockOperations()
 	if err != nil {
@@ -107,7 +107,19 @@ func (m *Manager) SetSnapshotSchedule(name string, enabled bool, hours int) erro
 	if current != nil && current.Enabled && current.IntervalHours == hours {
 		return nil // Re-submitting an unchanged form must not postpone the task.
 	}
-	return m.db.SaveSnapshotSchedule(u.ID, true, hours, now.Add(interval).Unix())
+	if current != nil && current.Enabled {
+		return m.db.SaveSnapshotSchedule(u.ID, true, hours, now.Add(interval).Unix())
+	}
+	// Persist a due policy before creating its first point, under the same
+	// lifecycle lock. A crash leaves a runnable policy, and the scheduler records
+	// intent/deadline before Incus. Failed attempts remain enabled for retry.
+	if err := m.db.SaveSnapshotSchedule(u.ID, true, hours, now.Unix()); err != nil {
+		return err
+	}
+	if err := m.runScheduledSnapshotLocked(u.ID, now); err != nil {
+		return fmt.Errorf("automatic snapshots enabled, but the initial checkpoint failed: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) snapshotListLocked(u *db.User) ([]lx.SnapshotInfo, error) {
@@ -296,6 +308,10 @@ func (m *Manager) runScheduledSnapshot(userID int64, now time.Time) error {
 		return err
 	}
 	defer unlock()
+	return m.runScheduledSnapshotLocked(userID, now)
+}
+
+func (m *Manager) runScheduledSnapshotLocked(userID int64, now time.Time) error {
 	schedule, err := m.db.GetSnapshotSchedule(userID)
 	if err != nil || schedule == nil || !schedule.Enabled || schedule.NextRunAt > now.Unix() {
 		return err

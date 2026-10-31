@@ -97,8 +97,21 @@ a{color:var(--accent);text-decoration:none}
 #snapModal .btn:disabled{opacity:.5;cursor:not-allowed}
 .snap-schedule{border:1px solid var(--border);border-radius:8px;padding:.7rem;margin-bottom:.7rem}
 .snap-schedule h4{margin:0 0 .4rem;font-size:.9rem}
-.snap-schedule .btnrow{align-items:center}
-#snapHours{width:8rem;max-width:100%;padding:.35rem;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+.snap-schedule-controls{display:flex;align-items:center;flex-wrap:nowrap;gap:.45rem;min-width:0}
+#snapScheduleForm{display:flex;align-items:center;flex-wrap:nowrap;gap:.45rem;flex:1;min-width:0;margin:0}
+#snapScheduleDisableForm{flex:none;margin:0}
+.snap-schedule-controls label,.snap-schedule-controls .btn{white-space:nowrap;flex:none}
+#snapHours{width:4.5rem;min-width:3rem;max-width:8rem;flex:1 1 4.5rem;padding:.35rem;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+/* Keep both POST forms on one line even inside the 320px phone modal. */
+@media(max-width:420px){
+  #snapModal{padding:.5rem}
+  #snapModal .modal{padding-inline:.75rem}
+  #snapModal .snap-schedule{padding:.5rem}
+  .snap-schedule-controls,#snapScheduleForm{gap:.25rem}
+  .snap-schedule-controls label,.snap-schedule-controls .btn,#snapHours{font-size:.75rem}
+  .snap-schedule-controls .btn{padding:.35rem .3rem}
+  #snapHours{padding:.35rem .2rem}
+}
 .snap-history{margin-top:.6rem;overflow-wrap:anywhere;line-height:1.6}
 .snap-table .btn{margin:.15rem 0}
 @media(max-width:600px){
@@ -546,16 +559,18 @@ footer a{color:var(--muted);text-decoration:underline}
 {{if .SnapshotScheduleError}}<div class="err" role="alert">{{if eq .Lang "zh"}}无法读取自动服务设置。{{else}}Automatic schedule unavailable.{{end}} {{.SnapshotScheduleError}}</div>{{end}}
 <div class="snap-schedule">
 <h4>{{if eq .Lang "zh"}}自动检查点{{else}}Automatic checkpoints{{end}} — {{if .SnapshotScheduleError}}?{{else if and .SnapshotSchedule .SnapshotSchedule.Enabled}}{{if eq .Lang "zh"}}已启用{{else}}Enabled{{end}}{{else}}{{if eq .Lang "zh"}}已关闭{{else}}Disabled{{end}}{{end}}</h4>
-<p class="muted">{{if eq .Lang "zh"}}启用需至少一个空位，并为自动检查点保留一个名额。手动创建不挤掉自动检查点；自动轮换先创建再删除最旧的自动检查点，期间可能临时超出总额度一个。只有固定检查点可以分享。{{else}}Enabling requires a free position and reserves one position for automatic checkpoints. Manual creation never evicts automatic checkpoints. Rotation creates first, then deletes the oldest automatic checkpoint, so usage may briefly exceed the total by one. Only fixed checkpoints can be shared.{{end}}</p>
-<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleForm" class="btnrow">
+<p class="muted">{{if eq .Lang "zh"}}启用需至少一个空位，旧的自动检查点会自动删除。{{else}}Enabling needs a free slot; old automatic checkpoints are deleted automatically.{{end}}</p>
+<div class="snap-schedule-controls">
+<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleForm">
 <input type="hidden" name="enabled" value="1">
-<label for="snapHours">{{if eq .Lang "zh"}}每隔（小时）{{else}}Every (hours){{end}}</label>
+<label for="snapHours">{{if eq .Lang "zh"}}每隔(h){{else}}Every (h){{end}}</label>
 <input type="number" id="snapHours" name="hours" min="1" max="{{.SnapshotMaxHours}}" step="1" required value="{{.SnapshotIntervalHours}}" {{if not .SnapshotCanSchedule}}disabled{{end}}>
-<button class="btn accent" type="submit" id="snapScheduleSave" {{if not .SnapshotCanSchedule}}disabled{{end}}>{{if and .SnapshotSchedule .SnapshotSchedule.Enabled}}{{if eq .Lang "zh"}}保存间隔{{else}}Save interval{{end}}{{else}}{{if eq .Lang "zh"}}启用自动服务{{else}}Enable automatic checkpoints{{end}}{{end}}</button>
+<button class="btn accent" type="submit" id="snapScheduleSave" {{if not .SnapshotCanSchedule}}disabled{{end}}>{{if and .SnapshotSchedule .SnapshotSchedule.Enabled}}{{if eq .Lang "zh"}}保存间隔{{else}}Save{{end}}{{else}}{{if eq .Lang "zh"}}启用自动服务{{else}}Enable{{end}}{{end}}</button>
 </form>
 {{if or .SnapshotScheduleError (and .SnapshotSchedule .SnapshotSchedule.Enabled)}}
-<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleDisableForm"><input type="hidden" name="enabled" value="0"><button class="btn danger" type="submit" id="snapScheduleDisable" {{if .SnapshotReadOnly}}disabled{{end}}>{{if eq .Lang "zh"}}关闭自动服务{{else}}Disable automatic checkpoints{{end}}</button></form>
+<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleDisableForm"><input type="hidden" name="enabled" value="0"><button class="btn danger" type="submit" id="snapScheduleDisable" {{if .SnapshotReadOnly}}disabled{{end}}>{{if eq .Lang "zh"}}关闭自动服务{{else}}Disable{{end}}</button></form>
 {{end}}
+</div>
 <div class="muted snap-history">
 <div>{{if eq .Lang "zh"}}下次运行{{else}}Next run{{end}}: {{if .SnapshotNextRun}}<span class="schedule-ts" data-ts="{{.SnapshotNextRun}}">{{.SnapshotNextRun}}</span>{{else}}—{{end}}</div>
 <div>{{if eq .Lang "zh"}}最后尝试{{else}}Last attempt{{end}}: {{if .SnapshotLastRun}}<span class="schedule-ts" data-ts="{{.SnapshotLastRun}}">{{.SnapshotLastRun}}</span>{{else}}—{{end}}</div>

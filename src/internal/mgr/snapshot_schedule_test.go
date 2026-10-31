@@ -240,17 +240,27 @@ func TestSnapshotScheduleEnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	schedule, _ := m.SnapshotSchedule(u.Name)
-	if schedule.NextRunAt < before || schedule.IntervalHours != 2 || !schedule.Enabled {
+	if schedule.NextRunAt < before || schedule.IntervalHours != 2 || !schedule.Enabled || schedule.LastSuccessAt == 0 {
 		t.Fatalf("bad schedule: %+v", schedule)
+	}
+	if len(f.snaps) != 1 || len(f.calls) != 1 || !strings.HasPrefix(f.calls[0], "create:auto-") {
+		t.Fatalf("enabling did not immediately create one automatic point: %v", f.calls)
+	}
+	initial, err := m.SnapshotList(u.Name)
+	if err != nil || len(initial) != 1 || !initial[0].Automatic {
+		t.Fatalf("initial checkpoint is not automatic: %v %v", initial, err)
+	}
+	if err := m.RunScheduledSnapshots(time.Now()); err != nil || len(f.calls) != 1 {
+		t.Fatalf("scheduler repeated the initial checkpoint before the interval: %v", err)
 	}
 	if err := m.SetSnapshotSchedule(u.Name, true, 2); err != nil {
 		t.Fatal(err)
 	}
 	unchanged, _ := m.SnapshotSchedule(u.Name)
-	if schedule.NextRunAt != unchanged.NextRunAt {
-		t.Fatal("unchanged settings postponed the task")
+	if schedule.NextRunAt != unchanged.NextRunAt || len(f.calls) != 1 {
+		t.Fatal("unchanged settings postponed the task or created another checkpoint")
 	}
-	seedCheckpoints(t, m, u, f, 1, 4)
+	seedCheckpoints(t, m, u, f, 1, 3)
 	if err := m.SetSnapshotSchedule(u.Name, true, 3); err != nil {
 		t.Fatalf("editing an enabled full schedule: %v", err)
 	}
@@ -263,8 +273,8 @@ func TestSnapshotScheduleEnableDisable(t *testing.T) {
 	if err != nil || fixedSnapshotCount(snaps) != 5 {
 		t.Fatalf("disable did not fix all checkpoints: %v %v", snaps, err)
 	}
-	if len(f.calls) != 0 {
-		t.Fatalf("disable modified disk checkpoints: %v", f.calls)
+	if len(f.calls) != 1 {
+		t.Fatalf("interval edit or disable modified disk checkpoints: %v", f.calls)
 	}
 	if err := m.SetSnapshotSchedule(u.Name, true, 1); err == nil {
 		t.Fatal("enabled automatic snapshots without a free position")
@@ -274,6 +284,77 @@ func TestSnapshotScheduleEnableDisable(t *testing.T) {
 	}
 	if err := m.SetSnapshotSchedule(u.Name, true, 1); err != nil {
 		t.Fatal(err)
+	}
+	snaps, err = m.SnapshotList(u.Name)
+	if err != nil || len(snaps) != 5 || fixedSnapshotCount(snaps) != 4 {
+		t.Fatalf("re-enabling did not immediately use the free position: %v %v", snaps, err)
+	}
+}
+
+func TestSnapshotScheduleInitialFailure(t *testing.T) {
+	for _, failure := range []string{"create", "pool-full"} {
+		t.Run(failure, func(t *testing.T) {
+			m, u, f := newSnapshotManager(t, 2)
+			seedCheckpoints(t, m, u, f, 1, 0)
+			if err := m.SetSnapshotSchedule(u.Name, false, 0); err != nil {
+				t.Fatal(err)
+			}
+			before := append([]lx.SnapshotInfo(nil), f.snaps...)
+			f.createFail = failure == "create"
+			if failure == "pool-full" {
+				f.usage = 90
+			}
+			err := m.SetSnapshotSchedule(u.Name, true, 2)
+			if err == nil || !strings.Contains(err.Error(), "enabled, but the initial checkpoint failed") {
+				t.Fatalf("initial failure was not explained: %v", err)
+			}
+			schedule, err := m.SnapshotSchedule(u.Name)
+			if err != nil || schedule == nil || !schedule.Enabled || schedule.LastRunAt == 0 || schedule.LastSuccessAt != 0 || schedule.LastError == "" || schedule.NextRunAt != schedule.LastRunAt+7200 {
+				t.Fatalf("initial failure was not persisted for retry: %+v %v", schedule, err)
+			}
+			if !reflect.DeepEqual(f.snaps, before) {
+				t.Fatal("initial failure changed an existing recovery point")
+			}
+			calls := len(f.calls)
+			if err := m.RunScheduledSnapshots(time.Now()); err != nil || len(f.calls) != calls {
+				t.Fatalf("initial failure retried before the interval: %v", err)
+			}
+			f.createFail, f.usage = false, 10
+			if err := runSnapshotDue(t, m, u); err != nil {
+				t.Fatal(err)
+			}
+			schedule, _ = m.SnapshotSchedule(u.Name)
+			if len(f.snaps) != 2 || schedule.LastSuccessAt == 0 || schedule.LastError != "" {
+				t.Fatal("scheduled retry did not recover the first automatic checkpoint")
+			}
+		})
+	}
+}
+
+func TestSnapshotScheduleConcurrentEnableCreatesOnce(t *testing.T) {
+	m, u, f := newSnapshotManager(t, 2)
+	other := New(m.cfg, m.db)
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.entered, f.release = entered, release
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { first <- m.SetSnapshotSchedule(u.Name, true, 1) }()
+	<-entered
+	go func() { second <- other.SetSnapshotSchedule(u.Name, true, 1) }()
+	select {
+	case err := <-second:
+		close(release)
+		t.Fatalf("duplicate enable crossed the first creation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 || len(f.snaps) != 1 {
+		t.Fatalf("concurrent enable created duplicate checkpoints: %v", f.calls)
 	}
 }
 
