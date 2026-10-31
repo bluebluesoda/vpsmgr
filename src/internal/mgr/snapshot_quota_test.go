@@ -104,15 +104,15 @@ func TestCombinedSnapshotQuotaWithoutIncus(t *testing.T) {
 	}
 }
 
-func TestSnapshotDefaultDoesNotChangeExistingAccount(t *testing.T) {
+func TestSnapshotLegacyQuotaDoesNotChangeExistingAccount(t *testing.T) {
 	m, u, f := newSnapshotManager(t, 5)
 	seedCheckpoints(t, m, u, f, 1, 3)
-	m.cfg.Snapshots.Limit = 0
+	m.cfg.Snapshots.LegacyLimit = new(int)
 	if err := m.SnapshotCreate(u.Name); err != nil {
-		t.Fatalf("global default disabled existing account's manual creation: %v", err)
+		t.Fatalf("legacy migration quota disabled existing account's manual creation: %v", err)
 	}
 	if err := runSnapshotDue(t, m, u); err != nil {
-		t.Fatalf("global default disabled existing account's automatic task: %v", err)
+		t.Fatalf("legacy migration quota disabled existing account's automatic task: %v", err)
 	}
 	snaps, err := m.SnapshotList(u.Name)
 	if err != nil || len(snaps) != 5 || fixedSnapshotCount(snaps) != 2 {
@@ -120,7 +120,7 @@ func TestSnapshotDefaultDoesNotChangeExistingAccount(t *testing.T) {
 	}
 	restarted := New(m.cfg, m.db)
 	if err := runSnapshotDue(t, restarted, u); err != nil {
-		t.Fatalf("restart reapplied global default to existing account: %v", err)
+		t.Fatalf("restart reapplied legacy migration quota to existing account: %v", err)
 	}
 	fresh, _ := m.db.GetUserByName(u.Name)
 	if fresh.SnapshotLimit != 5 {

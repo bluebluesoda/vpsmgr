@@ -16,23 +16,30 @@ import (
 )
 
 type DB struct {
-	sql                  *sql.DB
-	path                 string
-	defaultSnapshotLimit int
+	sql  *sql.DB
+	path string
 }
 
-// Open opens a database with a default snapshot quota of one for new users and
-// users upgrading from a schema without per-user snapshot quotas.
+// DefaultSnapshotLimit is the built-in quota for new accounts. An explicit
+// per-user quota (including zero) overrides it; configuration never does.
+const DefaultSnapshotLimit = 1
+
+// Open opens a database, migrating legacy users with the built-in quota.
 func Open(path string) (*DB, error) {
-	return OpenWithSnapshotLimit(path, 1)
+	return OpenWithLegacySnapshotQuota(path, nil)
 }
 
-// OpenWithSnapshotLimit uses defaultSnapshotLimit for new users and, exactly
-// once during migration v22, for every existing user. Zero disables new
-// snapshots; negative defaults are rejected before accessing the database.
-func OpenWithSnapshotLimit(path string, defaultSnapshotLimit int) (*DB, error) {
-	if defaultSnapshotLimit < 0 {
-		return nil, fmt.Errorf("default snapshot limit must be nonnegative")
+// OpenWithLegacySnapshotQuota uses a retired YAML snapshots.limit value ONLY
+// to seed existing users during migration v22. Nil means the historical default
+// of one. It never changes new-account defaults or already-migrated quotas.
+// Negative legacy values are rejected before accessing the database.
+func OpenWithLegacySnapshotQuota(path string, legacyLimit *int) (*DB, error) {
+	migrationQuota := DefaultSnapshotLimit
+	if legacyLimit != nil {
+		migrationQuota = *legacyLimit
+	}
+	if migrationQuota < 0 {
+		return nil, fmt.Errorf("legacy snapshot quota must be nonnegative")
 	}
 	// Keep a stable file path for operation locks even if the caller changes cwd.
 	path, err := filepath.Abs(path)
@@ -60,8 +67,8 @@ func OpenWithSnapshotLimit(path string, defaultSnapshotLimit int) (*DB, error) {
 		return nil, err
 	}
 	s.SetMaxOpenConns(1)
-	d := &DB{sql: s, path: path, defaultSnapshotLimit: defaultSnapshotLimit}
-	if err := d.migrate(); err != nil {
+	d := &DB{sql: s, path: path}
+	if err := d.migrate(migrationQuota); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -450,7 +457,7 @@ const (
 	StatusFailed       = "failed"
 )
 
-func (d *DB) migrate() error {
+func (d *DB) migrate(legacySnapshotQuota int) error {
 	// Version 1 baseline: the original code created these tables directly (no
 	// migration tracking). Ensure they exist before checking the version table.
 	for _, s := range migrations[0].stmts {
@@ -504,7 +511,7 @@ func (d *DB) migrate() error {
 		if m.version == 22 {
 			// Inherit the actual old global quota exactly once. Keeping this
 			// update beside the ALTER and version marker makes retries atomic.
-			if _, err := tx.Exec(`UPDATE users SET snapshot_limit=?`, d.defaultSnapshotLimit); err != nil {
+			if _, err := tx.Exec(`UPDATE users SET snapshot_limit=?`, legacySnapshotQuota); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("migrate v22 seed snapshot limits: %w", err)
 			}

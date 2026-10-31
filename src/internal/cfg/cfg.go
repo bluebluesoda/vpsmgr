@@ -17,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"vpsmgr/internal/db"
 	"vpsmgr/internal/pw"
 )
 
@@ -135,6 +136,10 @@ type Config struct {
 	Net       NetCfg       `yaml:"net"`
 	Incus     IncusCfg     `yaml:"incus"`
 	Snapshots SnapshotsCfg `yaml:"snapshots"`
+
+	// Bind the migration source to the database named when loading, even if a
+	// subsequent config set changes panel.db before Save.
+	legacySnapshotDB string
 }
 
 type PanelCfg struct {
@@ -383,14 +388,12 @@ type IncusCfg struct {
 	SwapRatio float64 `yaml:"swap_ratio"`
 }
 
-// SnapshotsCfg controls new-account defaults and host-wide sharing.
+// SnapshotsCfg controls host-wide sharing. Quotas are per-user database state.
 type SnapshotsCfg struct {
-	// Limit is the default snapshot quota copied into new users (and inherited
-	// once by legacy users during migration). Later changes never alter existing
-	// user quotas. Zero gives new accounts no snapshot positions; the default
-	// of one provides a light disk-only safety net. Per-user quotas live in DB.
-	// Reinstall/delete removes checkpoints, not the account's stored quota.
-	Limit int `yaml:"limit"`
+	// LegacyLimit is read ONLY to seed pre-v22 existing-user quotas. It is not
+	// an operator setting or a new-account default, and is never serialized.
+	// Save migrates an existing database before discarding this source value.
+	LegacyLimit *int `yaml:"-"`
 	// Share enables snapshot sharing: a user may publish a checkpoint behind a
 	// random code and another user may install a container by cloning it.
 	// Default FALSE (both for new installs and upgrades): sharing hands another
@@ -401,12 +404,44 @@ type SnapshotsCfg struct {
 	Share bool `yaml:"share"`
 }
 
+// UnmarshalYAML accepts the retired snapshots.limit spelling for migration only.
+// A pointer preserves an explicit zero, distinct from the absent default of one.
+func (s *SnapshotsCfg) UnmarshalYAML(node *yaml.Node) error {
+	var legacy struct {
+		Limit yaml.Node `yaml:"limit"`
+		Share *bool     `yaml:"share"`
+	}
+	if err := node.Decode(&legacy); err != nil {
+		return err
+	}
+	s.LegacyLimit = nil
+	if legacy.Limit.Kind != 0 && legacy.Limit.Tag != "!!null" {
+		var limit int
+		// yaml.v3 normally truncates floats when decoding into int, including
+		// -0.5 into zero. Require an integer before decoding the migration seed.
+		if legacy.Limit.Tag != "!!int" {
+			return fmt.Errorf("legacy snapshots.limit must be a nonnegative integer")
+		}
+		if err := legacy.Limit.Decode(&limit); err != nil {
+			return err
+		}
+		if limit < 0 {
+			return fmt.Errorf("legacy snapshots.limit must be nonnegative")
+		}
+		s.LegacyLimit = &limit
+	}
+	if legacy.Share != nil {
+		s.Share = *legacy.Share
+	}
+	return nil
+}
+
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, Title: DefaultTitle, SessionDays: 3, ShowFooter: true, WebSSH: true, BandwidthResetDay: 1}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: V4Direct, Haproxy: true, UserPorts: DefaultUserPorts}
 	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket, SwapRatio: DefaultSwapRatio}
-	c.Snapshots = SnapshotsCfg{Limit: 1, Share: false}
+	c.Snapshots = SnapshotsCfg{Share: false}
 	return c
 }
 
@@ -612,6 +647,7 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, err
 	}
+	c.legacySnapshotDB = c.Panel.DB
 	// Legacy migration: a pre-user_ports config carries only slot_range. It
 	// must run here (not in FillAuto) because Default() pre-fills user_ports
 	// with the full range, making "unset" indistinguishable from "defaulted" —
@@ -650,12 +686,47 @@ func hasYAMLKey(b []byte, key string) bool {
 	return false
 }
 
+// Save retires the legacy snapshot quota only after safely migrating any
+// existing database. Every writer (install, CLI, admin) goes through here; doing
+// this only when opening the panel would lose the source on earlier config edits.
 func Save(c *Config) error {
+	if c.Snapshots.LegacyLimit != nil {
+		if *c.Snapshots.LegacyLimit < 0 {
+			return fmt.Errorf("legacy snapshots.limit must be nonnegative")
+		}
+		path := c.legacySnapshotDB
+		if path == "" {
+			path = c.Panel.DB
+		}
+		paths := []string{path}
+		if c.Panel.DB != path {
+			// A replacement may already contain legacy accounts too. Both the
+			// original and selected database must be safe before losing the seed.
+			paths = append(paths, c.Panel.DB)
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				d, err := db.OpenWithLegacySnapshotQuota(path, c.Snapshots.LegacyLimit)
+				if err != nil {
+					return fmt.Errorf("migrate legacy snapshot quota before saving config: %w", err)
+				}
+				if err := d.Close(); err != nil {
+					return fmt.Errorf("close database before saving config: %w", err)
+				}
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("stat database before saving config: %w", err)
+			}
+		}
+	}
 	p := Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(p, MustYAML(c), 0o600)
+	if err := os.WriteFile(p, MustYAML(c), 0o600); err != nil {
+		return err
+	}
+	c.Snapshots.LegacyLimit = nil
+	return nil
 }
 
 func MustYAML(c *Config) []byte {

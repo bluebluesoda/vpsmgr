@@ -1261,27 +1261,32 @@ func TestSnapshotRoutesRegistered(t *testing.T) {
 	}
 }
 
-// TestDefaultSnapshotLimitSemantics checks the default copied to new accounts.
-// Existing accounts use their persisted quota instead of this mutable default.
-func TestDefaultSnapshotLimitSemantics(t *testing.T) {
-	srv, _ := newTestServer(t)
-	if got := srv.mgr.DefaultSnapshotLimit(); got != 1 {
-		t.Fatalf("SnapshotLimit() = %d, want 1 (default)", got)
-	}
-	// A positive value is the hard cap.
-	srv.cfg.Snapshots.Limit = 5
-	if got := srv.mgr.DefaultSnapshotLimit(); got != 5 {
-		t.Fatalf("SnapshotLimit() with 5 = %d, want 5", got)
-	}
-	// 0 disables snapshots (no new snapshots, existing ones untouched).
-	srv.cfg.Snapshots.Limit = 0
-	if got := srv.mgr.DefaultSnapshotLimit(); got != 0 {
-		t.Fatalf("SnapshotLimit() with 0 = %d, want 0 (disabled)", got)
-	}
-	// A negative value (shouldn't pass config validation) is treated as disabled.
-	srv.cfg.Snapshots.Limit = -1
-	if got := srv.mgr.DefaultSnapshotLimit(); got != 0 {
-		t.Fatalf("SnapshotLimit() with -1 = %d, want 0 (disabled)", got)
+func TestSnapshotQuotaHasNoGlobalDefault(t *testing.T) {
+	for _, legacyLimit := range []int{0, 5} {
+		srv, d := newTestServer(t)
+		srv.cfg.Snapshots.LegacyLimit = &legacyLimit
+		u, err := d.CreateUser("alice", "unused", "192.0.2.2", 1, 30001, 10000, 10, 64, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.SnapshotLimit != 1 {
+			t.Fatalf("new quota=%d, want 1 regardless of legacy value %d", u.SnapshotLimit, legacyLimit)
+		}
+		data := srv.buildData(u, "", "")
+		if data.SnapshotLimit != 1 {
+			t.Fatalf("overview quota=%d, want the stored quota of 1", data.SnapshotLimit)
+		}
+		if err := d.UpdateSnapshotLimit(u.ID, 0); err != nil {
+			t.Fatal(err)
+		}
+		u, err = d.GetUserByName(u.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = srv.buildData(u, "", "")
+		if data.SnapshotLimit != 0 {
+			t.Fatalf("overview quota=%d, want explicitly disabled quota", data.SnapshotLimit)
+		}
 	}
 }
 

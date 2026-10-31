@@ -57,7 +57,6 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
-| `snapshots.limit` | operator | restart panel | default snapshot quota copied into newly created accounts (`0` = no snapshot positions); existing users retain their independent DB quotas. Fixed and automatic checkpoints share each user's quota. See [automatic checkpoints](snapshots.md) |
 | `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default**; CLI-only: `vps config set snapshots.share true`. Stored codes survive while it is off |
 
 ### Settings that are NOT in this file
@@ -69,10 +68,13 @@ off restores every capped container), and `vps install` never resets it.
 
 **Snapshot quotas** are independent per-account DB fields, set at creation or
 edited with the administrator's quota form / `vps quota USER --snapshots N`.
-Changing the YAML default never changes an existing account. A reduction cannot
-exceed the available headroom: it must accommodate every existing checkpoint
-and, if automatic checkpoints are enabled, at least one position beyond the
-fixed count. Quota edits never delete checkpoints or disable schedules.
+There is no global quota setting. Omitted creation quotas default to one, and the
+admin browser remembers the last creation quota locally, including zero. The
+retired `snapshots.limit` key is read only for a one-time legacy database upgrade;
+config saves remove it after safely migrating any existing database. A reduction
+must accommodate every existing checkpoint and, if automatic checkpoints are
+enabled, at least one position beyond the fixed count. Quota edits never delete
+checkpoints or disable schedules.
 
 **Automatic checkpoint schedules** are per-container user settings in the time
 machine dialog, stored in the database rather than YAML. They are disabled by
@@ -168,7 +170,6 @@ incus:
                                          # applied to all containers immediately on set
 
 snapshots:
-  limit: 1                                # new-account default; 0 = no positions
   share: false                            # allow checkpoint share codes (opt-in:
                                           # install from someone's checkpoint)
 ```

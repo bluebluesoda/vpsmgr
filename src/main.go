@@ -219,7 +219,7 @@ cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
 snapshots: nonnegative total snapshot quota; 0 disables new snapshots.
-           Omit on add to use snapshots.limit; omit on quota to preserve the user's limit.
+           Omit on add to use the built-in default of 1; omit on quota to preserve the user's limit.
 days:      quota validity in days (add: from now; quota: extend by); empty = permanent,
            use 'vps quota <name> --clear-expiry' to remove a deadline
 `)
@@ -230,7 +230,7 @@ func openDB() (*db.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	return db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	return db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 }
 
 // panelPath returns the secret panel path (e.g. "/Ab1_cdE-9x") or "" if none.
@@ -291,7 +291,7 @@ func cmdInstall() error {
 		return err
 	}
 	if _, err := os.Stat(c.Panel.DB); err != nil {
-		d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+		d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 		if err != nil {
 			return err
 		}
@@ -299,7 +299,7 @@ func cmdInstall() error {
 	}
 	// IPv6 pass-through: configure bridge + re-attach routes for existing
 	// containers (no-op when ipv6_subnet empty).
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -440,7 +440,7 @@ func cmdInstall() error {
 	// Enforce the IPv4 inbound policy and the independent HAProxy state.
 	// (v4_forward off = IPv6-only; net.haproxy off = domain proxy disabled.)
 	// Idempotent.
-	d2, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d2, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -496,7 +496,7 @@ func cmdIPv6Reapply() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -798,7 +798,7 @@ func cmdServe() error {
 	if err := c.ValidatePaths(); err != nil {
 		return fmt.Errorf("invalid panel paths: %w", err)
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1080,7 +1080,6 @@ func configSet(args []string) error {
 	}
 
 	old := cfg.FieldValue(c, key)
-	oldSnapshotLimit := c.Snapshots.Limit
 	if err := f.Assign(c, value); err != nil {
 		return err
 	}
@@ -1097,22 +1096,6 @@ func configSet(args []string) error {
 		}
 		if !ok {
 			return fmt.Errorf("aborted — %s left unchanged", key)
-		}
-	}
-	if key == "snapshots.limit" {
-		// Capture the old configured quota for legacy accounts before saving a
-		// new-account default, even with --no-apply. Do not create a fresh DB
-		// just because configuration is being edited before installation.
-		if _, err := os.Stat(c.Panel.DB); err == nil {
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, oldSnapshotLimit)
-			if err != nil {
-				return fmt.Errorf("migrate snapshot quotas before saving config: %w", err)
-			}
-			if err := d.Close(); err != nil {
-				return fmt.Errorf("close database before saving config: %w", err)
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat database before saving config: %w", err)
 		}
 	}
 	if err := cfg.Save(c); err != nil {
@@ -1179,7 +1162,7 @@ func configSet(args []string) error {
 		if key == "net.ipv6_pin_gateway" {
 			// Host-level neighbour plumbing only: rewire (the pin is applied by
 			// RewireAllIPv6), no panel restart needed.
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+			d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1197,7 +1180,7 @@ func configSet(args []string) error {
 			// then make the boot unit match, then restart the panel: it holds its
 			// config from startup, so without the restart the create form would
 			// keep showing the old extra-prefix state (no /64 checkbox).
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+			d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1216,7 +1199,7 @@ func configSet(args []string) error {
 			return nil
 		}
 		if key == "snapshots.share" {
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+			d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1233,7 +1216,7 @@ func configSet(args []string) error {
 			// needs the live config (the ratio just saved) plus the DB. It
 			// refreshes limits.memory.swap on every container from the new
 			// ratio — no restart needed (live update).
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+			d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 			if err != nil {
 				return fmt.Errorf("config saved, but swap refresh failed: %w", err)
 			}
@@ -1246,7 +1229,7 @@ func configSet(args []string) error {
 			return nil
 		}
 		if key == "net.haproxy" {
-			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+			d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying HAProxy state failed: %w", err)
 			}
@@ -1385,7 +1368,7 @@ func listenFree(addr string) bool {
 // applyV4State enforces the current net.v4_forward policy (firewall plus the
 // related HAProxy state).
 func applyV4State(c *cfg.Config) error {
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1408,7 +1391,7 @@ func cmdAdminPasswd() error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1537,7 +1520,7 @@ func userAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1556,7 +1539,7 @@ func userDel(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1636,7 +1619,7 @@ func userQuota(args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1757,7 +1740,7 @@ func userPasswd(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1776,7 +1759,7 @@ func userPower(action, name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1794,7 +1777,7 @@ func userList() error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}
@@ -1822,7 +1805,7 @@ func userShow(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return err
 	}

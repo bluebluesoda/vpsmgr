@@ -341,7 +341,7 @@ type AddOptions struct {
 	CPU    int
 	MemMB  int
 	DiskGB int
-	// SnapshotLimit overrides the new-account default. Nil uses configuration;
+	// SnapshotLimit overrides the fixed new-account default of one;
 	// a pointer to zero explicitly disables new snapshots for this account.
 	SnapshotLimit *int
 	AllowChild    bool
@@ -383,7 +383,7 @@ func (m *Manager) addLocked(name string, opt AddOptions) (*Result, error) {
 	if err := ValidateCPU(opt.CPU); err != nil {
 		return nil, err
 	}
-	snapshotLimit := m.DefaultSnapshotLimit()
+	snapshotLimit := db.DefaultSnapshotLimit
 	if opt.SnapshotLimit != nil {
 		snapshotLimit = *opt.SnapshotLimit
 	}
@@ -1286,15 +1286,6 @@ var validSnapName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 // ValidSnapName reports whether a snapshot name is safe to pass to the Incus
 // API. Exported for tests and the panel.
 func ValidSnapName(v string) bool { return validSnapName.MatchString(v) }
-
-// DefaultSnapshotLimit is copied into a new account unless explicitly overridden.
-// Existing users always use their stored quota, never this configuration default.
-func (m *Manager) DefaultSnapshotLimit() int {
-	if m.cfg.Snapshots.Limit < 0 {
-		return 0
-	}
-	return m.cfg.Snapshots.Limit
-}
 
 // snapName returns a fresh snapshot name like snap-20260820-153000-4f7a (UTC
 // second + 4 random hex chars, so concurrent creates in the same second never

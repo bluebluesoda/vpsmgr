@@ -39,7 +39,7 @@ func TestSnapshotIntegrationIncus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +98,8 @@ func TestSnapshotIntegrationIncus(t *testing.T) {
 	if err := m.UpdateSnapshotLimit(name, 5); err != nil {
 		t.Fatal(err)
 	}
-	// A changed new-account default must not stop an existing account's task.
-	c.Snapshots.Limit = 0
+	// Legacy migration metadata must not stop an existing account's task.
+	c.Snapshots.LegacyLimit = new(int)
 	var oldestAuto string
 	for _, s := range snaps {
 		if s.Automatic && (oldestAuto == "" || snapshotCreateTime(s).Before(snapshotTimeByName(snaps, oldestAuto))) {
@@ -250,7 +250,7 @@ func TestSnapshotIntegrationHTTP(t *testing.T) {
 	if c.Panel.URLPath == "" {
 		t.Fatal("requires an enabled user panel")
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		t.Fatal(err)
 	}

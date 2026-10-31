@@ -1,17 +1,18 @@
-package db
+package db_test
 
 import (
 	"fmt"
 	"testing"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/db"
 )
 
 // TestNextFreeIdxRandom verifies NextFreeIdx returns an unused index within
 // [1, cfg.MaxUsers] (never a used one), and that it differs from a guaranteed
 // free index when other slots are taken.
 func TestNextFreeIdxRandom(t *testing.T) {
-	d, err := Open(t.TempDir() + "/t.db")
+	d, err := db.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestNextFreeIdxRandom(t *testing.T) {
 // empty, persists across a set, and an empty value resets it. Also covers the
 // ListUsers scan path which reads the same column.
 func TestUserColorRoundTrip(t *testing.T) {
-	d, err := Open(t.TempDir() + "/t.db")
+	d, err := db.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestUserColorRoundTrip(t *testing.T) {
 	}
 }
 func TestNextFreeIdxExhausted(t *testing.T) {
-	d, err := Open(t.TempDir() + "/t.db")
+	d, err := db.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestNextFreeIdxExhausted(t *testing.T) {
 // values already assigned — the source of truth for the port-block allocator
 // (which is now independent of idx).
 func TestUsedStartPorts(t *testing.T) {
-	d, err := Open(t.TempDir() + "/t.db")
+	d, err := db.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestUsedStartPorts(t *testing.T) {
 // TestStartPortUnique verifies the v13 UNIQUE index on start_port refuses a
 // duplicate block even when idx differs (the port-block allocator's backstop).
 func TestStartPortUnique(t *testing.T) {
-	d, err := Open(t.TempDir() + "/t.db")
+	d, err := db.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
 	}

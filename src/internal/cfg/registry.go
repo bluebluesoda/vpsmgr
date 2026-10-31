@@ -475,18 +475,6 @@ var Fields = []Field{
 			c.Incus.SwapRatio = r
 			return nil
 		}},
-	{"snapshots.limit", KindOperator, ApplyRestart,
-		"default snapshot quota for new users (0 = no new snapshots); existing user quotas are unchanged",
-		"1",
-		getStr(func(c *Config) string { return strconv.Itoa(c.Snapshots.Limit) }),
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(strings.TrimSpace(v))
-			if err != nil || n < 0 {
-				return fmt.Errorf("snapshots.limit must be a non-negative integer")
-			}
-			c.Snapshots.Limit = n
-			return nil
-		}},
 	{"snapshots.share", KindOperator, ApplyImmediate,
 		"allow users to share a checkpoint behind a code and install a container from it (off by default; explicit opt-in); stored codes are kept when turned off",
 		"true or false",

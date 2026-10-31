@@ -9,10 +9,12 @@ import (
 	"testing"
 )
 
+func legacySnapshotQuota(limit int) *int { return &limit }
+
 func TestMigrateV22SnapshotLimits(t *testing.T) {
 	for _, version := range []int{20, 21} {
-		for _, limit := range []int{0, 7} {
-			t.Run(fmt.Sprintf("v%d/default%d", version, limit), func(t *testing.T) {
+		for _, limit := range []int{0, 5} {
+			t.Run(fmt.Sprintf("v%d/legacy%d", version, limit), func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "legacy.db")
 				d, err := Open(path)
 				if err != nil {
@@ -55,7 +57,7 @@ func TestMigrateV22SnapshotLimits(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				d, err = OpenWithSnapshotLimit(path, limit)
+				d, err = OpenWithLegacySnapshotQuota(path, &limit)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -76,8 +78,8 @@ func TestMigrateV22SnapshotLimits(t *testing.T) {
 				}
 
 				// Neither an inherited quota nor an explicitly edited quota may be
-				// reseeded when the configured creation default changes.
-				d, err = OpenWithSnapshotLimit(path, 9)
+				// reseeded when a different legacy migration source is supplied.
+				d, err = OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(9))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -90,8 +92,8 @@ func TestMigrateV22SnapshotLimits(t *testing.T) {
 				}
 				id := snapshotTestUser(t, d, 3)
 				u, err := d.GetUserByID(id)
-				if err != nil || u.SnapshotLimit != 9 {
-					t.Fatalf("new user = %+v, err=%v; want limit 9", u, err)
+				if err != nil || u.SnapshotLimit != 1 {
+					t.Fatalf("new user = %+v, err=%v; want fixed limit 1", u, err)
 				}
 				share, err := d.GetSnapshotShare(1)
 				if err != nil || share == nil || share.Snapshot != "fixed-point" || share.Code != "legacy-share" {
@@ -116,9 +118,12 @@ func TestMigrateV22SnapshotLimits(t *testing.T) {
 }
 
 func TestSnapshotLimitCreationAndScans(t *testing.T) {
-	for _, defaultLimit := range []int{0, 7} {
-		t.Run(fmt.Sprintf("default%d", defaultLimit), func(t *testing.T) {
-			d, err := OpenWithSnapshotLimit(filepath.Join(t.TempDir(), "users.db"), defaultLimit)
+	for _, tc := range []struct {
+		name  string
+		quota *int
+	}{{"absent", nil}, {"zero", legacySnapshotQuota(0)}, {"five", legacySnapshotQuota(5)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, err := OpenWithLegacySnapshotQuota(filepath.Join(t.TempDir(), "users.db"), tc.quota)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,7 +149,7 @@ func TestSnapshotLimitCreationAndScans(t *testing.T) {
 			if err != nil || len(listed) != len(users) {
 				t.Fatalf("ListUsers = %+v, err=%v", listed, err)
 			}
-			for i, want := range []int{defaultLimit, defaultLimit, 0, 4} {
+			for i, want := range []int{1, 1, 0, 4} {
 				u := users[i]
 				byID, err := d.GetUserByID(u.ID)
 				if err != nil {
@@ -162,7 +167,7 @@ func TestSnapshotLimitCreationAndScans(t *testing.T) {
 			}
 		})
 	}
-	// The compatibility wrapper retains its default of one.
+	// Opening without legacy migration metadata uses the fixed quota of one.
 	d := snapshotTestDB(t)
 	id := snapshotTestUser(t, d, 1)
 	u, err := d.GetUserByID(id)
@@ -253,7 +258,7 @@ func TestSnapshotLimitCreateUserFullRollback(t *testing.T) {
 
 func TestOpenNegativeSnapshotLimitDoesNotTouchDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "untouched.db")
-	if d, err := OpenWithSnapshotLimit(path, -1); err == nil || d != nil {
+	if d, err := OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(-1)); err == nil || d != nil {
 		t.Fatalf("negative default = %v, %v", d, err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -263,7 +268,7 @@ func TestOpenNegativeSnapshotLimitDoesNotTouchDatabase(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if d, err := OpenWithSnapshotLimit(path, -1); err == nil || d != nil {
+	if d, err := OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(-1)); err == nil || d != nil {
 		t.Fatalf("negative default on existing file = %v, %v", d, err)
 	}
 	got, err := os.ReadFile(path)
@@ -296,7 +301,7 @@ func TestMigrateV22SeedFailureRollsBack(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if d, err := OpenWithSnapshotLimit(path, 7); err == nil || d != nil || !strings.Contains(err.Error(), "injected seed failure") {
+	if d, err := OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(7)); err == nil || d != nil || !strings.Contains(err.Error(), "injected seed failure") {
 		t.Fatalf("failed migration = %v, %v", d, err)
 	}
 	raw, err := sql.Open("sqlite", "file:"+path)
@@ -314,7 +319,7 @@ func TestMigrateV22SeedFailureRollsBack(t *testing.T) {
 	if _, err := raw.Exec(`DROP TRIGGER fail_snapshot_seed`); err != nil {
 		t.Fatal(err)
 	}
-	d, err = OpenWithSnapshotLimit(path, 0)
+	d, err = OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +342,7 @@ func TestSnapshotLimitOpenRefusesNewerSchema(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if d, err := OpenWithSnapshotLimit(path, 7); err == nil || d != nil || !strings.Contains(err.Error(), "newer than this binary") {
+	if d, err := OpenWithLegacySnapshotQuota(path, legacySnapshotQuota(7)); err == nil || d != nil || !strings.Contains(err.Error(), "newer than this binary") {
 		t.Fatalf("future schema = %v, %v", d, err)
 	}
 }

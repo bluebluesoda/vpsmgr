@@ -122,7 +122,7 @@ func transferManager() (*cfg.Config, *mgr.Manager, func(), error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	d, err := db.OpenWithLegacySnapshotQuota(c.Panel.DB, c.Snapshots.LegacyLimit)
 	if err != nil {
 		return nil, nil, nil, err
 	}

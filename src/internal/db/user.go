@@ -57,7 +57,7 @@ type User struct {
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), SnapshotLimit: d.defaultSnapshotLimit}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), SnapshotLimit: DefaultSnapshotLimit}
 	r, err := d.sql.Exec(
 		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, snapshot_limit)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
@@ -82,12 +82,12 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 // for the same reason: a block that is routed to a container but not recorded
 // could be handed to a second one. expiresAt is the quota deadline (RFC3339
 // UTC, "" = permanent). snapshotLimit may contain one nonnegative quota (zero
-// disables new snapshots); omitting it uses the database's configured default.
+// disables new snapshots); omitting it uses the fixed built-in default of one.
 func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, ipv6ExtraBlock, expiresAt string, snapshotLimit ...int) (*User, error) {
 	if len(snapshotLimit) > 1 {
 		return nil, fmt.Errorf("expected at most one snapshot limit")
 	}
-	limit := d.defaultSnapshotLimit
+	limit := DefaultSnapshotLimit
 	if len(snapshotLimit) == 1 {
 		limit = snapshotLimit[0]
 	}

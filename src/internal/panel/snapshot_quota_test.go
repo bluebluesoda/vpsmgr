@@ -20,7 +20,8 @@ func TestOverviewUsesIndependentSnapshotQuota(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	srv.cfg.Snapshots.Limit = 0
+	legacyLimit := 0
+	srv.cfg.Snapshots.LegacyLimit = &legacyLimit
 	for _, tc := range []struct {
 		name  string
 		limit int
@@ -31,7 +32,7 @@ func TestOverviewUsesIndependentSnapshotQuota(t *testing.T) {
 		}
 		data := srv.buildData(u, "", "")
 		if data.SnapshotLimit != tc.limit || data.SnapshotFixedLimit != tc.limit {
-			t.Fatalf("%s saw quota %d/%d, want=%d; global default leaked into overview", tc.name, data.SnapshotLimit, data.SnapshotFixedLimit, tc.limit)
+			t.Fatalf("%s saw quota %d/%d, want=%d; legacy configuration leaked into overview", tc.name, data.SnapshotLimit, data.SnapshotFixedLimit, tc.limit)
 		}
 	}
 }

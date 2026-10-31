@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestParseSnapshotLimitFlag(t *testing.T) {
 		want      int
 		invalid   bool
 	}{
-		{"configured default", "", false, 0, false},
+		{"built-in default", "", false, 0, false},
 		{"omitted preserves quota", "12", false, 0, false},
 		{"explicit zero", "0", true, 0, false},
 		{"explicit limit", "7", true, 7, false},
@@ -112,93 +113,82 @@ func snapshotCLIConfig(t *testing.T) *cfg.Config {
 	return c
 }
 
-func TestConfigSnapshotDefaultMigratesLegacyQuotaFirst(t *testing.T) {
-	c := snapshotCLIConfig(t)
-	c.Snapshots.Limit = 7
-	if err := cfg.Save(c); err != nil {
-		t.Fatal(err)
-	}
-	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, 7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.CreateUser("alice", "h", "192.0.2.2", 1, 30001, 10000, 10, 1024, 10); err != nil {
-		d.Close()
-		t.Fatal(err)
-	}
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-	// Re-create the schema21 state before per-user quotas existed.
-	legacy, err := sql.Open("sqlite", c.Panel.DB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		`ALTER TABLE users DROP COLUMN snapshot_limit`,
-		`DELETE FROM schema_migrations WHERE version=22`,
-	} {
-		if _, err := legacy.Exec(statement); err != nil {
-			legacy.Close()
-			t.Fatal(err)
-		}
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := configSet([]string{"snapshots.limit", "0", "--no-apply"}); err != nil {
-		t.Fatal(err)
-	}
-	freshConfig, err := cfg.Load()
-	if err != nil || freshConfig.Snapshots.Limit != 0 {
-		t.Fatalf("configured default=%+v error=%v", freshConfig, err)
-	}
-	// Opening with the NEW default must not rewrite the pre-existing user.
-	d, err = db.OpenWithSnapshotLimit(c.Panel.DB, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	u, err := d.GetUserByName("alice")
-	if err != nil || u.SnapshotLimit != 7 {
-		t.Fatalf("legacy user=%+v error=%v; want quota 7", u, err)
-	}
-}
-
-func TestConfigSnapshotDefaultMissingOrBrokenDatabase(t *testing.T) {
-	for _, broken := range []bool{false, true} {
-		t.Run(map[bool]string{false: "missing", true: "broken"}[broken], func(t *testing.T) {
+func TestUnrelatedConfigEditMigratesLegacySnapshotQuotaFirst(t *testing.T) {
+	for _, limit := range []int{5, 0} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			c := snapshotCLIConfig(t)
-			c.Snapshots.Limit = 7
-			if err := cfg.Save(c); err != nil {
-				t.Fatal(err)
-			}
-			if broken {
-				if err := os.WriteFile(c.Panel.DB, []byte("not a sqlite database"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			err := configSet([]string{"snapshots.limit", "0", "--no-apply"})
-			if (err != nil) != broken {
-				t.Fatalf("broken=%v error=%v", broken, err)
-			}
-			fresh, err := cfg.Load()
+			d, err := db.Open(c.Panel.DB)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := 0
-			if broken {
-				want = 7
+			if _, err := d.CreateUser("alice", "h", "192.0.2.2", 1, 30001, 10000, 10, 1024, 10); err != nil {
+				t.Fatal(err)
 			}
-			if fresh.Snapshots.Limit != want {
-				t.Fatalf("default=%d want %d", fresh.Snapshots.Limit, want)
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
 			}
-			if !broken {
-				if _, err := os.Stat(c.Panel.DB); !os.IsNotExist(err) {
-					t.Fatalf("configuration edit created a database: %v", err)
+			// Re-create the schema21 state before per-user quotas existed.
+			legacy, err := sql.Open("sqlite", c.Panel.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, statement := range []string{
+				`ALTER TABLE users DROP COLUMN snapshot_limit`,
+				`DELETE FROM schema_migrations WHERE version=22`,
+			} {
+				if _, err := legacy.Exec(statement); err != nil {
+					legacy.Close()
+					t.Fatal(err)
 				}
 			}
+			if err := legacy.Close(); err != nil {
+				t.Fatal(err)
+			}
+			body := strings.Replace(string(cfg.MustYAML(c)), "snapshots:\n", fmt.Sprintf("snapshots:\n    limit: %d\n", limit), 1)
+			if err := os.WriteFile(cfg.Path(), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := configSet([]string{"panel.title", "Quota migration test", "--no-apply"}); err != nil {
+				t.Fatal(err)
+			}
+			freshConfig, err := cfg.Load()
+			if err != nil || freshConfig.Snapshots.LegacyLimit != nil {
+				t.Fatalf("legacy config source was not retired: %+v, %v", freshConfig, err)
+			}
+			d, err = openDB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			u, err := d.GetUserByName("alice")
+			if err != nil || u.SnapshotLimit != limit {
+				t.Fatalf("legacy user=%+v error=%v; want quota %d", u, err, limit)
+			}
+			u, err = d.CreateUser("bob", "h", "192.0.2.3", 2, 30002, 10100, 10, 1024, 10)
+			if err != nil || u.SnapshotLimit != 1 {
+				t.Fatalf("new user=%+v error=%v; want built-in quota 1", u, err)
+			}
 		})
+	}
+}
+
+func TestConfigSnapshotLimitRejected(t *testing.T) {
+	c := snapshotCLIConfig(t)
+	before, err := os.ReadFile(cfg.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []string{"0", "5", "-1"} {
+		if err := configSet([]string{"snapshots.limit", limit, "--no-apply"}); err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatalf("retired setting accepted: %v", err)
+		}
+	}
+	after, err := os.ReadFile(cfg.Path())
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("rejected setting changed config: %v", err)
+	}
+	if _, err := os.Stat(c.Panel.DB); !os.IsNotExist(err) {
+		t.Fatalf("rejected setting created database: %v", err)
 	}
 }
 
@@ -225,7 +215,12 @@ func TestSnapshotCLIUsageAndOutput(t *testing.T) {
 		return string(b)
 	}
 	help := capture(usage)
-	for _, want := range []string{"[--snapshots N]", "0 disables new snapshots", "use snapshots.limit", "preserve the user's limit"} {
+	for _, output := range []string{help, capture(func() { _ = configList() }), capture(configHelp)} {
+		if strings.Contains(output, "snapshots.limit") {
+			t.Errorf("retired setting leaked into CLI output: %s", output)
+		}
+	}
+	for _, want := range []string{"[--snapshots N]", "0 disables new snapshots", "built-in default of 1", "preserve the user's limit"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help missing %q", want)
 		}

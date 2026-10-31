@@ -109,11 +109,6 @@ func TestSnapshotQuotaFormValidation(t *testing.T) {
 
 func TestOverviewSnapshotQuotaUI(t *testing.T) {
 	srv, d := newTestServer(t)
-	srv.cfg.Snapshots.Limit = 9
-	// The manager has the same config pointer as the server.
-	if got := srv.buildPageData("", "").DefaultSnapshotLimit; got != 9 {
-		t.Fatalf("default=%d, want 9", got)
-	}
 	u, err := d.CreateUser("alice", "h", "192.0.2.2", 1, 30001, 10000, 10, 1024, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +116,7 @@ func TestOverviewSnapshotQuotaUI(t *testing.T) {
 	if err := d.UpdateSnapshotLimit(u.ID, 4); err != nil {
 		t.Fatal(err)
 	}
-	data := pageData{Lang: langEn, DefaultSnapshotLimit: 9, ShareEnabled: true}
+	data := pageData{Lang: langEn, ShareEnabled: true}
 	srv.loadUsers(&data)
 	if len(data.Users) != 1 || data.Users[0].SnapshotLimit != 4 {
 		t.Fatalf("per-user view=%+v", data.Users)
@@ -171,8 +166,8 @@ func TestOverviewSnapshotQuotaUI(t *testing.T) {
 						if !strings.Contains(field[1], " required") {
 							t.Error("quota edit input must remain required")
 						}
-					} else if !strings.Contains(field[1], `placeholder="9"`) || strings.Contains(field[1], " required") {
-						t.Error("create/batch inputs must remain optional with the configured default placeholder")
+					} else if !strings.Contains(field[1], `value="1" placeholder="1"`) || strings.Contains(field[1], " required") {
+						t.Error("create/batch inputs must remain optional with a built-in default of one")
 					}
 				}
 				if limit == 0 && !strings.Contains(html, label+"0 ("+disabled+")") {

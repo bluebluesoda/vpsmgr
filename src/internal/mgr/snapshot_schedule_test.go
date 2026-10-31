@@ -140,14 +140,13 @@ func newSnapshotManager(t *testing.T, limit int) (*Manager, *db.User, *snapshotD
 	c := cfg.Default()
 	c.Incus.Socket = filepath.Join(dir, "incus.sock")
 	c.Incus.Pool = "vpsmgr"
-	c.Snapshots.Limit = limit
 	c.Snapshots.Share = true
-	d, err := db.OpenWithSnapshotLimit(filepath.Join(dir, "test.db"), limit)
+	d, err := db.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	u, err := d.CreateUser("alice", "unused", "192.0.2.2", 1, 30001, 10000, 1, 64, 1)
+	u, err := d.CreateUserFull("alice", "unused", "192.0.2.2", 1, 30001, 10000, 1, 64, 1, 0, "", "", 0, "", "", limit)
 	if err != nil {
 		t.Fatal(err)
 	}

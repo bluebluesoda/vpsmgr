@@ -11,12 +11,15 @@ Every account has its own persisted snapshot quota. Administrators set it in
 the create/batch-create form or with `vps add USER --snapshots N`, and can edit it
 later in the quota form or with `vps quota USER --snapshots N`. Zero gives the
 account no snapshot positions; negative and fractional quotas are rejected.
-Omitting the creation value uses `snapshots.limit` from configuration. That
-value is only a default: changing it, including changing it to zero, never
-modifies an existing user's quota or automatic schedule. Reinstall preserves
-the account's quota. Transfer metadata carries an explicitly set quota,
-including zero; old transfer archives without it use the destination default.
-Snapshot history and automatic schedules themselves do not travel.
+Omitting the creation value uses the built-in default of one. There is no global
+quota configuration. The admin browser remembers the last creation quota in
+localStorage, including zero, and uses it for both single and batch creation.
+This is a per-browser convenience, not a shared setting; unavailable storage
+falls back to the normal form defaults. Editing an existing account does not
+change that creation preference. Reinstall preserves the account's quota.
+Transfer metadata carries an explicitly set quota, including zero; old transfer
+archives without it use the built-in default of one. Snapshot history and
+automatic schedules themselves do not travel.
 
 Quota reductions must satisfy both:
 
@@ -135,13 +138,22 @@ Both tables reference `users(id)` with `ON DELETE CASCADE`. Schema **21 -> 22**
 adds `users.snapshot_limit INTEGER NOT NULL DEFAULT 1 CHECK(snapshot_limit>=0)`.
 Inside that migration's transaction, all existing users inherit the actual
 configured pre-upgrade `snapshots.limit` value, including zero, exactly once.
-They are not all assigned the hardcoded default of one. Runtime database opens
-pass the loaded configuration to `db.OpenWithSnapshotLimit`; reopening later
-with another default never rewrites existing quotas. Share tables are unchanged.
-Changing `snapshots.limit` through the CLI first migrates an existing legacy
-database with the old configured default, before saving the new default, including
-with `--no-apply`. Editing YAML directly before the first upgrade instead makes
-the edited value the migration input, so preserve the old value until migration.
+They are not all assigned the hardcoded default of one. The retired
+`snapshots.limit` YAML key remains readable solely for this upgrade; it is absent
+from the configuration registry, CLI settings and newly serialized YAML.
+Runtime database opens pass the loaded legacy value to
+`db.OpenWithLegacySnapshotQuota`. That value never supplies a new account's quota,
+and reopening a version-22 database never rewrites stored quotas. Share tables
+are unchanged; retiring the configuration key requires no further schema change.
+
+Saving configuration first migrates any existing database with the loaded legacy
+quota before removing the old key, including when another setting is changed
+with `--no-apply`. If the database path is changed, both the original and any
+existing replacement database are migrated before retiring the source. If
+migration fails, saving fails without replacing the old configuration. A missing database is not created just to save configuration.
+Preserve the original YAML value until the first upgrade: manually removing or
+changing it beforehand loses that migration input. Once migrated, existing
+accounts depend only on their persisted quotas.
 
 The normal transactional migration runs on database open; when upgrading from
 version 20, all existing checkpoints remain fixed and no schedules are enabled.
@@ -154,8 +166,11 @@ Ordinary Go tests use temporary databases and a fake Incus Unix-socket server,
 covering quotas, conversion, disable/re-enable, deadlines, restart persistence,
 rotation ordering/failures, lifecycle eligibility, sharing/restore cleanup,
 per-account quota isolation, safe reductions and automatic reservation, catalog
-failures, combined quota rollback, migration defaults and creation/edit forms.
-They require neither root nor a live Incus daemon.
+failures, combined quota rollback, legacy quota migration and creation/edit forms.
+They require neither root nor a live Incus daemon. When Node.js is installed, an
+additional test executes the rendered preference JavaScript with a minimal DOM,
+covering save/reload, zero, batch creation, old/corrupt/blocked localStorage and
+isolation from existing-user quota edits; it needs no browser or npm packages.
 
 There is also an explicit, destructive-to-its-own-fixture integration test for a
 fully installed disposable host. Stop the previous panel first, back up its
@@ -172,8 +187,8 @@ checkpoint creation/rotation, independent quotas, safe reductions, promotion,
 disk restore and sharing, then removes the account. While the panel is stopped,
 it temporarily enables the shared snapshot-sharing mirror and restores its
 previous effective state afterwards; authorize this before running. It opens
-and migrates the configured database using the actual configured default for
-existing accounts; do not enable it on a production host.
+and migrates the configured database using any legacy quota solely for existing
+accounts; do not enable it on a production host.
 
 After deploying the new binary and starting `vps.service`, a second opt-in test
 connects to its real local HTTPS listener:

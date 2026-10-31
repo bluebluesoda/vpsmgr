@@ -1,12 +1,241 @@
 package cfg
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"vpsmgr/internal/db"
 )
+
+func TestSnapshotLegacyYAMLReadOnly(t *testing.T) {
+	for _, raw := range []string{"", "snapshots:\n  share: true\n", "snapshots:\n  limit: 5\n  share: true\n", "snapshots:\n  limit: 0\n  share: true\n"} {
+		t.Run(raw, func(t *testing.T) {
+			c := Default()
+			if err := yaml.Unmarshal([]byte(raw), c); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(raw, "limit:") {
+				want := 5
+				if strings.Contains(raw, "limit: 0") {
+					want = 0
+				}
+				if c.Snapshots.LegacyLimit == nil || *c.Snapshots.LegacyLimit != want {
+					t.Fatalf("legacy quota = %v, want %d", c.Snapshots.LegacyLimit, want)
+				}
+			} else if c.Snapshots.LegacyLimit != nil {
+				t.Fatal("missing legacy quota must remain absent")
+			}
+			if c.Snapshots.Share != strings.Contains(raw, "share: true") {
+				t.Fatal("sharing setting changed while decoding migration source")
+			}
+			out := MustYAML(c)
+			if strings.Contains(string(out), "limit:") || strings.Contains(string(out), "legacy") {
+				t.Fatalf("retired setting serialized as active config: %s", out)
+			}
+		})
+	}
+	for _, bad := range []string{"-1", "-0.5", "bad", "1.5", "999999999999999999999999"} {
+		if err := yaml.Unmarshal([]byte("snapshots:\n  limit: "+bad+"\n"), Default()); err == nil {
+			t.Errorf("invalid legacy quota %q accepted", bad)
+		}
+	}
+}
+
+// legacySnapshotConfig writes the old YAML spelling without calling Save, which
+// deliberately retires it. All paths and addresses are isolated test fixtures.
+func legacySnapshotConfig(t *testing.T, limit int) *Config {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("VPSMGR_CONFIG", filepath.Join(dir, "config.yaml"))
+	c := Default()
+	c.Net.ExtIF = "test0"
+	c.Panel.PublicIP = "192.0.2.1"
+	c.Panel.DisplayIP = "192.0.2.1"
+	c.Panel.DB = filepath.Join(dir, "panel.db")
+	body := strings.Replace(string(MustYAML(c)), "snapshots:\n", fmt.Sprintf("snapshots:\n    limit: %d\n", limit), 1)
+	if err := os.WriteFile(Path(), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestSaveMigratesLegacySnapshotQuotaBeforeRetiringSource(t *testing.T) {
+	for _, limit := range []int{5, 0} {
+		for _, destination := range []string{"original", "missing", "existing"} {
+			t.Run(fmt.Sprintf("quota%d/%s", limit, destination), func(t *testing.T) {
+				c := legacySnapshotConfig(t, limit)
+				originalDB := c.Panel.DB
+				d, err := db.Open(originalDB)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := d.CreateUser("alice", "hash", "192.0.2.2", 1, 30001, 10000, 1, 64, 1); err != nil {
+					t.Fatal(err)
+				}
+				if err := d.Close(); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := sql.Open("sqlite", originalDB)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, stmt := range []string{`ALTER TABLE users DROP COLUMN snapshot_limit`, `DELETE FROM schema_migrations WHERE version=22`} {
+					if _, err := raw.Exec(stmt); err != nil {
+						raw.Close()
+						t.Fatal(err)
+					}
+				}
+				if err := raw.Close(); err != nil {
+					t.Fatal(err)
+				}
+				c, err = Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Mirrors install's Load/Save and the admin settings writer. A DB
+				// path edit must preserve quotas in both source and existing target.
+				c.Panel.Title = "Snapshot migration test"
+				paths := []string{originalDB}
+				if destination != "original" {
+					c.Panel.DB = filepath.Join(t.TempDir(), "replacement.db")
+					if destination == "existing" {
+						// All fixture connections are closed, so this is a complete
+						// schema-21 copy without a live WAL to include.
+						body, err := os.ReadFile(originalDB)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(c.Panel.DB, body, 0o600); err != nil {
+							t.Fatal(err)
+						}
+						paths = append(paths, c.Panel.DB)
+					}
+				}
+				if err := Save(c); err != nil {
+					t.Fatal(err)
+				}
+				body, err := os.ReadFile(Path())
+				if err != nil || strings.Contains(string(body), "limit:") || c.Snapshots.LegacyLimit != nil {
+					t.Fatalf("legacy migration source not retired: %s, %v", body, err)
+				}
+				if destination == "missing" {
+					if _, err := os.Stat(c.Panel.DB); !os.IsNotExist(err) {
+						t.Fatalf("save created replacement database: %v", err)
+					}
+				}
+				for _, path := range paths {
+					d, err = db.Open(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer d.Close()
+					u, err := d.GetUserByName("alice")
+					if err != nil || u.SnapshotLimit != limit {
+						t.Fatalf("legacy user=%+v, err=%v; want quota %d", u, err, limit)
+					}
+					u, err = d.CreateUser("bob", "hash", "192.0.2.3", 2, 30002, 10100, 1, 64, 1)
+					if err != nil || u.SnapshotLimit != 1 {
+						t.Fatalf("new user=%+v, err=%v; want fixed quota 1", u, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSaveLegacySnapshotQuotaDoesNotReseedV22Users(t *testing.T) {
+	for _, legacyLimit := range []int{0, 5} {
+		t.Run(fmt.Sprint(legacyLimit), func(t *testing.T) {
+			c := legacySnapshotConfig(t, legacyLimit)
+			d, err := db.Open(c.Panel.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			u, err := d.CreateUserFull("alice", "hash", "192.0.2.2", 1, 30001, 10000, 1, 64, 1, 0, "", "", 0, "", "", 7)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err = Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Save(c); err != nil {
+				t.Fatal(err)
+			}
+			u, err = d.GetUserByID(u.ID)
+			if err != nil || u.SnapshotLimit != 7 {
+				t.Fatalf("Save reseeded migrated account from stale YAML: %+v, %v", u, err)
+			}
+		})
+	}
+}
+
+func TestSaveLegacySnapshotQuotaMissingOrBrokenDatabase(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprint(broken), func(t *testing.T) {
+			c := legacySnapshotConfig(t, 5)
+			before, err := os.ReadFile(Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if err := os.WriteFile(c.Panel.DB, []byte("not a sqlite database"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c, err = Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Panel.Title = "Unrelated edit"
+			err = Save(c)
+			if (err != nil) != broken {
+				t.Fatalf("broken=%t, save error=%v", broken, err)
+			}
+			after, err := os.ReadFile(Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if string(after) != string(before) || c.Snapshots.LegacyLimit == nil || *c.Snapshots.LegacyLimit != 5 {
+					t.Fatal("failed database migration discarded the original YAML/source")
+				}
+			} else if _, err := os.Stat(c.Panel.DB); !os.IsNotExist(err) {
+				t.Fatalf("save created a missing database: %v", err)
+			}
+		})
+	}
+}
+
+func TestNegativeLegacySnapshotQuotaDoesNotWrite(t *testing.T) {
+	c := legacySnapshotConfig(t, -1)
+	before, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("negative legacy YAML accepted")
+	}
+	negative := -1
+	c.Snapshots.LegacyLimit = &negative
+	if err := Save(c); err == nil {
+		t.Fatal("negative in-memory legacy quota accepted")
+	}
+	after, err := os.ReadFile(Path())
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("negative legacy quota changed config: %v", err)
+	}
+	if _, err := os.Stat(c.Panel.DB); !os.IsNotExist(err) {
+		t.Fatalf("negative legacy quota created database: %v", err)
+	}
+}
 
 func TestIPv6Network(t *testing.T) {
 	cases := []struct {

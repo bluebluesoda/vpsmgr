@@ -279,9 +279,10 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   inherits the group's existing color.
 - **Snapshots ("时光机" / time machine)**: each account has an independent
   snapshot quota in the database, set at creation and editable by the admin.
-  `snapshots.limit` supplies only the new-account default. Reductions cannot
-  fall below the existing count or consume an enabled schedule's reserved
-  position, and never delete history. Users can create / delete / restore
+  New accounts default to one position unless explicitly assigned another quota;
+  the admin browser remembers its last creation choice. There is no global quota
+  setting. Reductions cannot fall below the existing count or consume an enabled
+  schedule's reserved position, and never delete history. Users can create / delete / restore
   disk-only checkpoints (named `snap-<UTC>...`) from the panel. Users may opt in
   to an automatic checkpoint every N elapsed hours (N is a positive integer).
   Automatic and fixed checkpoints share the total cap; enabling reserves one

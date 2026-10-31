@@ -233,7 +233,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
-      <div class="field create-field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="cfSnapshots" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="cfSnapshots" type="number" min="0" step="1" value="1" placeholder="1"></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}天数，0 = 无限期{{else}}days; 0 = permanent{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
@@ -565,7 +565,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" type="number" min="0" step="1" value="0"></div>
-        <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"></div>
+        <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="batchSnapshots" type="number" min="0" step="1" value="1" placeholder="1"></div>
         <div class="field"><label>{{if eq .Lang "zh"}}有效期天数{{else}}Validity days{{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
       </div>
       {{if .ExtraConfigured}}
@@ -828,13 +828,14 @@ function del(name){
   if (pc) pc.addEventListener('input', function(){ syncCpuStep(pc); });
   renderPlans();
 })();
-// Create user: remember cpu/mem/disk in localStorage, show a busy state while
+// Create user: remember quotas in localStorage, show a busy state while
 // the container is being created (~30s) so the page does not look dead.
 // Usernames: uppercase input is folded to lowercase live; a hint line under
 // the field reports the naming rule and duplicate status before submit.
 (function(){
   var KEY = 'vpsmgr_admin_create';
   var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), bandwidth = document.getElementById('cfBandwidth'), days = document.getElementById('cfDays'), btn = document.getElementById('cfBtn');
+  var snapshots = document.getElementById('cfSnapshots'), batchSnapshots = document.getElementById('batchSnapshots');
   var nameIn = document.getElementById('cfName'), nameHint = document.getElementById('cfNameHint');
   var existing = { {{range .Users}}"{{.Name}}":1, {{end}}};
   var MSG = {{if eq .Lang "zh"}}{ok:'用户名可用', group:'将创建用户组：', groupAfter:'（已有 ', groupEnd:' 个账号，创建后 ', accounts:' 个）', dup:'该用户名已存在', invalid:'主用户必须以字母结尾；子用户格式为 主用户-数字，且不允许嵌套', hint:'自动转为小写'}{{else}}{ok:'Username available', group:'User group to create: ', groupAfter:' (', groupEnd:' accounts, ', accounts:' after creation)', dup:'Username already exists', invalid:'parent must end with a letter; child format is parent-number, nesting is not allowed', hint:'Folded to lowercase'}{{end}};
@@ -872,14 +873,25 @@ var child = low.match(/^([a-z][a-z0-9-]*[a-z])-([0-9]+)$/);
   if (nameIn) nameIn.addEventListener('input', nameStatus);
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; if (saved.days !== undefined && days) days.value = saved.days; }
+    if (saved) {
+      if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk;
+      if (saved.bandwidth !== undefined) bandwidth.value = saved.bandwidth; if (saved.days !== undefined && days) days.value = saved.days;
+      if ((typeof saved.snapshots === 'string' || typeof saved.snapshots === 'number') && /^[0-9]+$/.test(saved.snapshots)) snapshots.value = saved.snapshots;
+    }
     syncCpuStep(cpu);
   } catch (e) {}
-  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value, days: days ? days.value : 0})); } catch (e) {} }
+  if (batchSnapshots) batchSnapshots.value = snapshots.value;
+  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value, bandwidth: bandwidth.value, snapshots: snapshots.value, days: days ? days.value : 0})); } catch (e) {} }
   function onCpu(){ syncCpuStep(cpu); persist(); }
   cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist); bandwidth.addEventListener('input', persist); if (days) days.addEventListener('input', persist);
+  snapshots.addEventListener('input', function(){ if (batchSnapshots) batchSnapshots.value = snapshots.value; persist(); });
+  if (batchSnapshots) {
+    batchSnapshots.addEventListener('input', function(){ snapshots.value = batchSnapshots.value; persist(); });
+    document.getElementById('batchForm').addEventListener('submit', function(){ snapshots.value = batchSnapshots.value; persist(); });
+  }
   document.getElementById('createForm').addEventListener('submit', function(e){
     if (nameIn && !nameIn.checkValidity()) { e.preventDefault(); nameIn.reportValidity(); return; }
+    persist();
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
   });
 })();
