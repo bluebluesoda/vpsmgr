@@ -57,7 +57,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `incus.bridge` | **fixed at install** | — | managed bridge |
 | `incus.socket` | operator | restart panel | Incus daemon Unix socket |
 | `incus.swap_ratio` | operator | **applied immediately** | swap granted to each container as a multiple of its memory limit (`limits.memory.swap = limits.memory × ratio`); `0` disables container swap. Setting it re-applies the allowance to **all existing containers** (no restart) |
-| `snapshots.limit` | operator | restart panel | max checkpoints a user may keep per container (`0` = disable new snapshots). Restoring to an older checkpoint auto-deletes the ones created after it (see below) |
+| `snapshots.limit` | operator | restart panel | default snapshot quota copied into newly created accounts (`0` = no snapshot positions); existing users retain their independent DB quotas. Fixed and automatic checkpoints share each user's quota. See [automatic checkpoints](snapshots.md) |
 | `snapshots.share` | operator | **applied immediately** | allow users to share a checkpoint behind a code and install from it. **Off by default**; CLI-only: `vps config set snapshots.share true`. Stored codes survive while it is off |
 
 ### Settings that are NOT in this file
@@ -66,6 +66,18 @@ The **dynamic CPU limit rule** is edited on the admin overview and stored in the
 DB: it has no `config.yaml` key and no `vps config` key, because it is tuned
 repeatedly and must apply immediately. Saving applies it on the spot (turning it
 off restores every capped container), and `vps install` never resets it.
+
+**Snapshot quotas** are independent per-account DB fields, set at creation or
+edited with the administrator's quota form / `vps quota USER --snapshots N`.
+Changing the YAML default never changes an existing account. A reduction cannot
+exceed the available headroom: it must accommodate every existing checkpoint
+and, if automatic checkpoints are enabled, at least one position beyond the
+fixed count. Quota edits never delete checkpoints or disable schedules.
+
+**Automatic checkpoint schedules** are per-container user settings in the time
+machine dialog, stored in the database rather than YAML. They are disabled by
+default and are not reset by `vps install`. See [snapshots.md](snapshots.md) for
+intervals, fixed/automatic quotas and upgrade details.
 
 ### How "fixed at install" is enforced
 
@@ -156,7 +168,7 @@ incus:
                                          # applied to all containers immediately on set
 
 snapshots:
-  limit: 1                                # 0 disables new snapshots
+  limit: 1                                # new-account default; 0 = no positions
   share: false                            # allow checkpoint share codes (opt-in:
                                           # install from someone's checkpoint)
 ```

@@ -8,6 +8,7 @@ Technical documentation for vpsmgr. All docs are in English.
 | [configuration.md](configuration.md) | Full reference for `/etc/vpsmgr/config.yaml` |
 | [ipv6.md](ipv6.md) | IPv6 pass-through design: per-account blocks, prefix support, routing, installer flow |
 | [ipv6-ndp-responder.md](ipv6-ndp-responder.md) | Why prefix mode replaced ndppd with an in-tree NDP responder, design hardening, and what to test at scale |
+| [snapshots.md](snapshots.md) | Automatic and fixed checkpoints: scheduling, quotas, rotation, failure handling and schema migration |
 | [web-ssh.md](web-ssh.md) | The browser terminal: how it reaches a container, how a session survives a dropped connection, and how to disable it |
 | [development.md](development.md) | Building, testing, releasing, conventions |
 

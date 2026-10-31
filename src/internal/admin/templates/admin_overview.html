@@ -233,6 +233,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field create-field resource-field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="cfBandwidth" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field create-field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="cfSnapshots" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"><small>{{if eq .Lang "zh"}}留空使用默认值 {{.DefaultSnapshotLimit}}；0 = 禁止新建快照{{else}}Blank = default {{.DefaultSnapshotLimit}}; 0 = no new snapshots{{end}}</small></div>
       <div class="field create-field"><label>{{if eq .Lang "zh"}}有效期（天）{{else}}Validity (days){{end}}</label><input name="days" id="cfDays" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}天数，0 = 无限期{{else}}days; 0 = permanent{{end}}"></div>
       {{if .IPv6PoolMode}}
       <div class="field create-field ipv6-field"><label>{{if eq .Lang "zh"}}IPv6 地址{{else}}IPv6 address{{end}}</label>
@@ -281,7 +282,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td data-sort="{{.Name}}"><span class="urow">{{if and .Color (not .Expired)}}<span class="udot" style="background:{{.Color}}"></span>{{end}}<button type="button" class="uname"{{if and .Color (not .Expired)}} style="color:{{.Color}}"{{end}} onclick="pickColor('{{.Name}}')">{{.Name}}{{if .Expired}}(-{{.ExpiredDays}}d){{end}}</button></span></td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}{{if and (ne .Status "ready") (ne .Status "")}} <span class="pill down">{{.Status}}</span>{{end}}</td>
           <td>{{if $.DirectV4}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>{{if eq $.V4Policy "web-only"}}{{if eq $.Lang "zh"}}仅 80/443{{else}}80/443 only{{end}}{{else}}v4 off{{end}}</small>{{end}}</td>
-          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small><br><small>{{if eq $.Lang "zh"}}有效期{{else}}validity{{end}}: {{if .ExpiresAt}}{{.ExpiresShort}}{{else}}{{if eq $.Lang "zh"}}无限期{{else}}permanent{{end}}{{end}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .BandwidthGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.BandwidthGB}} GB{{end}}</small><br><small>{{if eq $.Lang "zh"}}快照配额{{else}}snapshot limit{{end}}: {{.SnapshotLimit}}{{if eq .SnapshotLimit 0}} ({{if eq $.Lang "zh"}}禁止新建{{else}}no new snapshots{{end}}){{end}}</small><br><small>{{if eq $.Lang "zh"}}有效期{{else}}validity{{end}}: {{if .ExpiresAt}}{{.ExpiresShort}}{{else}}{{if eq $.Lang "zh"}}无限期{{else}}permanent{{end}}{{end}}</small></td>
           <td data-sort="{{.CPUUse}}">{{.CPUUse}}</td>
           <td data-sort="{{.MemUse}}">{{.MemUse}}</td>
           <td data-sort="{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}">{{if eq .State "Running"}}{{.Procs}}{{else}}-{{end}}</td>
@@ -291,7 +292,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>
             <div class="ops">
               {{if .Expired}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',true)">{{if eq $.Lang "zh"}}延期{{else}}Extend{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.SnapshotLimit}}','{{.ExpiresAt}}',true)">{{if eq $.Lang "zh"}}延期{{else}}Extend{{end}}</button>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
               {{else}}
               {{if eq .State "Running"}}
@@ -300,7 +301,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
               {{else}}
               <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
               {{end}}
-              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.ExpiresAt}}',false,{{if .IPv6}}true{{else}}false{{end}},'{{.IPv6Extra}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}','{{.BandwidthGB}}','{{.SnapshotLimit}}','{{.ExpiresAt}}',false,{{if .IPv6}}true{{else}}false{{end}},'{{.IPv6Extra}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
               <form action="{{$.Prefix}}/login-as" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button class="primary neutral"{{if .Color}} style="--ubtn:{{.Color}};color:#fff"{{end}} title="{{if eq $.Lang "zh"}}以该用户身份登录用户面板{{else}}log in to this user's panel{{end}}">{{if eq $.Lang "zh"}}登录面板{{else}}Login{{end}}</button></form>
               <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
               <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
@@ -431,6 +432,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" id="quotaBandwidth" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" id="quotaSnapshots" type="number" min="0" step="1" required><small>{{if eq .Lang "zh"}}0 = 禁止新建快照；不能低于已有快照和自动快照预留数量{{else}}0 = no new snapshots; cannot be below existing snapshots and automatic reservation{{end}}</small></div>
       {{if .IPv6PoolMode}}
       <!-- Offered only for a container that has no pool address: an address,
            once given to a customer, is theirs until the account is deleted. -->
@@ -563,6 +565,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
         <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="bandwidth" type="number" min="0" step="1" value="0"></div>
+        <div class="field"><label>{{if eq .Lang "zh"}}快照配额{{else}}Snapshot limit{{end}}</label><input name="snapshot_limit" type="number" min="0" step="1" placeholder="{{.DefaultSnapshotLimit}}"><small>{{if eq .Lang "zh"}}留空使用默认值 {{.DefaultSnapshotLimit}}；0 = 禁止新建快照{{else}}Blank = default {{.DefaultSnapshotLimit}}; 0 = no new snapshots{{end}}</small></div>
         <div class="field"><label>{{if eq .Lang "zh"}}有效期天数{{else}}Validity days{{end}}</label><input name="days" type="number" min="0" step="1" value="0"></div>
       </div>
       {{if .ExtraConfigured}}
@@ -639,7 +642,7 @@ function copyModal(){
   if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
   else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
-function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6, extra64){
+function quota(name, cpu, mem, disk, bandwidth, snapshots, expires, expired, hasIpv6, extra64){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
   document.getElementById('quotaBwName').value = name;
@@ -648,11 +651,12 @@ function quota(name, cpu, mem, disk, bandwidth, expires, expired, hasIpv6, extra
   document.getElementById('quotaMem').value = parseInt(mem);
   document.getElementById('quotaDisk').value = parseInt(disk);
   document.getElementById('quotaBandwidth').value = parseInt(bandwidth || 0);
+  document.getElementById('quotaSnapshots').value = parseInt(snapshots);
   syncCpuStep(document.getElementById('quotaCpu'));
   // Expired accounts are locked to extend-or-delete: disable the quota fields
   // (and block the reset-traffic form) so only the extend form is usable.
   var lock = !!expired;
-  ['quotaCpu','quotaMem','quotaDisk','quotaBandwidth'].forEach(function(id){
+  ['quotaCpu','quotaMem','quotaDisk','quotaBandwidth','quotaSnapshots'].forEach(function(id){
     var el = document.getElementById(id); if(el) el.disabled = lock;
   });
   var save = document.getElementById('quotaSaveBtn'); if(save) save.disabled = lock;

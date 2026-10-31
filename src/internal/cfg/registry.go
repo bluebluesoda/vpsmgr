@@ -476,7 +476,7 @@ var Fields = []Field{
 			return nil
 		}},
 	{"snapshots.limit", KindOperator, ApplyRestart,
-		"max snapshots a user may keep per container (0 = disable snapshots)",
+		"default snapshot quota for new users (0 = no new snapshots); existing user quotas are unchanged",
 		"1",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Snapshots.Limit) }),
 		func(c *Config, v string) error {

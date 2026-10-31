@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,10 +16,29 @@ import (
 )
 
 type DB struct {
-	sql *sql.DB
+	sql                  *sql.DB
+	path                 string
+	defaultSnapshotLimit int
 }
 
+// Open opens a database with a default snapshot quota of one for new users and
+// users upgrading from a schema without per-user snapshot quotas.
 func Open(path string) (*DB, error) {
+	return OpenWithSnapshotLimit(path, 1)
+}
+
+// OpenWithSnapshotLimit uses defaultSnapshotLimit for new users and, exactly
+// once during migration v22, for every existing user. Zero disables new
+// snapshots; negative defaults are rejected before accessing the database.
+func OpenWithSnapshotLimit(path string, defaultSnapshotLimit int) (*DB, error) {
+	if defaultSnapshotLimit < 0 {
+		return nil, fmt.Errorf("default snapshot limit must be nonnegative")
+	}
+	// Keep a stable file path for operation locks even if the caller changes cwd.
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve db path: %w", err)
+	}
 	// The DB holds bcrypt hashes and session-token hashes, but permissions
 	// must still be explicit: a 0644 file (default umask) lets any local user
 	// read it. 0600 keeps it private to the owning (vps) user.
@@ -40,7 +60,7 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	s.SetMaxOpenConns(1)
-	d := &DB{sql: s}
+	d := &DB{sql: s, path: path, defaultSnapshotLimit: defaultSnapshotLimit}
 	if err := d.migrate(); err != nil {
 		s.Close()
 		return nil, err
@@ -58,7 +78,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // schemaVersion is the current schema version. Every migration in
 // migrations must be applied in order; Open refuses to start on a database
 // whose version is newer than this binary understands (downgrade protection).
-const schemaVersion = 20
+const schemaVersion = 22
 
 // migrations are applied in order, each inside its own transaction. v1 is the
 // original schema (baseline); later versions only add/alter, never drop.
@@ -343,6 +363,31 @@ var migrations = []struct {
 		`ALTER TABLE users ADD COLUMN ipv6_extra_block TEXT`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ipv6_extra_block ON users(ipv6_extra_block)`,
 	}},
+	// v21: opt-in snapshot schedules and durable automatic-snapshot intents.
+	// Existing snapshots have no metadata and therefore remain fixed snapshots.
+	{21, []string{
+		`CREATE TABLE snapshot_schedules(
+			user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+			interval_hours INTEGER NOT NULL CHECK(interval_hours >= 1),
+			next_run_at INTEGER NOT NULL,
+			last_run_at INTEGER NOT NULL DEFAULT 0,
+			last_success_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX snapshot_schedules_due ON snapshot_schedules(next_run_at, user_id) WHERE enabled=1`,
+		`CREATE TABLE automatic_snapshots(
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			snapshot TEXT NOT NULL,
+			PRIMARY KEY(user_id, snapshot)
+		) WITHOUT ROWID`,
+	}},
+	// v22: per-user snapshot quotas. The configured legacy global limit is
+	// seeded in migrate, in this same transaction, rather than using the
+	// column default for existing users.
+	{22, []string{
+		`ALTER TABLE users ADD COLUMN snapshot_limit INTEGER NOT NULL DEFAULT 1 CHECK(snapshot_limit>=0)`,
+	}},
 }
 
 // migrationSteps are the Go-side halves of a migration whose data cannot be
@@ -454,6 +499,14 @@ func (d *DB) migrate() error {
 			if err := step(tx); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("migrate v%d: %w", m.version, err)
+			}
+		}
+		if m.version == 22 {
+			// Inherit the actual old global quota exactly once. Keeping this
+			// update beside the ALTER and version marker makes retries atomic.
+			if _, err := tx.Exec(`UPDATE users SET snapshot_limit=?`, d.defaultSnapshotLimit); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migrate v22 seed snapshot limits: %w", err)
 			}
 		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES(?,?)`,

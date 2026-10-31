@@ -383,14 +383,13 @@ type IncusCfg struct {
 	SwapRatio float64 `yaml:"swap_ratio"`
 }
 
-// SnapshotsCfg controls per-container user snapshots.
+// SnapshotsCfg controls new-account defaults and host-wide sharing.
 type SnapshotsCfg struct {
-	// Limit caps how many snapshots a user may keep per container. The default
-	// of 1 gives a light safety net; a snapshot is disk-only (no memory) and
-	// lives under the container in Incus, so it is deleted together with the
-	// container on reinstall/delete. 0 disables snapshots: users cannot create
-	// new ones, but existing snapshots are left untouched. Negative is treated
-	// as 0 (the config validator rejects negatives anyway).
+	// Limit is the default snapshot quota copied into new users (and inherited
+	// once by legacy users during migration). Later changes never alter existing
+	// user quotas. Zero gives new accounts no snapshot positions; the default
+	// of one provides a light disk-only safety net. Per-user quotas live in DB.
+	// Reinstall/delete removes checkpoints, not the account's stored quota.
 	Limit int `yaml:"limit"`
 	// Share enables snapshot sharing: a user may publish a checkpoint behind a
 	// random code and another user may install a container by cloning it.
@@ -758,7 +757,7 @@ func (c *Config) FillAuto() error {
 // EnsurePaths generates both secret panel paths when NEITHER is configured.
 // This is the fresh-install case: a user panel without admin (or vice versa)
 // is a deliberate choice to disable one side, so it is respected. When both
-// are empty the whole panel service is off — only `vps install` calls this,
+// are empty neither HTTP entrance listens — only `vps install` calls this,
 // and only when creating a brand-new config.
 func (c *Config) EnsurePaths() {
 	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
@@ -857,8 +856,8 @@ func panelPortFree(p int) bool {
 
 // ValidatePaths checks the secret panel paths that are ENABLED (non-empty):
 // each must be at least 10 chars, and the two must not collide. An empty path
-// means that panel is intentionally disabled. When both are empty the whole
-// panel service is off (cmdServe does not listen).
+// means that HTTP entrance is disabled. When both are empty cmdServe does not
+// listen, but still runs saved automatic snapshot schedules.
 func (c *Config) ValidatePaths() error {
 	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
 		return nil

@@ -36,6 +36,16 @@ func rewindToV17(t *testing.T, rows map[string]string) string {
 	if _, err := d.sql.Exec(`ALTER TABLE users DROP COLUMN ipv6_extra_block`); err != nil {
 		t.Fatal(err)
 	}
+	// Un-apply v21's new tables before replaying later migrations.
+	for _, table := range []string{"automatic_snapshots", "snapshot_schedules"} {
+		if _, err := d.sql.Exec(`DROP TABLE ` + table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Un-apply v22's per-user snapshot quota column.
+	if _, err := d.sql.Exec(`ALTER TABLE users DROP COLUMN snapshot_limit`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.sql.Exec(`DELETE FROM settings WHERE key IN ('traefik','haproxy')`); err != nil {
 		t.Fatal(err)
 	}

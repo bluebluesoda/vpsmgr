@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -201,8 +202,8 @@ func usage() {
 	fmt.Print(`vps ` + ver.Version + `
 usage:
   vps list [name]                  all users, or one user's detail
-  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--days 30] [--extra64]
-  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--days 30] [--clear-expiry] [--extra64]
+  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--snapshots N] [--days 30] [--extra64]
+  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200] [--snapshots N] [--days 30] [--clear-expiry] [--extra64]
   vps power <name> start|stop|restart
   vps passwd <name>                reissue user panel password (shown once)
   vps admin-passwd                 reset admin panel password (shown once)
@@ -217,6 +218,8 @@ system:
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
+snapshots: nonnegative total snapshot quota; 0 disables new snapshots.
+           Omit on add to use snapshots.limit; omit on quota to preserve the user's limit.
 days:      quota validity in days (add: from now; quota: extend by); empty = permanent,
            use 'vps quota <name> --clear-expiry' to remove a deadline
 `)
@@ -227,7 +230,7 @@ func openDB() (*db.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	return db.Open(c.Panel.DB)
+	return db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 }
 
 // panelPath returns the secret panel path (e.g. "/Ab1_cdE-9x") or "" if none.
@@ -288,7 +291,7 @@ func cmdInstall() error {
 		return err
 	}
 	if _, err := os.Stat(c.Panel.DB); err != nil {
-		d, err := db.Open(c.Panel.DB)
+		d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 		if err != nil {
 			return err
 		}
@@ -296,7 +299,7 @@ func cmdInstall() error {
 	}
 	// IPv6 pass-through: configure bridge + re-attach routes for existing
 	// containers (no-op when ipv6_subnet empty).
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -437,7 +440,7 @@ func cmdInstall() error {
 	// Enforce the IPv4 inbound policy and the independent HAProxy state.
 	// (v4_forward off = IPv6-only; net.haproxy off = domain proxy disabled.)
 	// Idempotent.
-	d2, err := db.Open(c.Panel.DB)
+	d2, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -493,7 +496,7 @@ func cmdIPv6Reapply() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -795,18 +798,21 @@ func cmdServe() error {
 	if err := c.ValidatePaths(); err != nil {
 		return fmt.Errorf("invalid panel paths: %w", err)
 	}
-	// Empty path = that panel is disabled. When BOTH are empty the panel
-	// service is intentionally off: do not even listen on the port.
-	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
-		log.Printf("both url_path and admin_url_path are empty — panel disabled, not listening on %s", c.Panel.Listen)
-		return nil
-	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Turning off both HTTP entrances does not turn off saved schedules.
+	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
+		log.Printf("both panel paths are empty — running automatic snapshot scheduler without an HTTP listener")
+		m.RunSnapshotScheduler(ctx)
+		return nil
+	}
+	go m.RunSnapshotScheduler(ctx)
 	// The config file is authoritative for the snapshot-share toggle; the DB
 	// mirror exists only so a live `vps config set` is seen without a restart.
 	// Re-deriving it at every startup (same as `vps install` does) means a
@@ -1074,6 +1080,7 @@ func configSet(args []string) error {
 	}
 
 	old := cfg.FieldValue(c, key)
+	oldSnapshotLimit := c.Snapshots.Limit
 	if err := f.Assign(c, value); err != nil {
 		return err
 	}
@@ -1090,6 +1097,22 @@ func configSet(args []string) error {
 		}
 		if !ok {
 			return fmt.Errorf("aborted — %s left unchanged", key)
+		}
+	}
+	if key == "snapshots.limit" {
+		// Capture the old configured quota for legacy accounts before saving a
+		// new-account default, even with --no-apply. Do not create a fresh DB
+		// just because configuration is being edited before installation.
+		if _, err := os.Stat(c.Panel.DB); err == nil {
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, oldSnapshotLimit)
+			if err != nil {
+				return fmt.Errorf("migrate snapshot quotas before saving config: %w", err)
+			}
+			if err := d.Close(); err != nil {
+				return fmt.Errorf("close database before saving config: %w", err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat database before saving config: %w", err)
 		}
 	}
 	if err := cfg.Save(c); err != nil {
@@ -1156,7 +1179,7 @@ func configSet(args []string) error {
 		if key == "net.ipv6_pin_gateway" {
 			// Host-level neighbour plumbing only: rewire (the pin is applied by
 			// RewireAllIPv6), no panel restart needed.
-			d, err := db.Open(c.Panel.DB)
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1174,7 +1197,7 @@ func configSet(args []string) error {
 			// then make the boot unit match, then restart the panel: it holds its
 			// config from startup, so without the restart the create form would
 			// keep showing the old extra-prefix state (no /64 checkbox).
-			d, err := db.Open(c.Panel.DB)
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1193,7 +1216,7 @@ func configSet(args []string) error {
 			return nil
 		}
 		if key == "snapshots.share" {
-			d, err := db.Open(c.Panel.DB)
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying it failed: %w", err)
 			}
@@ -1210,7 +1233,7 @@ func configSet(args []string) error {
 			// needs the live config (the ratio just saved) plus the DB. It
 			// refreshes limits.memory.swap on every container from the new
 			// ratio — no restart needed (live update).
-			d, err := db.Open(c.Panel.DB)
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 			if err != nil {
 				return fmt.Errorf("config saved, but swap refresh failed: %w", err)
 			}
@@ -1223,7 +1246,7 @@ func configSet(args []string) error {
 			return nil
 		}
 		if key == "net.haproxy" {
-			d, err := db.Open(c.Panel.DB)
+			d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 			if err != nil {
 				return fmt.Errorf("config saved, but applying HAProxy state failed: %w", err)
 			}
@@ -1362,7 +1385,7 @@ func listenFree(addr string) bool {
 // applyV4State enforces the current net.v4_forward policy (firewall plus the
 // related HAProxy state).
 func applyV4State(c *cfg.Config) error {
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1385,7 +1408,7 @@ func cmdAdminPasswd() error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1404,20 +1427,34 @@ func cmdAdminPasswd() error {
 	return nil
 }
 
+// parseSnapshotLimitFlag distinguishes an omitted flag from an explicit zero.
+// Validate before opening the database: migration itself can change stored data.
+func parseSnapshotLimitFlag(raw string, provided bool) (*int, error) {
+	if !provided {
+		return nil, nil
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || limit < 0 {
+		return nil, fmt.Errorf("--snapshots must be a nonnegative integer (0 = no new snapshots)")
+	}
+	return &limit, nil
+}
+
 func userAdd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps add <name> [--cpu 1] [--mem 1G] [--disk 10G]")
+		return fmt.Errorf("usage: vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100] [--snapshots N] [--days 30] [--extra64]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
-	var memS, diskS, bandwidthS string
+	var memS, diskS, bandwidthS, snapshotsS string
 	var days int
 	var extra64 bool
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
+	fs.StringVar(&snapshotsS, "snapshots", "", "total snapshot quota; 0 disables new snapshots")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
 	fs.IntVar(&days, "days", 0, "")                // validity in days, 0 = permanent
 	fs.BoolVar(&extra64, "extra64", false, "")     // whole /64 from net.ipv6_extra_prefix
@@ -1432,10 +1469,13 @@ func userAdd(args []string) error {
 	}
 	provided := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	snapshotLimit, err := parseSnapshotLimitFlag(snapshotsS, provided["snapshots"])
+	if err != nil {
+		return err
+	}
 
 	cpu, mem, disk := 10, 1024, 10 // tenths of a core, MiB, GiB
 	setCpu, setMem, setDisk := provided["cpu"], provided["mem"], provided["disk"]
-	var err error
 	if setCpu {
 		if cpu, err = mgr.ParseCPU(cpuS); err != nil {
 			return err
@@ -1497,13 +1537,13 @@ func userAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth, Days: days, AllocateExtra64: extra64})
+	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk, BandwidthGB: bandwidth, SnapshotLimit: snapshotLimit, Days: days, AllocateExtra64: extra64})
 	if err != nil {
 		return err
 	}
@@ -1516,7 +1556,7 @@ func userDel(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1531,19 +1571,20 @@ func userDel(name string) error {
 
 func userQuota(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100] [--days 30] [--clear-expiry] [--extra64]")
+		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100] [--snapshots N] [--days 30] [--clear-expiry] [--extra64]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
-	var memS, diskS, bandwidthS string
+	var memS, diskS, bandwidthS, snapshotsS string
 	var days int
 	var clearExpiry bool
 	var extra64 bool
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
+	fs.StringVar(&snapshotsS, "snapshots", "", "total snapshot quota; 0 disables new snapshots")
 	fs.StringVar(&bandwidthS, "bandwidth", "", "") // GiB/month, 0 = unlimited
 	fs.IntVar(&days, "days", 0, "")                // extend validity by N days
 	fs.BoolVar(&clearExpiry, "clear-expiry", false, "")
@@ -1558,22 +1599,16 @@ func userQuota(args []string) error {
 	}
 	provided := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
-
-	c, err := cfg.Load()
+	snapshotLimit, err := parseSnapshotLimitFlag(snapshotsS, provided["snapshots"])
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	u, err := d.GetUserByName(name)
-	if err != nil {
-		return err
+	if provided["days"] && !provided["clear-expiry"] && days <= 0 {
+		return fmt.Errorf("--days must be positive (use --clear-expiry to remove the deadline)")
 	}
 
-	cpu, mem, disk := u.CPU, u.MemMB, u.DiskGB
+	// Reject malformed explicit quotas before opening (and migrating) the DB.
+	var cpu, mem, disk, bandwidthGB int
 	setCpu, setMem, setDisk := provided["cpu"], provided["mem"], provided["disk"]
 	if setCpu {
 		if cpu, err = mgr.ParseCPU(cpuS); err != nil {
@@ -1591,15 +1626,40 @@ func userQuota(args []string) error {
 		}
 	}
 	setBandwidth := provided["bandwidth"]
-	bandwidthGB := u.BandwidthQuotaGB
 	if setBandwidth {
 		if bandwidthGB, err = mgr.ParseBandwidthGB(bandwidthS); err != nil {
 			return err
 		}
 	}
 
+	c, err := cfg.Load()
+	if err != nil {
+		return err
+	}
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	u, err := d.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	if !setCpu {
+		cpu = u.CPU
+	}
+	if !setMem {
+		mem = u.MemMB
+	}
+	if !setDisk {
+		disk = u.DiskGB
+	}
+	if !setBandwidth {
+		bandwidthGB = u.BandwidthQuotaGB
+	}
+
 	if inter.IsTTY() {
-		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
+		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / bandwidth %d GiB / snapshots %d (0 = no new snapshots)\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB, u.SnapshotLimit)
 		if !setCpu {
 			s, err := inter.Ask("new CPU cores", mgr.FormatCPU(cpu), "", validateCPU)
 			if err != nil {
@@ -1633,24 +1693,28 @@ func userQuota(args []string) error {
 	bandwidthChanged := setBandwidth || bandwidthGB != u.BandwidthQuotaGB
 	setDays, clearExpiry := provided["days"], provided["clear-expiry"]
 	expiryChanged := setDays || clearExpiry
-	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged && !expiryChanged && !extra64 {
+	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB && !bandwidthChanged && snapshotLimit == nil && !expiryChanged && !extra64 {
 		if inter.IsTTY() {
 			fmt.Println("no changes, exiting")
 			return nil
 		}
-		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth/--days/--clear-expiry/--extra64")
+		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth/--snapshots/--days/--clear-expiry/--extra64")
 	}
 	if disk < u.DiskGB {
 		return fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, disk)
 	}
 
 	m := mgr.New(c, d)
-	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB || bandwidthChanged {
+	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB || bandwidthChanged || snapshotLimit != nil {
 		tgb := u.BandwidthQuotaGB
 		if bandwidthChanged {
 			tgb = bandwidthGB
 		}
-		if _, err := m.UpdateQuotasAndBandwidth(name, cpu, mem, disk, tgb); err != nil {
+		var snapshotLimits []int
+		if snapshotLimit != nil {
+			snapshotLimits = []int{*snapshotLimit}
+		}
+		if _, err := m.UpdateQuotasAndBandwidth(name, cpu, mem, disk, tgb, snapshotLimits...); err != nil {
 			return err
 		}
 	}
@@ -1659,9 +1723,6 @@ func userQuota(args []string) error {
 			return err
 		}
 	} else if setDays {
-		if days <= 0 {
-			return fmt.Errorf("--days must be positive (use --clear-expiry to remove the deadline)")
-		}
 		if _, err := m.ExtendExpiryFor(name, time.Duration(days)*24*time.Hour); err != nil {
 			return err
 		}
@@ -1696,7 +1757,7 @@ func userPasswd(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1715,7 +1776,7 @@ func userPower(action, name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1733,7 +1794,7 @@ func userList() error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1761,7 +1822,7 @@ func userShow(name string) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(c.Panel.DB)
+	d, err := db.OpenWithSnapshotLimit(c.Panel.DB, c.Snapshots.Limit)
 	if err != nil {
 		return err
 	}
@@ -1789,7 +1850,7 @@ func printAdded(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB / snapshots %d (0 = no new snapshots)\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB, u.SnapshotLimit)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
@@ -1831,7 +1892,7 @@ func printResult(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB / snapshots %d (0 = no new snapshots)\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.BandwidthQuotaGB, u.SnapshotLimit)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)
 	fmt.Printf("bandwidth:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)

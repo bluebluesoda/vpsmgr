@@ -92,6 +92,11 @@ func (m *Manager) ExtendExpiryFor(name string, d time.Duration) (string, error) 
 // expired account therefore stays installable by others, and extending the
 // deadline restores the machine (a manual start is then required).
 func (m *Manager) EnforceQuotaExpiry() error {
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err

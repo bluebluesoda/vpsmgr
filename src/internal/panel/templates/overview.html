@@ -93,6 +93,23 @@ a{color:var(--accent);text-decoration:none}
 .domtable th{color:var(--muted);font-weight:600}
 .domtable code{background:none;padding:0}
 .domtable input[type=checkbox]{width:1rem;height:1rem;cursor:pointer}
+#snapModal .modal{max-height:90vh;overflow-y:auto;min-width:0}
+#snapModal .btn:disabled{opacity:.5;cursor:not-allowed}
+.snap-schedule{border:1px solid var(--border);border-radius:8px;padding:.7rem;margin-bottom:.7rem}
+.snap-schedule h4{margin:0 0 .4rem;font-size:.9rem}
+.snap-schedule .btnrow{align-items:center}
+#snapHours{width:8rem;max-width:100%;padding:.35rem;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+.snap-history{margin-top:.6rem;overflow-wrap:anywhere;line-height:1.6}
+.snap-table .btn{margin:.15rem 0}
+@media(max-width:600px){
+  .snap-table thead{display:none}
+  .snap-table,.snap-table tbody{display:block}
+  .snap-table tr{display:grid;grid-template-columns:minmax(0,1fr) auto;border-bottom:1px solid var(--border);padding:.45rem 0}
+  .snap-table td{display:block;border:0;overflow-wrap:anywhere}
+  .snap-table td:nth-child(2){grid-column:1;grid-row:2}
+  .snap-table td:nth-child(3){grid-column:2;grid-row:1}
+  .snap-table td:last-child{grid-column:1 / -1}
+}
 .chk{display:inline-flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.82rem}
 .chk input{width:auto}
 .help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:1.1em;height:1.1em;border:1px solid var(--border);border-radius:50%;color:var(--muted);font-size:.72rem;cursor:help;margin-left:.3rem;vertical-align:middle;user-select:none;flex:none}
@@ -520,37 +537,65 @@ footer a{color:var(--muted);text-decoration:underline}
 <h3>{{if eq .Lang "zh"}}时光机{{else}}Time machine{{end}}</h3>
 {{if gt .GroupCount 1}}<div class="groupbanner"><span>⚠ {{if eq .Lang "zh"}}当前机器序号：{{else}}Current container number:{{end}} <strong class="container-index">{{.GroupIndex}}</strong>。{{if eq .Lang "zh"}}请确认您操作的机器无误。{{else}}Confirm this is the intended container.{{end}}</span></div>{{end}}
 <p class="muted">{{if eq .Lang "zh"}}时光机只能回到过去，不能前往未来。恢复到某个检查点会丢失当前数据，以及在此之后创建的所有检查点。每台机器最多 {{.SnapshotLimit}} 个检查点。{{else}}A time machine only goes back in time. Restoring to a checkpoint loses the current data and every checkpoint created after it. Up to {{.SnapshotLimit}} per container.{{end}}</p>
+{{if .SnapshotReadOnly}}<p class="muted">{{if eq .Lang "zh"}}当前账户只读，不能修改检查点或自动服务。{{else}}This account is read-only; checkpoints and the schedule cannot be changed.{{end}}</p>{{end}}
+{{if .SnapshotListError}}
+<div class="err" role="alert">{{if eq .Lang "zh"}}无法读取检查点列表；容量未知。依赖列表的操作已禁用，仍可关闭自动服务。{{else}}Checkpoint list unavailable; usage is unknown. Catalog-dependent actions are disabled. You can still disable automatic checkpoints.{{end}}<br>{{.SnapshotListError}}</div>
+{{else}}
+<p class="muted">{{if eq .Lang "zh"}}总额度：{{len .Snapshots}} / {{.SnapshotLimit}}；固定额度：{{.SnapshotFixedCount}} / {{.SnapshotFixedLimit}}；自动：{{.SnapshotAutomaticCount}}。{{else}}Total: {{len .Snapshots}} / {{.SnapshotLimit}}; fixed: {{.SnapshotFixedCount}} / {{.SnapshotFixedLimit}}; automatic: {{.SnapshotAutomaticCount}}.{{end}}</p>
+{{end}}
+{{if .SnapshotScheduleError}}<div class="err" role="alert">{{if eq .Lang "zh"}}无法读取自动服务设置。{{else}}Automatic schedule unavailable.{{end}} {{.SnapshotScheduleError}}</div>{{end}}
+<div class="snap-schedule">
+<h4>{{if eq .Lang "zh"}}自动检查点{{else}}Automatic checkpoints{{end}} — {{if .SnapshotScheduleError}}?{{else if and .SnapshotSchedule .SnapshotSchedule.Enabled}}{{if eq .Lang "zh"}}已启用{{else}}Enabled{{end}}{{else}}{{if eq .Lang "zh"}}已关闭{{else}}Disabled{{end}}{{end}}</h4>
+<p class="muted">{{if eq .Lang "zh"}}启用需至少一个空位，并为自动检查点保留一个名额。手动创建不挤掉自动检查点；自动轮换先创建再删除最旧的自动检查点，期间可能临时超出总额度一个。只有固定检查点可以分享。{{else}}Enabling requires a free position and reserves one position for automatic checkpoints. Manual creation never evicts automatic checkpoints. Rotation creates first, then deletes the oldest automatic checkpoint, so usage may briefly exceed the total by one. Only fixed checkpoints can be shared.{{end}}</p>
+<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleForm" class="btnrow">
+<input type="hidden" name="enabled" value="1">
+<label for="snapHours">{{if eq .Lang "zh"}}每隔（小时）{{else}}Every (hours){{end}}</label>
+<input type="number" id="snapHours" name="hours" min="1" max="{{.SnapshotMaxHours}}" step="1" required value="{{.SnapshotIntervalHours}}" {{if not .SnapshotCanSchedule}}disabled{{end}}>
+<button class="btn accent" type="submit" id="snapScheduleSave" {{if not .SnapshotCanSchedule}}disabled{{end}}>{{if and .SnapshotSchedule .SnapshotSchedule.Enabled}}{{if eq .Lang "zh"}}保存间隔{{else}}Save interval{{end}}{{else}}{{if eq .Lang "zh"}}启用自动服务{{else}}Enable automatic checkpoints{{end}}{{end}}</button>
+</form>
+{{if or .SnapshotScheduleError (and .SnapshotSchedule .SnapshotSchedule.Enabled)}}
+<form action="{{.Prefix}}/snapshot-schedule" method="post" id="snapScheduleDisableForm"><input type="hidden" name="enabled" value="0"><button class="btn danger" type="submit" id="snapScheduleDisable" {{if .SnapshotReadOnly}}disabled{{end}}>{{if eq .Lang "zh"}}关闭自动服务{{else}}Disable automatic checkpoints{{end}}</button></form>
+{{end}}
+<div class="muted snap-history">
+<div>{{if eq .Lang "zh"}}下次运行{{else}}Next run{{end}}: {{if .SnapshotNextRun}}<span class="schedule-ts" data-ts="{{.SnapshotNextRun}}">{{.SnapshotNextRun}}</span>{{else}}—{{end}}</div>
+<div>{{if eq .Lang "zh"}}最后尝试{{else}}Last attempt{{end}}: {{if .SnapshotLastRun}}<span class="schedule-ts" data-ts="{{.SnapshotLastRun}}">{{.SnapshotLastRun}}</span>{{else}}—{{end}}</div>
+<div>{{if eq .Lang "zh"}}最后成功{{else}}Last success{{end}}: {{if .SnapshotLastSuccess}}<span class="schedule-ts" data-ts="{{.SnapshotLastSuccess}}">{{.SnapshotLastSuccess}}</span>{{else}}—{{end}}</div>
+{{if .SnapshotSchedule}}{{if .SnapshotSchedule.LastError}}<div class="err">{{if eq .Lang "zh"}}最后错误{{else}}Last error{{end}}: {{.SnapshotSchedule.LastError}}</div>{{end}}{{end}}
+</div>
+</div>
 <div class="btnrow">
-<form action="{{.Prefix}}/snapshot" method="post" class="inline"><button class="btn ok" type="submit" id="snapCreate">{{if eq .Lang "zh"}}创建检查点{{else}}Create checkpoint{{end}}</button></form>
+<form action="{{.Prefix}}/snapshot" method="post" class="inline" id="snapCreateForm"><button class="btn ok" type="submit" id="snapCreate" {{if not .SnapshotCanCreate}}disabled{{end}}>{{if eq .Lang "zh"}}创建固定检查点{{else}}Create fixed checkpoint{{end}}</button></form>
 </div>
 {{if .Snapshots}}
-<table class="domtable">
+<table class="domtable snap-table">
 <thead><tr><th>{{if eq .Lang "zh"}}检查点{{else}}Checkpoint{{end}}</th><th>{{if eq .Lang "zh"}}创建时间（本地时区）{{else}}Created (local){{end}}</th><th>{{if eq .Lang "zh"}}大小{{else}}Size{{end}}</th><th></th></tr></thead>
 <tbody>
 {{range .Snapshots}}
 <tr>
-<td><code>{{.Name}}</code></td>
+<td><code>{{.Name}}</code><br><span class="pill {{if .Automatic}}up{{end}}">{{if .Automatic}}{{if eq $.Lang "zh"}}自动{{else}}Automatic{{end}}{{else}}{{if eq $.Lang "zh"}}固定{{else}}Fixed{{end}}{{end}}</span></td>
 <td><span class="snapts" data-ts="{{.CreatedAt}}">{{.CreatedAt}}</span></td>
 <td><span class="muted">{{.Size}}</span></td>
 <td>
-{{if $.ShareEnabled}}
+{{if .Automatic}}
+<button type="button" class="btn" onclick="promoteSnap('{{.Name}}')" {{if not $.SnapshotCanPromote}}disabled{{end}}>{{if eq $.Lang "zh"}}转为固定{{else}}Keep as fixed{{end}}</button>
+{{else if $.ShareEnabled}}
 {{if .Shared}}
 <div class="muted" style="font-size:.72rem">{{if eq $.Lang "zh"}}分享码{{else}}share code{{end}}</div>
 <code class="copyable" data-copy="{{$.ShareCode}}">{{$.ShareCode}}</code>
-<button type="button" class="btn danger" onclick="unshareSnap()">{{if eq $.Lang "zh"}}撤销分享{{else}}Revoke{{end}}</button>
+<button type="button" class="btn danger" onclick="unshareSnap()" {{if $.SnapshotReadOnly}}disabled{{end}}>{{if eq $.Lang "zh"}}撤销分享{{else}}Revoke{{end}}</button>
 {{else}}
-<button type="button" class="btn" onclick="shareSnap('{{.Name}}','{{.CreatedAt}}')">{{if eq $.Lang "zh"}}分享{{else}}Share{{end}}</button>
+<button type="button" class="btn" onclick="shareSnap('{{.Name}}','{{.CreatedAt}}')" {{if or $.SnapshotReadOnly $.SnapshotListError $.SnapshotScheduleError}}disabled{{end}}>{{if eq $.Lang "zh"}}分享{{else}}Share{{end}}</button>
 {{end}}
 {{end}}
-<button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')">{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
-<button type="button" class="btn danger" onclick="delSnap('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+<button type="button" class="btn accent" onclick="restoreSnap('{{.Name}}')" {{if $.SnapshotReadOnly}}disabled{{end}}>{{if eq $.Lang "zh"}}恢复{{else}}Restore{{end}}</button>
+<button type="button" class="btn danger" onclick="delSnap('{{.Name}}')" {{if $.SnapshotReadOnly}}disabled{{end}}>{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
 </td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
-<div class="muted">{{if eq .Lang "zh"}}暂无检查点{{else}}No checkpoints yet{{end}}</div>
+{{if not .SnapshotListError}}<div class="muted">{{if eq .Lang "zh"}}暂无检查点{{else}}No checkpoints yet{{end}}</div>{{end}}
 {{end}}
 <div class="actions">
 <button class="btn" type="button" id="snapClose">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
@@ -1089,7 +1134,7 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   if(close)close.addEventListener('click',closeModal);
   if(modal)modal.addEventListener('click',function(e){if(e.target===modal)closeModal();});
   function pad2(n){return (n<10?'0':'')+n;}
-  document.querySelectorAll('.snapts').forEach(function(el){
+  document.querySelectorAll('.snapts,.schedule-ts').forEach(function(el){
     var d=new Date(el.getAttribute('data-ts'));
     if(!isNaN(d)){
       el.textContent=d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+
@@ -1147,8 +1192,24 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     for(var k in fields){var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fields[k];f.appendChild(i);}
     document.body.appendChild(f); f.submit();
   }
-  var createForm=document.querySelector('#snapModal form[action*="/snapshot"]');
-  if(createForm)createForm.addEventListener('submit',function(){location.hash='snapshots';});
+  window.promoteSnap=function(n){
+    ask(T('转为固定检查点','Keep as fixed'),
+      T('将 '+n+' 转为固定检查点？创建时间不变，之后不会被自动轮换删除。',
+        'Keep '+n+' as fixed? Its creation time stays unchanged and automatic rotation will no longer delete it.'),
+      T('转为固定','Keep as fixed')).then(function(ok){if(ok)submitSnap('/snapshot-promote',{name:n});});
+  };
+  ['snapCreateForm','snapScheduleForm'].forEach(function(id){
+    var f=document.getElementById(id);
+    if(f)f.addEventListener('submit',function(){location.hash='snapshots';});
+  });
+  var disableForm=document.getElementById('snapScheduleDisableForm');
+  if(disableForm)disableForm.addEventListener('submit',function(e){
+    e.preventDefault();
+    ask(T('关闭自动服务','Disable automatic checkpoints'),
+      T('关闭后，所有自动检查点都会转为固定检查点，不会删除任何检查点。确定关闭？',
+        'All automatic checkpoints will become fixed. No checkpoints will be deleted. Disable automatic checkpoints?'),
+      T('关闭自动服务','Disable')).then(function(ok){if(ok)submitSnap('/snapshot-schedule',{enabled:'0'});});
+  });
   if(location.hash==='#snapshots')open();
 })();
 // Knowledge base: a large overlay listing the operator's articles, each

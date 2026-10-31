@@ -277,9 +277,17 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `color.update` under `000+<user>`. The color is **shared across a user group**
   (see “User groups” below): writing it updates every member, and a new member
   inherits the group's existing color.
-- **Snapshots ("时光机" / time machine)**: each user can keep up to
-  `snapshots.limit` disk-only checkpoints (named `snap-<UTC>...`) of their
-  container and create / delete / restore them from the panel. The panel calls
+- **Snapshots ("时光机" / time machine)**: each account has an independent
+  snapshot quota in the database, set at creation and editable by the admin.
+  `snapshots.limit` supplies only the new-account default. Reductions cannot
+  fall below the existing count or consume an enabled schedule's reserved
+  position, and never delete history. Users can create / delete / restore
+  disk-only checkpoints (named `snap-<UTC>...`) from the panel. Users may opt in
+  to an automatic checkpoint every N elapsed hours (N is a positive integer).
+  Automatic and fixed checkpoints share the total cap; enabling reserves one
+  position for automatic checkpoints. Manual creation never evicts history.
+  See [Automatic checkpoints](snapshots.md) for quota, conversion, rotation and
+  schema-migration details. The panel calls
   them **检查点/checkpoints** and frames the whole feature as a **time machine
   that only goes back**: restoring to a checkpoint that is NOT the newest
   discards the current data and every checkpoint created after it.
@@ -294,8 +302,10 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   `vps install` runs, so a host upgraded via `install.sh --update` gets the
   behaviour immediately without reinstalling containers. It only applies to
   the ZFS pool; btrfs and dir are skipped (the btrfs driver restores by
-  subvolume copy, which newer snapshots never block, so nothing extra is
-  needed there). As a belt-and-braces fallback, `SnapshotRestore` checks for
+  subvolume copy, which newer snapshots never block). After a successful
+  restore, the manager explicitly removes any newer checkpoints the driver
+  retained, so time-machine semantics are identical across drivers. As a
+  belt-and-braces fallback, `SnapshotRestore` checks for
   the "subsequent snapshot" refusal on a container that somehow lacks the
   option, deletes the newer snapshots by creation time, and retries once.
 
@@ -318,8 +328,9 @@ The panel daemon runs as the dedicated unprivileged `vps` system user
   carries the checkpoint's state).
 
   Cloning from a checkpoint **pins** it: ZFS cannot roll the source back past a
-  snapshot a clone depends on. Publishing therefore deletes the older
-  checkpoints, keeping only the published one; the panel warns with the exact
+  snapshot a clone depends on. Only fixed checkpoints may be published.
+  Publishing deletes every older checkpoint, including automatic ones, while
+  leaving newer checkpoints alone; the panel warns with the exact
   count first. Deleting the checkpoint, reinstalling or deleting the container
   revokes the share with it. A code pointing at the **same** container being
   reinstalled is a plain restore (cloning first would destroy the snapshot).

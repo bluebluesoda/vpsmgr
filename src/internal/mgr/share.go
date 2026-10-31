@@ -94,26 +94,35 @@ func (m *Manager) ShareSnapshot(name, snapName string) (string, []string, error)
 	if !m.SnapshotShareEnabled() {
 		return "", nil, errors.New("snapshot sharing is disabled by the administrator")
 	}
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return "", nil, err
+	}
+	defer unlock()
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return "", nil, err
 	}
-	if m.SnapshotLimit() == 0 {
+	if u.SnapshotLimit == 0 {
 		return "", nil, errors.New("snapshots are disabled")
 	}
 	if !ValidSnapName(snapName) {
 		return "", nil, errors.New("invalid snapshot name")
 	}
-	snaps, err := m.lx.SnapshotList(u.Name)
+	if err := snapshotUserActive(u, time.Now()); err != nil {
+		return "", nil, err
+	}
+	snaps, err := m.snapshotListLocked(u)
 	if err != nil {
 		return "", nil, err
 	}
 	found := false
 	for _, s := range snaps {
 		if s.Name == snapName {
+			if s.Automatic {
+				return "", nil, errors.New("convert the automatic checkpoint to a fixed checkpoint before sharing")
+			}
 			found = true
 			break
 		}
@@ -123,10 +132,9 @@ func (m *Manager) ShareSnapshot(name, snapName string) (string, []string, error)
 	}
 	removed := olderSnapshotNames(snaps, snapName)
 	for _, s := range removed {
-		if err := m.lx.SnapshotDelete(u.Name, s); err != nil {
+		if err := m.deleteSnapshotLocked(u, s); err != nil {
 			return "", nil, fmt.Errorf("delete older checkpoint %s: %w", s, err)
 		}
-		_ = m.db.DeleteSnapshotShareBySnapshot(u.ID, s)
 	}
 	code, err := newShareCode()
 	if err != nil {
@@ -218,8 +226,11 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 	if !m.SnapshotShareEnabled() {
 		return "", errors.New("snapshot sharing is disabled by the administrator")
 	}
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -281,6 +292,10 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 	}
 	// The old container's snapshots (and any share over them) are gone with it.
 	_ = m.db.DeleteSnapshotShare(u.ID)
+	if err := m.resetSnapshotScheduleLocked(u); err != nil {
+		rollback()
+		return "", err
+	}
 	if err := m.lx.RenameInstance(tmp, u.Name); err != nil {
 		rollback()
 		return "", fmt.Errorf("rename clone into place: %w", err)
@@ -344,6 +359,10 @@ func (m *Manager) ReinstallFromShare(name, code string, runInit bool) (string, e
 		}
 	}
 	m.applyUserKeys(u.Name)
+	if err := m.resetSnapshotScheduleLocked(u); err != nil {
+		rollback()
+		return "", err
+	}
 	if err := m.db.UpdateUserStatus(u.ID, db.StatusReady); err != nil {
 		m.db.UpdateUserStatus(u.ID, db.StatusFailed)
 		return "", fmt.Errorf("db: mark user ready: %w", err)

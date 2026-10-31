@@ -42,10 +42,9 @@ type Manager struct {
 	// user domain (HTTP host routing on :80, TLS SNI passthrough on :443).
 	proxy *hpx.Proxy
 
-	// opMu serializes Add/Del/Reinstall within this process (the panels share
-	// one Manager), so two simultaneous creates cannot race for the same
-	// index/IP. Cross-process CLI races are still caught by the users.idx and
-	// users.start_port UNIQUE constraints plus Add's rollback.
+	// opMu serializes lifecycle operations within this process. lockOperations
+	// also takes the shared database-sidecar lock so CLI transfers cannot race the
+	// panel's snapshot scheduler. Internal *Locked helpers never reacquire it.
 	opMu sync.Mutex
 
 	// throttled tracks which containers currently carry a bandwidth throttle
@@ -339,10 +338,13 @@ systemctl restart ssh`
 }
 
 type AddOptions struct {
-	CPU        int
-	MemMB      int
-	DiskGB     int
-	AllowChild bool
+	CPU    int
+	MemMB  int
+	DiskGB int
+	// SnapshotLimit overrides the new-account default. Nil uses configuration;
+	// a pointer to zero explicitly disables new snapshots for this account.
+	SnapshotLimit *int
+	AllowChild    bool
 	// BandwidthGB is the monthly bandwidth quota in GiB (0 = unlimited).
 	BandwidthGB int
 	// IPv6Addr is the pool-mode address to assign ("" = auto-pick the first
@@ -363,9 +365,15 @@ type AddOptions struct {
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return m.addLocked(name, opt)
+}
 
+func (m *Manager) addLocked(name string, opt AddOptions) (*Result, error) {
 	// Usernames are case-insensitive: fold to lowercase before validating and
 	// checking for duplicates, so "Alice" and "alice" are the same user.
 	name = strings.ToLower(name)
@@ -374,6 +382,13 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	}
 	if err := ValidateCPU(opt.CPU); err != nil {
 		return nil, err
+	}
+	snapshotLimit := m.DefaultSnapshotLimit()
+	if opt.SnapshotLimit != nil {
+		snapshotLimit = *opt.SnapshotLimit
+	}
+	if snapshotLimit < 0 {
+		return nil, errors.New("snapshot quota must be a non-negative integer")
 	}
 	if opt.MemMB < 64 {
 		return nil, errors.New("memory must be >= 64 MiB")
@@ -692,7 +707,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			return nil, fmt.Errorf("wire ipv6: %w", err)
 		}
 	}
-	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ipv6Index, extraBlock, ExpiryFromDays(opt.Days))
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.BandwidthGB, db.StatusCreating, poolAddr, ipv6Index, extraBlock, ExpiryFromDays(opt.Days), snapshotLimit)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
@@ -795,9 +810,15 @@ func (m *Manager) resultForState(u *db.User, pass, state string) *Result {
 }
 
 func (m *Manager) Del(name string) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return m.delLocked(name)
+}
 
+func (m *Manager) delLocked(name string) error {
 	// Acts on an existing user, so use the legacy-compatible check: a strict
 	// creation rule must not lock out a pre-hyphen digit-ending username.
 	if err := ValidateExistingName(name); err != nil {
@@ -1084,6 +1105,15 @@ func (m *Manager) State(name string) (string, error) { return m.lx.State(name) }
 // if a later step fails, everything already applied to Incus is rolled back so
 // the live config and the database cannot disagree.
 func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, error) {
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return m.updateQuotasLocked(name, cpu, memMB, diskGB)
+}
+
+func (m *Manager) updateQuotasLocked(name string, cpu, memMB, diskGB int) (*Result, error) {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return nil, err
@@ -1114,7 +1144,7 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 		}
 		return nil, err
 	}
-	if cpu > 0 {
+	if cpu > 0 && cpu != u.CPU {
 		old := u.CPU
 		if err := m.lx.SetCPU(u.Name, cpu); err != nil {
 			return fail(err)
@@ -1122,7 +1152,7 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 		u.CPU = cpu
 		undo = append(undo, func() error { return m.lx.SetCPU(u.Name, old) })
 	}
-	if memMB > 0 {
+	if memMB > 0 && memMB != u.MemMB {
 		old := u.MemMB
 		if err := m.lx.SetMem(u.Name, memMB); err != nil {
 			return fail(err)
@@ -1130,7 +1160,7 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 		u.MemMB = memMB
 		undo = append(undo, func() error { return m.lx.SetMem(u.Name, old) })
 	}
-	if diskGB > 0 {
+	if diskGB > 0 && diskGB != u.DiskGB {
 		old := u.DiskGB
 		if err := m.lx.SetDisk(u.Name, diskGB); err != nil {
 			return fail(err)
@@ -1144,28 +1174,47 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 	return m.ResultFor(u, ""), nil
 }
 
-// UpdateQuotasAndBandwidth adjusts CPU/mem/disk and the monthly bandwidth quota
-// in one call, so the admin panel's single submit cannot succeed halfway. The
-// bandwidth quota is a DB-only write: it is applied first and rolled back if the
-// Incus-side resource update fails. bandwidthGB < 0 leaves the bandwidth quota
-// unchanged.
-func (m *Manager) UpdateQuotasAndBandwidth(name string, cpu, memMB, diskGB, bandwidthGB int) (*Result, error) {
+// UpdateQuotasAndBandwidth validates a combined quota edit under the lifecycle
+// lock. bandwidthGB < 0 and an omitted snapshotLimit leave those quotas unchanged.
+// DB-only quotas are rolled back if applying the resource quotas fails.
+func (m *Manager) UpdateQuotasAndBandwidth(name string, cpu, memMB, diskGB, bandwidthGB int, snapshotLimit ...int) (*Result, error) {
+	if len(snapshotLimit) > 1 {
+		return nil, errors.New("expected at most one snapshot quota")
+	}
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return nil, err
 	}
-	if bandwidthGB >= 0 {
-		if err := m.db.UpdateBandwidthQuota(u.ID, bandwidthGB); err != nil {
+	if len(snapshotLimit) == 1 {
+		if err := m.validateSnapshotLimitLocked(u, snapshotLimit[0]); err != nil {
+			return nil, err
+		}
+		if err := m.db.UpdateSnapshotLimit(u.ID, snapshotLimit[0]); err != nil {
 			return nil, err
 		}
 	}
-	res, err := m.UpdateQuotas(name, cpu, memMB, diskGB)
-	if err != nil {
-		if bandwidthGB >= 0 {
-			// restore the previous bandwidth quota so the form is fully rolled back
-			_ = m.db.UpdateBandwidthQuota(u.ID, u.BandwidthQuotaGB)
+	rollback := func(cause error) (*Result, error) {
+		if len(snapshotLimit) == 1 {
+			cause = errors.Join(cause, m.db.UpdateSnapshotLimit(u.ID, u.SnapshotLimit))
 		}
-		return nil, err
+		if bandwidthGB >= 0 {
+			cause = errors.Join(cause, m.db.UpdateBandwidthQuota(u.ID, u.BandwidthQuotaGB))
+		}
+		return nil, cause
+	}
+	if bandwidthGB >= 0 {
+		if err := m.db.UpdateBandwidthQuota(u.ID, bandwidthGB); err != nil {
+			return rollback(err)
+		}
+	}
+	res, err := m.updateQuotasLocked(name, cpu, memMB, diskGB)
+	if err != nil {
+		return rollback(err)
 	}
 	return res, nil
 }
@@ -1175,6 +1224,11 @@ func (m *Manager) UpdateQuotasAndBandwidth(name string, cpu, memMB, diskGB, band
 // container back, while stopping disables it so a manually stopped container
 // stays off after the host reboots for maintenance.
 func (m *Manager) Power(name, action string) error {
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
@@ -1233,11 +1287,9 @@ var validSnapName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 // API. Exported for tests and the panel.
 func ValidSnapName(v string) bool { return validSnapName.MatchString(v) }
 
-// SnapshotLimit returns the configured per-container snapshot cap. 0 (or a
-// negative value, which the config validator forbids anyway) means snapshots
-// are disabled: users cannot create new ones, but existing snapshots are left
-// untouched. Any positive value is the hard cap.
-func (m *Manager) SnapshotLimit() int {
+// DefaultSnapshotLimit is copied into a new account unless explicitly overridden.
+// Existing users always use their stored quota, never this configuration default.
+func (m *Manager) DefaultSnapshotLimit() int {
 	if m.cfg.Snapshots.Limit < 0 {
 		return 0
 	}
@@ -1257,23 +1309,35 @@ func snapName() string {
 // the per-container snapshot cap. opMu serializes the count-then-create so two
 // concurrent requests cannot both pass the cap check.
 func (m *Manager) SnapshotCreate(name string) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
-
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
 	}
-	limit := m.SnapshotLimit()
+	limit := u.SnapshotLimit
 	if limit == 0 {
 		return errors.New("snapshots are disabled")
 	}
-	snaps, err := m.lx.SnapshotList(u.Name)
+	if err := snapshotUserActive(u, time.Now()); err != nil {
+		return err
+	}
+	snaps, err := m.snapshotListLocked(u)
 	if err != nil {
 		return err
 	}
 	if len(snaps) >= limit {
 		return fmt.Errorf("snapshot limit reached (%d)", limit)
+	}
+	schedule, err := m.db.GetSnapshotSchedule(u.ID)
+	if err != nil {
+		return err
+	}
+	if schedule != nil && schedule.Enabled && fixedSnapshotCount(snaps) >= limit-1 {
+		return errors.New("fixed snapshot limit reached; one position is reserved for automatic snapshots")
 	}
 	return m.lx.SnapshotCreate(u.Name, snapName())
 }
@@ -1284,11 +1348,16 @@ func (m *Manager) SnapshotList(name string) ([]lx.SnapshotInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.lx.SnapshotList(u.Name)
+	return m.snapshotListLocked(u)
 }
 
 // SnapshotDelete removes a snapshot.
 func (m *Manager) SnapshotDelete(name, snapName string) error {
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
@@ -1296,12 +1365,7 @@ func (m *Manager) SnapshotDelete(name, snapName string) error {
 	if !ValidSnapName(snapName) {
 		return errors.New("invalid snapshot name")
 	}
-	if err := m.lx.SnapshotDelete(u.Name, snapName); err != nil {
-		return err
-	}
-	// A share pointing at this checkpoint is now dead (the snapshot is gone).
-	_ = m.db.DeleteSnapshotShareBySnapshot(u.ID, snapName)
-	return nil
+	return m.deleteSnapshotLocked(u, snapName)
 }
 
 // SnapshotRestore restores the container disk from a snapshot, keeping the
@@ -1309,20 +1373,20 @@ func (m *Manager) SnapshotDelete(name, snapName string) error {
 // rollback point, so a manual snapshot behaves like a time machine that only
 // goes back: restoring to one that is NOT the newest discards every snapshot
 // created after it. If the container was running it is stopped first and
-// started again afterwards; a failure in the middle leaves the container
-// stopped and returns the error so the caller can see the partial state rather
-// than pretending the restore succeeded. opMu prevents a concurrent
-// reinstall/delete from racing the restore.
+// restarted afterwards, including after a failed restore. Restore, cleanup and
+// restart errors are returned so partial failure is not reported as success.
+// The shared lifecycle lock prevents concurrent reinstall/delete operations.
 //
-// Primary path: a single Incus restore. Every container's root volume carries
-// zfs.remove_snapshots=true (set at create and re-applied on every `vps
-// install`, including an --update upgrade), so Incus itself auto-destroys the
-// newer snapshots — no per-snapshot cleanup. Fallback: on a host that somehow
-// still lacks the option, Incus refuses with a "subsequent snapshot" error;
-// we then discard the newer snapshots ourselves and retry once.
+// On ZFS, zfs.remove_snapshots=true normally lets Incus remove newer snapshots
+// during restore. If that option is missing and Incus refuses with a
+// "subsequent snapshot" error, discard them and retry once. After successful
+// restore, explicitly remove any newer snapshots retained by other drivers.
 func (m *Manager) SnapshotRestore(name, snapName string) error {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -1330,6 +1394,9 @@ func (m *Manager) SnapshotRestore(name, snapName string) error {
 	}
 	if !ValidSnapName(snapName) {
 		return errors.New("invalid snapshot name")
+	}
+	if err := snapshotUserActive(u, time.Now()); err != nil {
+		return err
 	}
 	return m.snapshotRestoreLocked(u, snapName)
 }
@@ -1360,16 +1427,16 @@ func (m *Manager) snapshotRestoreLocked(u *db.User, snapName string) error {
 			err = restore()
 		}
 	}
-	if err != nil {
-		if wasRunning {
-			_ = m.lx.Start(u.Name)
-		}
-		return err
+	if err == nil {
+		// Non-ZFS drivers may retain later checkpoints after a restore. Apply
+		// the same time-machine semantics independently of the storage driver.
+		err = m.discardNewerSnapshots(u.Name, snapName)
 	}
+	err = errors.Join(err, m.reconcileSnapshotMetadataLocked(u))
 	if wasRunning {
-		return m.lx.Start(u.Name)
+		err = errors.Join(err, m.lx.Start(u.Name))
 	}
-	return nil
+	return err
 }
 
 // isSubsequentSnapshotErr reports whether a restore was refused because newer
@@ -1399,12 +1466,16 @@ func (m *Manager) ensureZfsRollbackVolume(name string) error {
 // is not found we delete nothing and let the restore call report the
 // authoritative error.
 func (m *Manager) discardNewerSnapshots(container, target string) error {
+	u, err := m.db.GetUserByName(container)
+	if err != nil {
+		return err
+	}
 	snaps, err := m.lx.SnapshotList(container)
 	if err != nil {
 		return err
 	}
 	for _, s := range newerSnapshotNames(snaps, target) {
-		if err := m.lx.SnapshotDelete(container, s); err != nil {
+		if err := m.deleteSnapshotLocked(u, s); err != nil {
 			return err
 		}
 	}
@@ -1530,8 +1601,11 @@ func (m *Manager) SetInitScript(name, script string) error {
 // random root password is generated (returned for one-time display); the panel
 // login password is unchanged.
 func (m *Manager) Reinstall(name, image string) (string, error) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -1559,6 +1633,10 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	// The container (and its snapshots) is gone, so any share pointing at one
 	// of them is dead.
 	_ = m.db.DeleteSnapshotShare(u.ID)
+	if err := m.resetSnapshotScheduleLocked(u); err != nil {
+		rollback()
+		return "", err
+	}
 	// Default image (or empty): resolve to the configured alias / fallback and
 	// pull the fallback if it is remote-qualified. A user-picked non-default
 	// image must already exist locally — never auto-fetch a surprise image.
@@ -1681,6 +1759,10 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 				fmt.Printf("  ! warn: ssh keys: %v (container still recreated)\n", err)
 			}
 		}
+	}
+	if err := m.resetSnapshotScheduleLocked(u); err != nil {
+		rollback()
+		return "", err
 	}
 	// The reinstall is complete: back to ready. Also drop any in-memory
 	// throttled flag for this user — the old container's NIC limit died with

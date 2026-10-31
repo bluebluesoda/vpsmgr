@@ -55,16 +55,17 @@ type TransferOptions struct {
 // receiving host needs in order to put the account back the way it was, and
 // how much room the disk it is about to receive needs.
 type TransferMeta struct {
-	User        string    `json:"user"`
-	CPU         int       `json:"cpu"`
-	MemMB       int       `json:"mem_mb"`
-	DiskGB      int       `json:"disk_gb"`
-	BandwidthGB int       `json:"bandwidth_gb"`
-	ExpiresAt   string    `json:"expires_at,omitempty"`
-	DiskUsed    int64     `json:"disk_used"`
-	InitScript  string    `json:"init_script,omitempty"`
-	SSHKeys     []MetaKey `json:"ssh_keys,omitempty"`
-	StickyNotes string    `json:"sticky_notes,omitempty"`
+	User          string    `json:"user"`
+	CPU           int       `json:"cpu"`
+	MemMB         int       `json:"mem_mb"`
+	DiskGB        int       `json:"disk_gb"`
+	BandwidthGB   int       `json:"bandwidth_gb"`
+	SnapshotLimit *int      `json:"snapshot_limit,omitempty"`
+	ExpiresAt     string    `json:"expires_at,omitempty"`
+	DiskUsed      int64     `json:"disk_used"`
+	InitScript    string    `json:"init_script,omitempty"`
+	SSHKeys       []MetaKey `json:"ssh_keys,omitempty"`
+	StickyNotes   string    `json:"sticky_notes,omitempty"`
 }
 
 // MetaKey is one of the user's public keys, as the panel stores it.
@@ -78,10 +79,11 @@ type MetaKey struct {
 // it: it is an absolute date, applied on its own after the account exists.
 func (t *TransferMeta) Account() AddOptions {
 	return AddOptions{
-		CPU:         t.CPU,
-		MemMB:       t.MemMB,
-		DiskGB:      t.DiskGB,
-		BandwidthGB: t.BandwidthGB,
+		CPU:           t.CPU,
+		MemMB:         t.MemMB,
+		DiskGB:        t.DiskGB,
+		BandwidthGB:   t.BandwidthGB,
+		SnapshotLimit: t.SnapshotLimit,
 	}
 }
 
@@ -181,8 +183,11 @@ func (m *Manager) transferDiskUsed(u *db.User) int64 {
 // container's power state — a transfer must not be the thing that decides a
 // user's downtime.
 func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, opt TransferOptions) (*TransferManifest, error) {
-	m.opMu.Lock()
-	defer m.opMu.Unlock()
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -242,14 +247,15 @@ func (m *Manager) TransferExport(ctx context.Context, name string, w io.Writer, 
 // host's panel database rather than inside the container.
 func (m *Manager) buildTransferMeta(u *db.User) ([]byte, error) {
 	meta := TransferMeta{
-		User:        u.Name,
-		CPU:         u.CPU,
-		MemMB:       u.MemMB,
-		DiskGB:      u.DiskGB,
-		BandwidthGB: u.BandwidthQuotaGB,
-		ExpiresAt:   u.ExpiresAt,
-		DiskUsed:    m.transferDiskUsed(u),
-		InitScript:  u.InitScript,
+		User:          u.Name,
+		CPU:           u.CPU,
+		MemMB:         u.MemMB,
+		DiskGB:        u.DiskGB,
+		BandwidthGB:   u.BandwidthQuotaGB,
+		SnapshotLimit: &u.SnapshotLimit,
+		ExpiresAt:     u.ExpiresAt,
+		DiskUsed:      m.transferDiskUsed(u),
+		InitScript:    u.InitScript,
 	}
 	keys, err := m.db.ListSSHKeys(u.ID)
 	if err != nil {
@@ -338,8 +344,13 @@ func (m *Manager) TransferTarget(name string) error {
 // before this call is modified, so any failure is undone by deleting what was
 // created.
 func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, metaBytes []byte, opt TransferOptions) (*TransferResult, error) {
-	// No opMu here: Add and Del take it themselves, and this runs the two of
-	// them in sequence.
+	// Hold the shared lifecycle lock throughout import: the temporary account
+	// must not be snapshotted between Add and replacement of its empty disk.
+	unlock, err := m.lockOperations()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := m.TransferTarget(name); err != nil {
 		return nil, err
 	}
@@ -362,7 +373,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 		// is irrelevant here.
 		account.IPv6Addr = "none"
 	}
-	created, err := m.Add(name, account)
+	created, err := m.addLocked(name, account)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +383,7 @@ func (m *Manager) TransferImport(ctx context.Context, name string, r io.Reader, 
 	// and belongs to this import, so every failure path below removes it and
 	// leaves the host as it was.
 	fail := func(err error) (*TransferResult, error) {
-		if derr := m.Del(u.Name); derr != nil {
+		if derr := m.delLocked(u.Name); derr != nil {
 			fmt.Printf("  ! warn: could not remove the half-built account %s: %v\n", u.Name, derr)
 		}
 		return nil, err

@@ -126,6 +126,7 @@ type snapshotRow struct {
 	CreatedAt string // UTC RFC3339; rendered in the browser's timezone
 	Size      string // human-readable disk usage, e.g. "184 MiB"; may be empty
 	Shared    bool   // this checkpoint is published behind the share code
+	Automatic bool
 }
 
 // knowledgeArticle is one knowledge-base article, already rendered from
@@ -206,6 +207,21 @@ type pageData struct {
 	IPv6Extra               string // whole /64 handed out from the extra prefix ("" = none)
 	Snapshots               []snapshotRow
 	SnapshotLimit           int // configured per-container snapshot cap (for display)
+	SnapshotListError       string
+	SnapshotScheduleError   string
+	SnapshotSchedule        *db.SnapshotSchedule
+	SnapshotFixedCount      int
+	SnapshotAutomaticCount  int
+	SnapshotFixedLimit      int
+	SnapshotIntervalHours   int
+	SnapshotMaxHours        int
+	SnapshotNextRun         string
+	SnapshotLastRun         string
+	SnapshotLastSuccess     string
+	SnapshotReadOnly        bool
+	SnapshotCanCreate       bool
+	SnapshotCanSchedule     bool
+	SnapshotCanPromote      bool
 	// Snapshot share: the code others can use to install from a checkpoint, and
 	// the checkpoint it points at ("" when the user has no active share).
 	ShareCode      string
@@ -234,6 +250,46 @@ type pageData struct {
 	Version string
 }
 
+// prepareSnapshotUI derives advisory controls from the catalog; the manager
+// rechecks quotas under its operation lock when a form is submitted.
+func (d *pageData) prepareSnapshotUI() {
+	d.SnapshotFixedCount, d.SnapshotAutomaticCount = 0, 0
+	for _, sn := range d.Snapshots {
+		if sn.Automatic {
+			d.SnapshotAutomaticCount++
+		} else {
+			d.SnapshotFixedCount++
+		}
+	}
+	d.SnapshotMaxHours = mgr.MaxSnapshotIntervalHours
+	d.SnapshotIntervalHours = 24
+	d.SnapshotFixedLimit = d.SnapshotLimit
+	enabled := d.SnapshotSchedule != nil && d.SnapshotSchedule.Enabled
+	if schedule := d.SnapshotSchedule; schedule != nil {
+		d.SnapshotIntervalHours = schedule.IntervalHours
+		stamp := func(seconds int64) string {
+			if seconds <= 0 {
+				return ""
+			}
+			return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
+		}
+		d.SnapshotNextRun = stamp(schedule.NextRunAt)
+		d.SnapshotLastRun = stamp(schedule.LastRunAt)
+		d.SnapshotLastSuccess = stamp(schedule.LastSuccessAt)
+	}
+	if enabled && d.SnapshotFixedLimit > 0 {
+		d.SnapshotFixedLimit--
+	}
+	d.SnapshotReadOnly = d.Expired || d.User == nil || d.User.Status != db.StatusReady
+	known := d.SnapshotListError == "" && d.SnapshotScheduleError == "" && !d.SnapshotReadOnly
+	d.SnapshotCanCreate = known && len(d.Snapshots) < d.SnapshotLimit && d.SnapshotFixedCount < d.SnapshotFixedLimit
+	d.SnapshotCanPromote = known && d.SnapshotFixedCount < d.SnapshotFixedLimit
+	d.SnapshotCanSchedule = known && d.SnapshotLimit > 0 && len(d.Snapshots) < d.SnapshotLimit
+	if enabled {
+		d.SnapshotCanSchedule = known && d.SnapshotLimit > 0 && len(d.Snapshots) <= d.SnapshotLimit && d.SnapshotFixedCount <= d.SnapshotFixedLimit
+	}
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.handleLogin)
@@ -259,6 +315,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/stats", s.requireAuth(s.handleStats))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/snapshot", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshot))))
+	mux.HandleFunc("/snapshot-schedule", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotSchedule))))
+	mux.HandleFunc("/snapshot-promote", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotPromote))))
 	mux.HandleFunc("/snapshot-del", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotDel))))
 	mux.HandleFunc("/snapshot-restore", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotRestore))))
 	mux.HandleFunc("/snapshot-share", s.requireAuth(s.requireActive(s.requirePost(s.handleSnapshotShare))))
@@ -513,8 +571,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	for _, x := range domains {
 		d.Domains = append(d.Domains, domainRow{Domain: x.Domain, ProxyProtocol: x.ProxyProtocol})
 	}
-	// Snapshots come from Incus (one list call). A failure is non-fatal: the
-	// page still renders, and the snapshot modal shows the empty state.
+	// Keep catalog failures distinct from an empty catalog. Disabling the
+	// schedule remains possible even when Incus cannot be reached.
 	shareCode, shareSnap, hasShare := s.mgr.SnapshotShareInfo(u.Name)
 	d.ShareEnabled = s.mgr.SnapshotShareEnabled()
 	if d.ShareEnabled && hasShare {
@@ -528,10 +586,18 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 				CreatedAt: sn.CreatedAt,
 				Size:      mgr.HumanBytes(sn.Size),
 				Shared:    d.ShareEnabled && hasShare && sn.Name == shareSnap,
+				Automatic: sn.Automatic,
 			})
 		}
+	} else {
+		d.SnapshotListError = err.Error()
 	}
-	d.SnapshotLimit = s.mgr.SnapshotLimit()
+	d.SnapshotSchedule, err = s.mgr.SnapshotSchedule(u.Name)
+	if err != nil {
+		d.SnapshotScheduleError = err.Error()
+	}
+	d.SnapshotLimit = u.SnapshotLimit
+	d.prepareSnapshotUI()
 	// Knowledge base: operator-authored articles, rendered from Markdown.
 	if arts, err := s.db.ListKnowledge(); err == nil {
 		for _, a := range arts {

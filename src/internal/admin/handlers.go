@@ -67,7 +67,8 @@ type pageData struct {
 	// ShareEnabled gates the batch-create entry point: a batch clones every user
 	// from a shared snapshot code, so with snapshot sharing off there is nothing
 	// to create from (the handler refuses the same way).
-	ShareEnabled bool
+	ShareEnabled         bool
+	DefaultSnapshotLimit int
 	// Global dynamic CPU limit rule, edited by the card below (the DB is the
 	// single source of truth — there is no config.yaml / CLI equivalent). The
 	// Active list is the containers currently capped by it.
@@ -121,21 +122,22 @@ type userView struct {
 	// Status is the persistent lifecycle state (ready/creating/reinstalling/
 	// failed). Non-ready states are shown to the operator so a crashed
 	// Add/Reinstall is visible instead of looking like a healthy user.
-	Status      string
-	Ports       string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort  string // compact form, e.g. 107xx
-	SSHPort     string
-	QuotaCPU    string
-	QuotaMem    string
-	QuotaDisk   string
-	BandwidthGB int // monthly bandwidth quota GiB, 0 = unlimited
-	CPUUse      string
-	MemUse      string
-	DiskUsed    string
-	UpGB        string
-	DownGB      string
-	BWTotal     string // up+down this month, GB — used for table sorting
-	IPv6        string
+	Status        string
+	Ports         string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort    string // compact form, e.g. 107xx
+	SSHPort       string
+	QuotaCPU      string
+	QuotaMem      string
+	QuotaDisk     string
+	BandwidthGB   int // monthly bandwidth quota GiB, 0 = unlimited
+	SnapshotLimit int // total snapshot quota, 0 disables new snapshots
+	CPUUse        string
+	MemUse        string
+	DiskUsed      string
+	UpGB          string
+	DownGB        string
+	BWTotal       string // up+down this month, GB — used for table sorting
+	IPv6          string
 	// IPv6Extra is the whole /64 the account owns from net.ipv6_extra_prefix
 	// ("" when none). Shown read-only in the quota dialog, where such a block
 	// can be assigned but never taken back.
@@ -154,14 +156,15 @@ type userView struct {
 func (s *Server) buildPageData(msg, errMsg string) pageData {
 	v4Caps := s.mgr.LiveV4Capabilities()
 	d := pageData{
-		Title:        "VPS Manager Admin",
-		Prefix:       s.prefix(),
-		Msg:          msg,
-		Err:          errMsg,
-		V4Policy:     s.mgr.LiveV4Policy(),
-		DirectV4:     v4Caps.DirectForwarding,
-		ShareEnabled: s.mgr.SnapshotShareEnabled(),
-		Colors:       append([]string{}, userColorPalette...),
+		Title:                "VPS Manager Admin",
+		Prefix:               s.prefix(),
+		Msg:                  msg,
+		Err:                  errMsg,
+		V4Policy:             s.mgr.LiveV4Policy(),
+		DirectV4:             v4Caps.DirectForwarding,
+		ShareEnabled:         s.mgr.SnapshotShareEnabled(),
+		DefaultSnapshotLimit: s.mgr.DefaultSnapshotLimit(),
+		Colors:               append([]string{}, userColorPalette...),
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded
@@ -270,31 +273,32 @@ func (s *Server) loadUsers(d *pageData) {
 			expShort = expShort[:10]
 		}
 		vs = append(vs, userView{
-			Name:         u.Name,
-			Color:        u.Color,
-			State:        st.State,
-			Status:       u.Status,
-			Ports:        mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
-			PortsShort:   mgr.UserPortsShort(u.StartPort),
-			SSHPort:      strconv.Itoa(u.SSHPort),
-			QuotaCPU:     mgr.FormatCPU(u.CPU),
-			QuotaMem:     strconv.Itoa(u.MemMB) + " MiB",
-			QuotaDisk:    strconv.Itoa(u.DiskGB) + " GiB",
-			BandwidthGB:  u.BandwidthQuotaGB,
-			CPUUse:       st.CPUUse,
-			MemUse:       st.MemUse,
-			DiskUsed:     st.DiskUsed,
-			UpGB:         st.UpGB,
-			DownGB:       st.DownGB,
-			BWTotal:      st.BWTotal,
-			IPv6:         st.IPv6,
-			IPv6Extra:    st.IPv6Extra,
-			Procs:        st.Procs,
-			ProcsLimit:   lx.DefaultProcessesLimit,
-			ExpiresAt:    u.ExpiresAt,
-			ExpiresShort: expShort,
-			Expired:      expired,
-			ExpiredDays:  expDays,
+			Name:          u.Name,
+			Color:         u.Color,
+			State:         st.State,
+			Status:        u.Status,
+			Ports:         mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+			PortsShort:    mgr.UserPortsShort(u.StartPort),
+			SSHPort:       strconv.Itoa(u.SSHPort),
+			QuotaCPU:      mgr.FormatCPU(u.CPU),
+			QuotaMem:      strconv.Itoa(u.MemMB) + " MiB",
+			QuotaDisk:     strconv.Itoa(u.DiskGB) + " GiB",
+			BandwidthGB:   u.BandwidthQuotaGB,
+			SnapshotLimit: u.SnapshotLimit,
+			CPUUse:        st.CPUUse,
+			MemUse:        st.MemUse,
+			DiskUsed:      st.DiskUsed,
+			UpGB:          st.UpGB,
+			DownGB:        st.DownGB,
+			BWTotal:       st.BWTotal,
+			IPv6:          st.IPv6,
+			IPv6Extra:     st.IPv6Extra,
+			Procs:         st.Procs,
+			ProcsLimit:    lx.DefaultProcessesLimit,
+			ExpiresAt:     u.ExpiresAt,
+			ExpiresShort:  expShort,
+			Expired:       expired,
+			ExpiredDays:   expDays,
 		})
 	}
 	d.Users = vs
@@ -509,6 +513,11 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	snapshotLimit, err := parseSnapshotLimit(r.FormValue("snapshot_limit"), true)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_snapshot_limit"))
+		return
+	}
 	// IPv6 dropdown (pool mode only): "auto" (or empty) = first free pool
 	// address, "none" = V4-only container, otherwise the picked address.
 	ipv6 := strings.TrimSpace(r.FormValue("ipv6"))
@@ -524,7 +533,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	// ticks it by default, and it is disabled once the pool is empty. Allocation
 	// is best-effort either way — an exhausted pool silently yields no block.
 	allocExtra64 := strings.TrimSpace(r.FormValue("extra64")) != ""
-	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, IPv6Addr: ipv6, AllowChild: true, Days: days, AllocateExtra64: allocExtra64})
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, SnapshotLimit: snapshotLimit, IPv6Addr: ipv6, AllowChild: true, Days: days, AllocateExtra64: allocExtra64})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
@@ -593,6 +602,11 @@ func (s *Server) handleUserBatch(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_days"))
 		return
 	}
+	snapshotLimit, err := parseSnapshotLimit(r.FormValue("snapshot_limit"), true)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_snapshot_limit"))
+		return
+	}
 	keyIDs, err := s.parseAdminKeyIDs(r.Form["akeys"])
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
@@ -611,7 +625,7 @@ func (s *Server) handleUserBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opt := mgr.AddOptions{
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB,
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, BandwidthGB: bandwidthGB, SnapshotLimit: snapshotLimit,
 		AllowChild: true, Days: days, FromShare: share,
 		AllocateExtra64: strings.TrimSpace(r.FormValue("extra64")) != "",
 	}
@@ -694,6 +708,20 @@ func (s *Server) handleUserDel(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), s.t(r, "user_deleted", name))
 }
 
+// parseSnapshotLimit keeps an omitted/default creation quota distinct from an
+// explicitly disabled quota. Edit forms must supply a number when present.
+func parseSnapshotLimit(raw string, allowDefault bool) (*int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" && allowDefault {
+		return nil, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 0 {
+		return nil, errors.New("snapshot limit must be a nonnegative integer")
+	}
+	return &limit, nil
+}
+
 func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -720,7 +748,18 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	if _, err := s.mgr.UpdateQuotasAndBandwidth(name, cpu, memMB, diskGB, bandwidthGB); err != nil {
+	// Older forms omit this field; preserve the existing per-user quota then.
+	// A present but empty field is invalid rather than resetting to the default.
+	var snapshotLimits []int
+	if _, present := r.Form["snapshot_limit"]; present {
+		limit, err := parseSnapshotLimit(r.FormValue("snapshot_limit"), false)
+		if err != nil {
+			s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_snapshot_limit"))
+			return
+		}
+		snapshotLimits = []int{*limit}
+	}
+	if _, err := s.mgr.UpdateQuotasAndBandwidth(name, cpu, memMB, diskGB, bandwidthGB, snapshotLimits...); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}

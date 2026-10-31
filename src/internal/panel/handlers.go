@@ -560,6 +560,62 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), msg)
 }
 
+// handleSnapshotSchedule changes only the authenticated container's policy.
+// Disabling deliberately ignores hours: the manager preserves the old interval
+// and converts automatic checkpoints without contacting Incus.
+func (s *Server) handleSnapshotSchedule(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	enabled := r.PostForm.Get("enabled")
+	if enabled != "0" && enabled != "1" {
+		s.redirect(w, r, s.p(""), "error: enabled must be 0 or 1")
+		return
+	}
+	hours := 1
+	if enabled == "1" {
+		raw := r.PostForm.Get("hours")
+		decimal := raw != ""
+		for _, c := range raw {
+			if c < '0' || c > '9' {
+				decimal = false
+			}
+		}
+		var err error
+		hours, err = strconv.Atoi(raw)
+		if !decimal || err != nil || hours < 1 || hours > mgr.MaxSnapshotIntervalHours {
+			s.redirect(w, r, s.p(""), "error: hours must be an integer from 1 to "+itoa(mgr.MaxSnapshotIntervalHours))
+			return
+		}
+	}
+	u := s.currentUser(r)
+	if err := s.mgr.SetSnapshotSchedule(u.Name, enabled == "1", hours); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	action, msg := "snapshot.schedule.disable", "ok: automatic checkpoints disabled; all automatic checkpoints are now fixed"
+	if enabled == "1" {
+		action, msg = "snapshot.schedule.enable", "ok: automatic checkpoint schedule saved"
+	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), action)
+	s.redirect(w, r, s.p(""), msg)
+}
+
+func (s *Server) handleSnapshotPromote(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := s.currentUser(r)
+	if err := s.mgr.SnapshotPromote(u.Name, r.PostForm.Get("name")); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	_ = s.db.AddAuditLog(s.auditActor(r, u.Name), "snapshot.promote")
+	s.redirect(w, r, s.p(""), "ok: checkpoint is now fixed")
+}
+
 // handleSnapshotDel deletes a snapshot by name.
 func (s *Server) handleSnapshotDel(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)

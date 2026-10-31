@@ -26,6 +26,9 @@ type User struct {
 	// BandwidthQuotaGB is the monthly bandwidth quota (upload + download) in GiB.
 	// 0 means unlimited.
 	BandwidthQuotaGB int
+	// SnapshotLimit is the maximum number of snapshots. Zero disables new
+	// snapshots; existing snapshots are not deleted by quota edits.
+	SnapshotLimit int
 	// IPv6Index is the prefix-mode /112 block this user's address is built
 	// from: a random 32-bit value chosen when the account is created (0 for
 	// none, i.e. pool mode and V4-only containers). Stored rather than derived
@@ -54,11 +57,11 @@ type User struct {
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now()}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), SnapshotLimit: d.defaultSnapshotLimit}
 	r, err := d.sql.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt)
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, snapshot_limit)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.SnapshotLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -78,8 +81,19 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 // net.ipv6_extra_prefix ("" for none) — it goes through the same transaction
 // for the same reason: a block that is routed to a container but not recorded
 // could be handed to a second one. expiresAt is the quota deadline (RFC3339
-// UTC, "" = permanent).
-func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, ipv6ExtraBlock, expiresAt string) (*User, error) {
+// UTC, "" = permanent). snapshotLimit may contain one nonnegative quota (zero
+// disables new snapshots); omitting it uses the database's configured default.
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, bandwidthGB int, status, ipv6Address string, ipv6Index int64, ipv6ExtraBlock, expiresAt string, snapshotLimit ...int) (*User, error) {
+	if len(snapshotLimit) > 1 {
+		return nil, fmt.Errorf("expected at most one snapshot limit")
+	}
+	limit := d.defaultSnapshotLimit
+	if len(snapshotLimit) == 1 {
+		limit = snapshotLimit[0]
+	}
+	if limit < 0 {
+		return nil, fmt.Errorf("snapshot limit must be nonnegative")
+	}
 	if status == "" {
 		status = StatusReady
 	}
@@ -90,11 +104,11 @@ func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, 
 	defer tx.Rollback()
 
 	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
-		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, IPv6Index: ipv6Index, IPv6ExtraBlock: ipv6ExtraBlock, ExpiresAt: expiresAt}
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now(), Status: status, IPv6Address: ipv6Address, IPv6Index: ipv6Index, IPv6ExtraBlock: ipv6ExtraBlock, ExpiresAt: expiresAt, SnapshotLimit: limit}
 	r, err := tx.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, ipv6_extra_block, expires_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), nullIfZero(u.IPv6Index), nullIfEmpty(u.IPv6ExtraBlock), u.ExpiresAt)
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, ipv6_extra_block, expires_at, snapshot_limit)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt, u.Status, nullIfEmpty(u.IPv6Address), nullIfZero(u.IPv6Index), nullIfEmpty(u.IPv6ExtraBlock), u.ExpiresAt, u.SnapshotLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +220,7 @@ func scanUser(row *sql.Row) (*User, error) {
 	var ipv6Index sql.NullInt64
 	var ipv6Extra sql.NullString
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra)
+		&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra, &u.SnapshotLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -218,19 +232,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block, snapshot_limit
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block, snapshot_limit
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, bandwidth_quota_gb, cpu, mem_mb, disk_gb, created_at, status, ipv6_address, ipv6_index, color, expires_at, ipv6_extra_block, snapshot_limit
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -243,7 +257,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 		var ipv6Index sql.NullInt64
 		var ipv6Extra sql.NullString
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra); err != nil {
+			&u.InitScript, &u.BandwidthQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt, &u.Status, &ipv6, &ipv6Index, &u.Color, &u.ExpiresAt, &ipv6Extra, &u.SnapshotLimit); err != nil {
 			return nil, err
 		}
 		u.IPv6Address = ipv6.String
@@ -279,6 +293,16 @@ func (d *DB) UpdateInitScript(id int64, script string) error {
 // UpdateBandwidthQuota sets a user's monthly bandwidth quota in GiB (0 = unlimited).
 func (d *DB) UpdateBandwidthQuota(id int64, gb int) error {
 	_, err := d.sql.Exec(`UPDATE users SET bandwidth_quota_gb=? WHERE id=?`, gb, id)
+	return err
+}
+
+// UpdateSnapshotLimit persists a nonnegative snapshot quota without changing
+// snapshots or scheduler metadata. The manager validates the runtime catalog.
+func (d *DB) UpdateSnapshotLimit(id int64, limit int) error {
+	if limit < 0 {
+		return fmt.Errorf("snapshot limit must be nonnegative")
+	}
+	_, err := d.sql.Exec(`UPDATE users SET snapshot_limit=? WHERE id=?`, limit, id)
 	return err
 }
 

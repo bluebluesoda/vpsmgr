@@ -1268,6 +1268,7 @@ type SnapshotInfo struct {
 	Name      string `json:"name"`
 	CreatedAt string `json:"created_at"`
 	Size      int64  `json:"size"`
+	Automatic bool   `json:"-"` // Panel-owned classification, not an Incus field.
 }
 
 // snapshotCreateReq is the POST body for /1.0/instances/{name}/snapshots.
